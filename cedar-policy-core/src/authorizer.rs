@@ -21,7 +21,7 @@
 //! the "authorization engine".
 
 use crate::ast::*;
-use crate::entities::{Entities, EntityDatabase};
+use crate::entities::EntityDatabase;
 use crate::evaluator::{EvaluationError, Evaluator};
 use crate::extensions::Extensions;
 use itertools::Either;
@@ -90,7 +90,7 @@ impl Authorizer {
     ///
     /// The language spec and Dafny model give a precise definition of how this is
     /// computed.
-    pub fn is_authorized(&self, q: &Request, pset: &PolicySet, entities: &Entities) -> Response {
+    pub fn is_authorized<T: EntityDatabase>(&self, q: &Request, pset: &PolicySet, entities: &T) -> Response {
         match self.is_authorized_core(q, pset, entities) {
             ResponseKind::FullyEvaluated(response) => response,
             ResponseKind::Partial(partial) => {
@@ -163,11 +163,11 @@ impl Authorizer {
     ///
     /// The language spec and Dafny model give a precise definition of how this is
     /// computed.
-    pub fn is_authorized_core(
+    pub fn is_authorized_core<T: EntityDatabase>(
         &self,
         q: &Request,
         pset: &PolicySet,
-        entities: &Entities,
+        entities: &T,
     ) -> ResponseKind {
         let eval = match Evaluator::new(q, entities, &self.extensions) {
             Ok(eval) => eval,
@@ -414,7 +414,7 @@ impl std::fmt::Debug for Authorizer {
 mod test {
     use std::collections::BTreeMap;
 
-    use crate::parser;
+    use crate::{parser, entities::Entities};
 
     use super::*;
 

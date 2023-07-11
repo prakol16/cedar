@@ -5,11 +5,12 @@ members = [
 	"cedar-policy-validator",
 	"cedar-policy-formatter",
 	"cedar-policy-cli",
+	"cedar-db-example"
 ]
 
 # Enable global integer overflow detection for the release profile
 [profile.release]
 overflow-checks = true
 
-	
+
 
