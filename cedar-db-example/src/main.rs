@@ -7,7 +7,7 @@ struct SQLiteDB {
 }
 
 impl EntityDatabase for SQLiteDB {
-    fn get_entity_of_uid(&self, uid: &EntityUid) -> Option<Entity> {
+    fn get(&self, uid: &EntityUid) -> Option<Entity> {
         todo!()
     }
 

@@ -23,7 +23,6 @@
 pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
-use cedar_policy_core::ast::EntityUID;
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
@@ -149,18 +148,20 @@ pub use entities::EntitiesError;
 
 pub trait EntityDatabase {
     /// Get the `Entity` with the given Uid, if any
-    fn get_entity_of_uid(&self, uid: &EntityUid) -> Option<Entity>;
+    fn get(&self, uid: &EntityUid) -> Option<Entity>;
 
     /// Whether the database is partial
     fn is_partial(&self) -> bool;
 }
 
 /// Wrapper for entity database object (needed to implement foreign trait)
+#[repr(transparent)]
+#[derive(RefCast)]
 struct EntityDatabaseWrapper<T: EntityDatabase>(T);
 
 impl<T: EntityDatabase> entities::EntityDatabase for EntityDatabaseWrapper<T> {
     fn get_entity_of_uid(&self, uid: &ast::EntityUID) -> Option<ast::Entity> {
-        self.0.get_entity_of_uid(EntityUid::ref_cast(uid)).map(|e| e.0)
+        self.0.get(EntityUid::ref_cast(uid)).map(|e| e.0)
     }
 
     fn is_partial(&self) -> bool {
@@ -297,6 +298,16 @@ impl Entities {
     }
 }
 
+impl EntityDatabase for Entities {
+    fn get(&self, uid: &EntityUid) -> Option<Entity> {
+        entities::EntityDatabase::get_entity_of_uid(&self.0, &uid.0).map(Entity)
+    }
+
+    fn is_partial(&self) -> bool {
+        entities::EntityDatabase::is_partial(&self.0)
+    }
+}
+
 /// Authorizer object, which provides responses to authorization queries
 #[repr(transparent)]
 #[derive(Debug, RefCast)]
@@ -319,8 +330,8 @@ impl Authorizer {
     ///
     /// The language spec and Dafny model give a precise definition of how this
     /// is computed.
-    pub fn is_authorized(&self, r: &Request, p: &PolicySet, e: &Entities) -> Response {
-        self.0.is_authorized(&r.0, &p.ast, &e.0).into()
+    pub fn is_authorized<T: EntityDatabase>(&self, r: &Request, p: &PolicySet, e: &T) -> Response {
+        self.0.is_authorized(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e)).into()
     }
 
     /// A partially evaluated authorization request.
