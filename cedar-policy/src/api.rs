@@ -338,15 +338,15 @@ impl Authorizer {
     /// The Authorizer will attempt to make as much progress as possible in the presence of unknowns.
     /// If the Authorizer can reach a response, it will return that response.
     /// Otherwise, it will return a list of residual policies that still need to be evaluated.
-    pub fn is_authorized_partial(
+    pub fn is_authorized_partial<T: EntityDatabase>(
         &self,
         query: &Request,
         policy_set: &PolicySet,
-        entities: &Entities,
+        entities: &T,
     ) -> PartialResponse {
         let response = self
             .0
-            .is_authorized_core(&query.0, &policy_set.ast, &entities.0);
+            .is_authorized_core(&query.0, &policy_set.ast, EntityDatabaseWrapper::ref_cast(entities));
         match response {
             authorizer::ResponseKind::FullyEvaluated(a) => PartialResponse::Concrete(Response {
                 decision: a.decision,
