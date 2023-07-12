@@ -23,6 +23,7 @@
 pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
+use cedar_policy_core::ast::EntityUID;
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
@@ -145,6 +146,27 @@ impl std::fmt::Display for Entity {
 pub struct Entities(pub(crate) entities::Entities);
 
 pub use entities::EntitiesError;
+
+pub trait EntityDatabase {
+    /// Get the `Entity` with the given Uid, if any
+    fn get_entity_of_uid(&self, uid: &EntityUid) -> Option<Entity>;
+
+    /// Whether the database is partial
+    fn is_partial(&self) -> bool;
+}
+
+/// Wrapper for entity database object (needed to implement foreign trait)
+struct EntityDatabaseWrapper<T: EntityDatabase>(T);
+
+impl<T: EntityDatabase> entities::EntityDatabase for EntityDatabaseWrapper<T> {
+    fn get_entity_of_uid(&self, uid: &ast::EntityUID) -> Option<ast::Entity> {
+        self.0.get_entity_of_uid(EntityUid::ref_cast(uid)).map(|e| e.0)
+    }
+
+    fn is_partial(&self) -> bool {
+        self.0.is_partial()
+    }
+}
 
 impl Entities {
     /// Create a fresh `Entities` with no entities

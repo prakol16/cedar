@@ -1,5 +1,20 @@
+use cedar_policy::{EntityDatabase, EntityId, EntityTypeName, EntityUid, Entity};
 use rusqlite::{Connection, Result};
 
+
+struct SQLiteDB {
+    conn: Connection,
+}
+
+impl EntityDatabase for SQLiteDB {
+    fn get_entity_of_uid(&self, uid: &EntityUid) -> Option<Entity> {
+        todo!()
+    }
+
+    fn is_partial(&self) -> bool {
+        todo!()
+    }
+}
 
 fn main() {
     println!("Hello, world!");
