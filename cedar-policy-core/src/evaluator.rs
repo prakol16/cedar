@@ -636,7 +636,7 @@ impl<'q, 'e> Evaluator<'e> {
         }
     }
 
-    fn get_all_attrs(&self, uid: &EntityUID) -> Dereference<'_, HashMap<SmolStr, PartialValue>> {
+    fn get_all_attrs(&self, uid: &EntityUID) -> Dereference<&HashMap<SmolStr, PartialValue>> {
         match self.entities.entity(uid) {
             Dereference::NoSuchEntity => Dereference::NoSuchEntity,
             Dereference::Residual(r) => Dereference::Residual(r),

@@ -18,6 +18,7 @@
 
 use crate::ast::*;
 use crate::transitive_closure::{compute_tc, enforce_tc_and_dag};
+use std::borrow::Cow;
 use std::collections::{hash_map, HashMap};
 
 use serde::de::DeserializeOwned;
@@ -87,7 +88,7 @@ impl<T> Entities<T> {
     }
 
     /// Get the `Entity` with the given UID, if any
-    pub fn entity(&self, uid: &EntityUID) -> Dereference<'_, Entity<T>> {
+    pub fn entity(&self, uid: &EntityUID) -> Dereference<&Entity<T>> {
         match self.entities.get(uid) {
             Some(e) => Dereference::Data(e),
             None => match self.mode {
@@ -174,6 +175,25 @@ impl<T> IntoIterator for Entities<T> {
     }
 }
 
+/// Something that implements an `EntityDatabase` is something that can
+pub trait EntityDatabase {
+    /// Get entity by UID, returns None if no such entity exists.
+    fn get<'e>(&'e self, uid: &EntityUID) -> Option<Cow<'e, Entity<PartialValue>>>;
+
+    /// Determine if this is a partial store
+    fn is_partial(&self) -> bool;
+}
+
+impl EntityDatabase for Entities<PartialValue> {
+    fn get<'e>(&'e self, uid: &EntityUID) -> Option<Cow<'e, Entity<PartialValue>>> {
+        self.entities.get(uid).map(Cow::Borrowed)
+    }
+
+    fn is_partial(&self) -> bool {
+        self.mode == Mode::Partial
+    }
+}
+
 impl std::fmt::Display for Entities {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.entities.is_empty() {
@@ -189,16 +209,16 @@ impl std::fmt::Display for Entities {
 
 /// Results from dereferencing values from the Entity Store
 #[derive(Debug, Clone)]
-pub enum Dereference<'a, T> {
+pub enum Dereference<T> {
     /// No entity with the dereferenced EntityUID exists. This is an error.
     NoSuchEntity,
     /// The entity store has returned a residual
     Residual(Expr),
     /// The entity store has returned the requested data.
-    Data(&'a T),
+    Data(T),
 }
 
-impl<'a, T> Dereference<'a, T>
+impl<T> Dereference<T>
 where
     T: std::fmt::Debug,
 {
@@ -211,7 +231,7 @@ where
     /// # Panics
     ///
     /// Panics if the self value is not `Data`.
-    pub fn unwrap(self) -> &'a T {
+    pub fn unwrap(self) -> T {
         match self {
             Self::Data(e) => e,
             e => panic!("unwrap() called on {:?}", e),
@@ -227,7 +247,7 @@ where
     /// # Panics
     ///
     /// Panics if the self value is not `Data`.
-    pub fn expect(self, msg: &str) -> &'a T {
+    pub fn expect(self, msg: &str) -> T {
         match self {
             Self::Data(e) => e,
             e => panic!("expect() called on {:?}, msg: {msg}", e),
