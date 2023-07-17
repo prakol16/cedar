@@ -225,6 +225,20 @@ pub struct Entity<T = RestrictedExpr> {
 }
 
 impl<T> Entity<T> {
+    /// Map the attributes using a function `f : T -> U`.
+    pub fn map_attrs<U, E>(self, f: impl Fn(T) -> Result<U, E>) -> Result<Entity<U>, E> {
+        let new_attrs: Result<HashMap<SmolStr, U>, E> = self
+            .attrs
+            .into_iter()
+            .map(|(k, v)| Ok((k, f(v)?)))
+            .collect();
+        Ok(Entity {
+            uid: self.uid,
+            attrs: new_attrs?,
+            ancestors: self.ancestors,
+        })
+    }
+
     /// Create a new `Entity` with this UID, attributes, and ancestors
     pub fn new(
         uid: EntityUID,

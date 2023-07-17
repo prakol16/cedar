@@ -138,54 +138,23 @@ impl<'e> RestrictedEvaluator<'e> {
 }
 
 impl Entity {
-    pub fn eval_attrs(self) -> Result<Entity<PartialValue>> {
-        unimplemented!();
+    fn eval_attrs(self, eval: &RestrictedEvaluator<'_>) -> Result<Entity<PartialValue>> {
+        self.map_attrs(|v| {
+            eval.partial_interpret(v.as_borrowed())
+        })
     }
 }
 
 impl Entities {
-    pub fn eval_attrs(self) -> Result<Entities<PartialValue>> {
-        unimplemented!();
+    /// Evaluate all the attributes in the entities, using the given extensions, turning this into an
+    /// `Entities<PartialValue>`.
+    pub fn eval_attrs(self, extensions: &Extensions<'_>) -> Result<Entities<PartialValue>> {
+        let eval = RestrictedEvaluator::new(extensions);
+        self.map_attrs(|v| {
+            v.eval_attrs(&eval)
+        })
     }
 }
-
-// impl<'a> EntityAttrValues<'a> {
-//     pub fn new<'e>(entities: &'a Entities, extensions: &'e Extensions<'e>) -> Result<Self> {
-//         let restricted_eval = RestrictedEvaluator::new(extensions);
-//         // Eagerly evaluate each attribute expression in the entities.
-//         let attrs = entities
-//             .iter()
-//             .map(|entity| {
-//                 Ok((
-//                     entity.uid(),
-//                     entity
-//                         .attrs()
-//                         .iter()
-//                         .map(|(attr, v)| {
-//                             Ok((
-//                                 attr.to_owned(),
-//                                 restricted_eval.partial_interpret(v.as_borrowed())?,
-//                             ))
-//                         })
-//                         .collect::<Result<HashMap<SmolStr, PartialValue>>>()?,
-//                 ))
-//             })
-//             .collect::<Result<HashMap<EntityUID, HashMap<SmolStr, PartialValue>>>>()?;
-//         Ok(Self { attrs, entities })
-//     }
-
-//     pub fn get(&self, uid: &EntityUID) -> Dereference<'_, HashMap<SmolStr, PartialValue>> {
-//         match self.entities.entity(uid) {
-//             Dereference::NoSuchEntity => Dereference::NoSuchEntity,
-//             Dereference::Residual(r) => Dereference::Residual(r),
-//             Dereference::Data(_) => self
-//                 .attrs
-//                 .get(uid)
-//                 .map(Dereference::Data)
-//                 .unwrap_or_else(|| Dereference::NoSuchEntity),
-//         }
-//     }
-// }
 
 impl<'q, 'e> Evaluator<'e> {
     /// Create a fresh `Evaluator` for the given `request`, which uses the given
@@ -948,7 +917,7 @@ pub mod test {
             TCComputation::ComputeNow,
         )
         .expect("Failed to create rich entities")
-        .eval_attrs()
+        .eval_attrs(&Extensions::none())
         .expect("Failed to evaluated attributes")
     }
 
@@ -3622,7 +3591,7 @@ pub mod test {
         let request = basic_request();
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs().expect("empty slice");
+        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs(&Extensions::none()).expect("empty slice");
         let exts = Extensions::none();
         let evaluator = Evaluator::new(&request, &entities, &exts).expect("empty slice");
 
@@ -3735,7 +3704,7 @@ pub mod test {
         let request = basic_request();
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs().expect("empty slice");
+        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs(&Extensions::none()).expect("empty slice");
         let exts = Extensions::none();
         let evaluator = Evaluator::new(&request, &entities, &exts).expect("empty slice");
         let e = Expr::slot(SlotId::principal());
@@ -3790,7 +3759,7 @@ pub mod test {
         );
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs().expect("empty slice");
+        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs(&Extensions::none()).expect("empty slice");
         let exts = Extensions::none();
         let eval = Evaluator::new(&q, &entities, &exts).unwrap();
 

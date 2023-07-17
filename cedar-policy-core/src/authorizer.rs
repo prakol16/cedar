@@ -86,6 +86,7 @@ impl Authorizer {
         }
     }
 
+    /// Converta response kind into a response based on the authorizer's error handling
     fn handle_response(&self, pset: &PolicySet, response: ResponseKind) -> Response {
         match response {
             ResponseKind::FullyEvaluated(response) => response,
@@ -170,7 +171,7 @@ impl Authorizer {
 
     /// Returns an authorization response for `q` with respect to the given `Slice`.
     pub fn is_authorized_core(&self, q: &Request, pset: &PolicySet, entities: &Entities) -> ResponseKind {
-        let entities_parsed = entities.clone().eval_attrs();
+        let entities_parsed = entities.clone().eval_attrs(&self.extensions);
         match entities_parsed {
             Ok(entities_parsed) => self.is_authorized_core_parsed(q, pset, &entities_parsed),
             Err(e) => {

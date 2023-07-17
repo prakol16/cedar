@@ -60,6 +60,14 @@ pub struct Entities<T = RestrictedExpr> {
 }
 
 impl<T> Entities<T> {
+    /// Map the attributes of the entities in this store.
+    pub fn map_attrs<U, E>(self, f: impl Fn(Entity<T>) -> std::result::Result<Entity<U>, E>) -> std::result::Result<Entities<U>, E> {
+        let result: std::result::Result<HashMap<EntityUID, Entity<U>>, E> = self.entities.into_iter()
+            .map(|(k, entity)| Ok((k, f(entity)?)))
+            .collect();
+        Ok(Entities { entities: result?, mode: self.mode })
+    }
+
     /// Create a fresh `Entities` with no entities
     pub fn new() -> Self {
         Self {
