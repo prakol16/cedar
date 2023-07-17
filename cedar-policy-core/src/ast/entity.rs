@@ -209,7 +209,7 @@ impl std::fmt::Display for Eid {
 
 /// Entity datatype
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Entity {
+pub struct Entity<T = RestrictedExpr> {
     /// UID
     uid: EntityUID,
 
@@ -217,18 +217,18 @@ pub struct Entity {
     ///
     /// In the serialized form of `Entity`, attribute values appear as
     /// `RestrictedExpr`s.
-    attrs: HashMap<SmolStr, RestrictedExpr>,
+    attrs: HashMap<SmolStr, T>,
 
     /// Set of ancestors of this `Entity` (i.e., all direct and transitive
     /// parents), as UIDs
     ancestors: HashSet<EntityUID>,
 }
 
-impl Entity {
+impl<T> Entity<T> {
     /// Create a new `Entity` with this UID, attributes, and ancestors
     pub fn new(
         uid: EntityUID,
-        attrs: HashMap<SmolStr, RestrictedExpr>,
+        attrs: HashMap<SmolStr, T>,
         ancestors: HashSet<EntityUID>,
     ) -> Self {
         Entity {
@@ -244,7 +244,7 @@ impl Entity {
     }
 
     /// Get the value for the given attribute, or `None` if not present
-    pub fn get(&self, attr: &str) -> Option<&RestrictedExpr> {
+    pub fn get(&self, attr: &str) -> Option<&T> {
         self.attrs.get(attr)
     }
 
@@ -269,7 +269,7 @@ impl Entity {
 
     /// Read-only access the internal `attrs` map of String to RestrictedExpr.
     /// This function is available only inside Core.
-    pub(crate) fn attrs(&self) -> &HashMap<SmolStr, RestrictedExpr> {
+    pub(crate) fn attrs(&self) -> &HashMap<SmolStr, T> {
         &self.attrs
     }
 
@@ -282,7 +282,7 @@ impl Entity {
     /// Set the given attribute to the given value.
     // Only used for convenience in some tests and when fuzzing
     #[cfg(any(test, fuzzing))]
-    pub fn set_attr(&mut self, attr: SmolStr, val: RestrictedExpr) {
+    pub fn set_attr(&mut self, attr: SmolStr, val: T) {
         self.attrs.insert(attr, val);
     }
 
@@ -299,13 +299,13 @@ impl Entity {
     }
 }
 
-impl PartialEq for Entity {
+impl<T> PartialEq for Entity<T> {
     fn eq(&self, other: &Self) -> bool {
         self.uid() == other.uid()
     }
 }
 
-impl Eq for Entity {}
+impl<T> Eq for Entity<T> {}
 
 impl StaticallyTyped for Entity {
     fn type_of(&self) -> Type {

@@ -3091,7 +3091,7 @@ pub mod test {
         );
         //Alice has parent "Friends" but we don't add "Friends" to the slice
         let mut alice = Entity::with_uid(EntityUID::with_eid("Alice"));
-        let parent = Entity::with_uid(EntityUID::with_eid("Friends"));
+        let parent: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("Friends"));
         alice.add_ancestor(parent.uid());
         let entities = Entities::from_entities(vec![alice], TCComputation::AssumeAlreadyComputed)
             .expect("failed to create basic entities");

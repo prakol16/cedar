@@ -20,6 +20,7 @@ use crate::ast::*;
 use crate::transitive_closure::{compute_tc, enforce_tc_and_dag};
 use std::collections::{hash_map, HashMap};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -35,8 +36,10 @@ pub use json::*;
 /// only used for the Dafny-FFI layer in DRT. All others use (and should use) the
 /// `from_json_*()` and `write_to_json()` methods as necessary.
 #[serde_as]
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
-pub struct Entities {
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Entities<T = RestrictedExpr>
+    where T: DeserializeOwned + Serialize + Clone + PartialEq + Eq
+    {
     /// Serde cannot serialize a HashMap to JSON when the key to the map cannot
     /// be serialized to a JSON string. This is a limitation of the JSON format.
     /// `serde_as` annotation are used to serialize the data as associative
@@ -45,7 +48,7 @@ pub struct Entities {
     /// Important internal invariant: for any `Entities` object that exists, the
     /// the `ancestor` relation is transitively closed.
     #[serde_as(as = "Vec<(_, _)>")]
-    entities: HashMap<EntityUID, Entity>,
+    entities: HashMap<EntityUID, Entity<T>>,
 
     /// The mode flag determines whether this store functions as a partial store or
     /// as a fully concrete store.
@@ -232,6 +235,16 @@ enum Mode {
 impl Default for Mode {
     fn default() -> Self {
         Self::Concrete
+    }
+}
+
+impl<T> Default for Entities<T>
+    where T: DeserializeOwned + Serialize + Clone + PartialEq + Eq {
+    fn default() -> Self {
+        Self {
+            entities: Default::default(),
+            mode: Default::default(),
+        }
     }
 }
 
