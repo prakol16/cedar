@@ -58,13 +58,9 @@ pub struct Evaluator<'e> {
     /// This is a reference, because the `Evaluator` doesn't need ownership of
     /// (or need to modify) the `Entities`. One advantage of this is that you
     /// could create multiple `Evaluator`s without copying the `Entities`.
-    entities: &'e Entities,
+    entities: &'e Entities<PartialValue>,
     /// Extensions which are active for this evaluation
-    extensions: &'e Extensions<'e>,
-    /// Entity attribute value cache
-    ///
-    /// We evaluate entity attribute expressions upon the creation of an evaluator.
-    entity_attr_values: EntityAttrValues<'e>,
+    extensions: &'e Extensions<'e>
 }
 
 /// Evaluator for "restricted" expressions. See notes on `RestrictedExpr`.
@@ -141,48 +137,55 @@ impl<'e> RestrictedEvaluator<'e> {
     }
 }
 
-struct EntityAttrValues<'a> {
-    attrs: HashMap<EntityUID, HashMap<SmolStr, PartialValue>>,
-    entities: &'a Entities,
-}
-
-impl<'a> EntityAttrValues<'a> {
-    pub fn new<'e>(entities: &'a Entities, extensions: &'e Extensions<'e>) -> Result<Self> {
-        let restricted_eval = RestrictedEvaluator::new(extensions);
-        // Eagerly evaluate each attribute expression in the entities.
-        let attrs = entities
-            .iter()
-            .map(|entity| {
-                Ok((
-                    entity.uid(),
-                    entity
-                        .attrs()
-                        .iter()
-                        .map(|(attr, v)| {
-                            Ok((
-                                attr.to_owned(),
-                                restricted_eval.partial_interpret(v.as_borrowed())?,
-                            ))
-                        })
-                        .collect::<Result<HashMap<SmolStr, PartialValue>>>()?,
-                ))
-            })
-            .collect::<Result<HashMap<EntityUID, HashMap<SmolStr, PartialValue>>>>()?;
-        Ok(Self { attrs, entities })
-    }
-
-    pub fn get(&self, uid: &EntityUID) -> Dereference<'_, HashMap<SmolStr, PartialValue>> {
-        match self.entities.entity(uid) {
-            Dereference::NoSuchEntity => Dereference::NoSuchEntity,
-            Dereference::Residual(r) => Dereference::Residual(r),
-            Dereference::Data(_) => self
-                .attrs
-                .get(uid)
-                .map(Dereference::Data)
-                .unwrap_or_else(|| Dereference::NoSuchEntity),
-        }
+impl Entity {
+    pub fn eval_attrs(self) -> Result<Entity<PartialValue>> {
+        unimplemented!();
     }
 }
+
+impl Entities {
+    pub fn eval_attrs(self) -> Result<Entities<PartialValue>> {
+        unimplemented!();
+    }
+}
+
+// impl<'a> EntityAttrValues<'a> {
+//     pub fn new<'e>(entities: &'a Entities, extensions: &'e Extensions<'e>) -> Result<Self> {
+//         let restricted_eval = RestrictedEvaluator::new(extensions);
+//         // Eagerly evaluate each attribute expression in the entities.
+//         let attrs = entities
+//             .iter()
+//             .map(|entity| {
+//                 Ok((
+//                     entity.uid(),
+//                     entity
+//                         .attrs()
+//                         .iter()
+//                         .map(|(attr, v)| {
+//                             Ok((
+//                                 attr.to_owned(),
+//                                 restricted_eval.partial_interpret(v.as_borrowed())?,
+//                             ))
+//                         })
+//                         .collect::<Result<HashMap<SmolStr, PartialValue>>>()?,
+//                 ))
+//             })
+//             .collect::<Result<HashMap<EntityUID, HashMap<SmolStr, PartialValue>>>>()?;
+//         Ok(Self { attrs, entities })
+//     }
+
+//     pub fn get(&self, uid: &EntityUID) -> Dereference<'_, HashMap<SmolStr, PartialValue>> {
+//         match self.entities.entity(uid) {
+//             Dereference::NoSuchEntity => Dereference::NoSuchEntity,
+//             Dereference::Residual(r) => Dereference::Residual(r),
+//             Dereference::Data(_) => self
+//                 .attrs
+//                 .get(uid)
+//                 .map(Dereference::Data)
+//                 .unwrap_or_else(|| Dereference::NoSuchEntity),
+//         }
+//     }
+// }
 
 impl<'q, 'e> Evaluator<'e> {
     /// Create a fresh `Evaluator` for the given `request`, which uses the given
@@ -192,15 +195,12 @@ impl<'q, 'e> Evaluator<'e> {
     /// (An `Entities` is the entity-hierarchy portion of a `Slice`, without the
     /// policies.)
     ///
-    /// Can throw an error, eg if evaluating attributes in the `context` throws
-    /// an error.
+    /// Does not throw errors (TODO: make this return `Self` instead of `Result<Self>`)
     pub fn new(
         q: &'q Request,
-        entities: &'e Entities,
+        entities: &'e Entities<PartialValue>,
         extensions: &'e Extensions<'e>,
     ) -> Result<Self> {
-        // Eagerly evaluate each attribute expression in the entities.
-        let entity_attr_values = EntityAttrValues::new(entities, extensions)?;
         Ok(Self {
             principal: q.principal().clone(),
             action: q.action().clone(),
@@ -218,8 +218,7 @@ impl<'q, 'e> Evaluator<'e> {
                 }
             },
             entities,
-            extensions,
-            entity_attr_values,
+            extensions
         })
     }
 
@@ -605,7 +604,7 @@ impl<'q, 'e> Evaluator<'e> {
     fn eval_in(
         &self,
         uid1: &EntityUID,
-        entity1: Option<&Entity>,
+        entity1: Option<&Entity<PartialValue>>,
         arg2: Value,
     ) -> Result<PartialValue> {
         // `rhs` is a list of all the UIDs for which we need to
@@ -668,6 +667,14 @@ impl<'q, 'e> Evaluator<'e> {
         }
     }
 
+    fn get_all_attrs(&self, uid: &EntityUID) -> Dereference<'_, HashMap<SmolStr, PartialValue>> {
+        match self.entities.entity(uid) {
+            Dereference::NoSuchEntity => Dereference::NoSuchEntity,
+            Dereference::Residual(r) => Dereference::Residual(r),
+            Dereference::Data(e) => Dereference::Data(e.attrs())
+        }
+    }
+
     fn get_attr(&self, expr: &Expr, attr: &SmolStr, slots: &SlotEnv) -> Result<PartialValue> {
         match self.partial_interpret(expr, slots)? {
             // PE Cases
@@ -707,7 +714,7 @@ impl<'q, 'e> Evaluator<'e> {
                 .ok_or_else(|| EvaluationError::RecordAttrDoesNotExist(attr.clone()))
                 .map(|v| PartialValue::Value(v.clone())),
             PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
-                match self.entity_attr_values.get(uid.as_ref()) {
+                match self.get_all_attrs(uid.as_ref()) {
                     Dereference::NoSuchEntity => Err(match *uid.entity_type() {
                         EntityType::Unspecified => {
                             EvaluationError::UnspecifiedEntityAccess(attr.clone())
@@ -878,7 +885,7 @@ pub mod test {
     }
 
     // Many of these tests use this basic `Entities`
-    pub fn basic_entities() -> Entities {
+    pub fn basic_entities() -> Entities<PartialValue> {
         Entities::from_entities(
             vec![
                 Entity::with_uid(EntityUID::with_eid("foo")),
@@ -892,7 +899,7 @@ pub mod test {
     }
 
     // This `Entities` has richer Entities
-    pub fn rich_entities() -> Entities {
+    pub fn rich_entities() -> Entities<PartialValue> {
         let entity_no_attrs_no_parents =
             Entity::with_uid(EntityUID::with_eid("entity_no_attrs_no_parents"));
         let mut entity_with_attrs = Entity::with_uid(EntityUID::with_eid("entity_with_attrs"));
@@ -941,6 +948,8 @@ pub mod test {
             TCComputation::ComputeNow,
         )
         .expect("Failed to create rich entities")
+        .eval_attrs()
+        .expect("Failed to evaluated attributes")
     }
 
     #[test]
@@ -3613,7 +3622,7 @@ pub mod test {
         let request = basic_request();
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice");
+        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs().expect("empty slice");
         let exts = Extensions::none();
         let evaluator = Evaluator::new(&request, &entities, &exts).expect("empty slice");
 
@@ -3726,7 +3735,7 @@ pub mod test {
         let request = basic_request();
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice");
+        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs().expect("empty slice");
         let exts = Extensions::none();
         let evaluator = Evaluator::new(&request, &entities, &exts).expect("empty slice");
         let e = Expr::slot(SlotId::principal());
@@ -3781,9 +3790,9 @@ pub mod test {
         );
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice");
+        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs().expect("empty slice");
         let exts = Extensions::none();
-        let eval = Evaluator::new(&q, &entities, &exts).expect("Failed to start evaluator");
+        let eval = Evaluator::new(&q, &entities, &exts).unwrap();
 
         let ir = pset.policies().next().expect("No linked policies");
         assert!(

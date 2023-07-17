@@ -86,12 +86,8 @@ impl Authorizer {
         }
     }
 
-    /// Returns an authorization response for `q` with respect to the given `Slice`.
-    ///
-    /// The language spec and Dafny model give a precise definition of how this is
-    /// computed.
-    pub fn is_authorized(&self, q: &Request, pset: &PolicySet, entities: &Entities) -> Response {
-        match self.is_authorized_core(q, pset, entities) {
+    fn handle_response(&self, pset: &PolicySet, response: ResponseKind) -> Response {
+        match response {
             ResponseKind::FullyEvaluated(response) => response,
             ResponseKind::Partial(partial) => {
                 // If we get a residual, we have to treat every residual policy as an error, and obey the error semantics.
@@ -159,29 +155,49 @@ impl Authorizer {
     }
 
     /// Returns an authorization response for `q` with respect to the given `Slice`.
+    ///
+    /// The language spec and Dafny model give a precise definition of how this is
+    /// computed.
+    pub fn is_authorized(&self, q: &Request, pset: &PolicySet, entities: &Entities) -> Response {
+        self.handle_response(pset, self.is_authorized_core(q, pset, entities))
+    }
+
+    /// Returns an authorization response for `q` with respect to the given `Slice`.
+    /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
+    pub fn is_authorized_parsed(&self, q: &Request, pset: &PolicySet, entities: &Entities<PartialValue>) -> Response {
+        self.handle_response(pset, self.is_authorized_core_parsed(q, pset, entities))
+    }
+
+    /// Returns an authorization response for `q` with respect to the given `Slice`.
+    pub fn is_authorized_core(&self, q: &Request, pset: &PolicySet, entities: &Entities) -> ResponseKind {
+        let entities_parsed = entities.clone().eval_attrs();
+        match entities_parsed {
+            Ok(entities_parsed) => self.is_authorized_core_parsed(q, pset, &entities_parsed),
+            Err(e) => {
+                let msg = format!(
+                    "Failed to parse attributes of entities: {e}"
+                );
+                ResponseKind::FullyEvaluated(Response::new(
+                    Decision::Deny,
+                    HashSet::new(),
+                    vec![msg],
+                ))
+            }
+        }
+    }
+
+    /// Returns an authorization response for `q` with respect to the given `Slice`.
     /// Partial Evaluation of is_authorized
     ///
     /// The language spec and Dafny model give a precise definition of how this is
     /// computed.
-    pub fn is_authorized_core(
+    pub fn is_authorized_core_parsed(
         &self,
         q: &Request,
         pset: &PolicySet,
-        entities: &Entities,
+        entities: &Entities<PartialValue>,
     ) -> ResponseKind {
-        let eval = match Evaluator::new(q, entities, &self.extensions) {
-            Ok(eval) => eval,
-            Err(e) => {
-                let msg = format!(
-                    "while initializing the Evaluator, encountered the following error: {e}"
-                );
-                return ResponseKind::FullyEvaluated(Response::new(
-                    Decision::Deny,
-                    HashSet::new(),
-                    vec![msg],
-                ));
-            }
-        };
+        let eval = Evaluator::new(q, entities, &self.extensions).unwrap();
 
         let results = self.evaluate_policies(pset, eval);
 

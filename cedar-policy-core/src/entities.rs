@@ -37,9 +37,7 @@ pub use json::*;
 /// `from_json_*()` and `write_to_json()` methods as necessary.
 #[serde_as]
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct Entities<T = RestrictedExpr>
-    where T: DeserializeOwned + Serialize + Clone + PartialEq + Eq
-    {
+pub struct Entities<T = RestrictedExpr> {
     /// Serde cannot serialize a HashMap to JSON when the key to the map cannot
     /// be serialized to a JSON string. This is a limitation of the JSON format.
     /// `serde_as` annotation are used to serialize the data as associative
@@ -47,7 +45,8 @@ pub struct Entities<T = RestrictedExpr>
     ///
     /// Important internal invariant: for any `Entities` object that exists, the
     /// the `ancestor` relation is transitively closed.
-    #[serde_as(as = "Vec<(_, _)>")]
+    /// TODO: manually implement this (not sure why it doesn't work with generics)
+    // #[serde_as(as = "Vec<(_, _)>")]
     entities: HashMap<EntityUID, Entity<T>>,
 
     /// The mode flag determines whether this store functions as a partial store or
@@ -60,7 +59,7 @@ pub struct Entities<T = RestrictedExpr>
     mode: Mode,
 }
 
-impl Entities {
+impl<T> Entities<T> {
     /// Create a fresh `Entities` with no entities
     pub fn new() -> Self {
         Self {
@@ -80,7 +79,7 @@ impl Entities {
     }
 
     /// Get the `Entity` with the given UID, if any
-    pub fn entity(&self, uid: &EntityUID) -> Dereference<'_, Entity> {
+    pub fn entity(&self, uid: &EntityUID) -> Dereference<'_, Entity<T>> {
         match self.entities.get(uid) {
             Some(e) => Dereference::Data(e),
             None => match self.mode {
@@ -91,7 +90,7 @@ impl Entities {
     }
 
     /// Iterate over the `Entity`s in the `Entities`
-    pub fn iter(&self) -> impl Iterator<Item = &Entity> {
+    pub fn iter(&self) -> impl Iterator<Item = &Entity<T>> {
         self.entities.values()
     }
 
@@ -100,7 +99,7 @@ impl Entities {
     /// If you pass `TCComputation::AssumeAlreadyComputed`, then the caller is
     /// responsible for ensuring that TC and DAG hold before calling this method.
     pub fn from_entities(
-        entities: impl IntoIterator<Item = Entity>,
+        entities: impl IntoIterator<Item = Entity<T>>,
         tc_computation: TCComputation,
     ) -> Result<Self> {
         let mut entity_map = entities.into_iter().map(|e| (e.uid(), e)).collect();
@@ -118,7 +117,9 @@ impl Entities {
             mode: Mode::default(),
         })
     }
+}
 
+impl Entities {
     /// Convert an `Entities` object into a JSON value suitable for parsing in
     /// via `EntityJsonParser`.
     ///
@@ -155,10 +156,10 @@ impl Entities {
     }
 }
 
-impl IntoIterator for Entities {
-    type Item = Entity;
+impl<T> IntoIterator for Entities<T> {
+    type Item = Entity<T>;
 
-    type IntoIter = hash_map::IntoValues<EntityUID, Entity>;
+    type IntoIter = hash_map::IntoValues<EntityUID, Entity<T>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.entities.into_values()
@@ -770,7 +771,7 @@ mod entities_tests {
 
     #[test]
     fn empty_entities() {
-        let e = Entities::new();
+        let e: Entities = Entities::new();
         let es = e.iter().collect::<Vec<_>>();
         assert!(es.is_empty(), "This vec should be empty");
     }
@@ -804,8 +805,8 @@ mod entities_tests {
         // Hierarchy
         // a -> b -> c
         // This isn't transitively closed, so it should fail
-        let mut e1 = Entity::with_uid(EntityUID::with_eid("a"));
-        let mut e2 = Entity::with_uid(EntityUID::with_eid("b"));
+        let mut e1: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("a"));
+        let mut e2: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("b"));
         let e3 = Entity::with_uid(EntityUID::with_eid("c"));
         e1.add_ancestor(EntityUID::with_eid("b"));
         e2.add_ancestor(EntityUID::with_eid("c"));
@@ -824,9 +825,9 @@ mod entities_tests {
         // a -> b -> c
         // a -> c
         // This is transitively closed, so it should succeed
-        let mut e1 = Entity::with_uid(EntityUID::with_eid("a"));
-        let mut e2 = Entity::with_uid(EntityUID::with_eid("b"));
-        let e3 = Entity::with_uid(EntityUID::with_eid("c"));
+        let mut e1: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("a"));
+        let mut e2: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("b"));
+        let e3: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("c"));
         e1.add_ancestor(EntityUID::with_eid("b"));
         e1.add_ancestor(EntityUID::with_eid("c"));
         e2.add_ancestor(EntityUID::with_eid("c"));

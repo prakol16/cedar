@@ -313,7 +313,7 @@ impl StaticallyTyped for Entity {
     }
 }
 
-impl TCNode<EntityUID> for Entity {
+impl<T> TCNode<EntityUID> for Entity<T> {
     fn get_key(&self) -> EntityUID {
         self.uid()
     }
