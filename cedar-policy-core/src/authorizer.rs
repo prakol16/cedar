@@ -316,7 +316,7 @@ impl Authorizer {
     fn evaluate_policies<'a>(
         &'a self,
         pset: &'a PolicySet,
-        eval: Evaluator<'_>,
+        eval: Evaluator<'_, Entities<PartialValue>>,
     ) -> EvaluationResults<'a> {
         let mut results = EvaluationResults::default();
         let mut satisfied_policies = vec![];

@@ -17,8 +17,9 @@
 //! This module contains the Cedar evaluator.
 
 use crate::ast::*;
-use crate::entities::{Dereference, Entities};
+use crate::entities::{Dereference, Entities, EntityDatabase};
 use crate::extensions::Extensions;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -44,7 +45,7 @@ mod names {
 /// Conceptually keeps the evaluation environment as part of its internal state,
 /// because we will be repeatedly invoking the evaluator on every policy in a
 /// Slice.
-pub struct Evaluator<'e> {
+pub struct Evaluator<'e, T: EntityDatabase> {
     /// `Principal` for the current request
     principal: EntityUIDEntry,
     /// `Action` for the current request
@@ -58,7 +59,7 @@ pub struct Evaluator<'e> {
     /// This is a reference, because the `Evaluator` doesn't need ownership of
     /// (or need to modify) the `Entities`. One advantage of this is that you
     /// could create multiple `Evaluator`s without copying the `Entities`.
-    entities: &'e Entities<PartialValue>,
+    entities: &'e T,
     /// Extensions which are active for this evaluation
     extensions: &'e Extensions<'e>
 }
@@ -156,7 +157,7 @@ impl Entities {
     }
 }
 
-impl<'q, 'e> Evaluator<'e> {
+impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
     /// Create a fresh `Evaluator` for the given `request`, which uses the given
     /// `Entities` to resolve entity references. Use the given `Extension`s when
     /// evaluating the request.
@@ -167,7 +168,7 @@ impl<'q, 'e> Evaluator<'e> {
     /// Does not throw errors (TODO: make this return `Self` instead of `Result<Self>`)
     pub fn new(
         q: &'q Request,
-        entities: &'e Entities<PartialValue>,
+        entities: &'e T,
         extensions: &'e Extensions<'e>,
     ) -> Result<Self> {
         Ok(Self {
@@ -415,7 +416,7 @@ impl<'q, 'e> Evaluator<'e> {
                                 Expr::binary_app(BinaryOp::In, r, arg2.into()),
                             )),
                             Dereference::NoSuchEntity => self.eval_in(uid1, None, arg2),
-                            Dereference::Data(e) => self.eval_in(uid1, Some(e), arg2),
+                            Dereference::Data(e) => self.eval_in(uid1, Some(e.as_ref()), arg2),
                         }
                     }
                     // contains, which works on Sets
@@ -636,11 +637,11 @@ impl<'q, 'e> Evaluator<'e> {
         }
     }
 
-    fn get_all_attrs(&self, uid: &EntityUID) -> Dereference<&HashMap<SmolStr, PartialValue>> {
+    fn get_all_attrs<'a>(&'a self, uid: &EntityUID) -> Dereference<Cow<'a, HashMap<SmolStr, PartialValue>>> {
         match self.entities.entity(uid) {
             Dereference::NoSuchEntity => Dereference::NoSuchEntity,
             Dereference::Residual(r) => Dereference::Residual(r),
-            Dereference::Data(e) => Dereference::Data(e.attrs())
+            Dereference::Data(e) => Dereference::Data(Entity::attrs_cow(e))
         }
     }
 
@@ -740,7 +741,7 @@ impl<'q, 'e> Evaluator<'e> {
     // GRCOV_BEGIN_COVERAGE
 }
 
-impl<'e> std::fmt::Debug for Evaluator<'e> {
+impl<'e, T: EntityDatabase> std::fmt::Debug for Evaluator<'e, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

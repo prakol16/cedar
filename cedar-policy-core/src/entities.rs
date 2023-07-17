@@ -182,6 +182,18 @@ pub trait EntityDatabase {
 
     /// Determine if this is a partial store
     fn is_partial(&self) -> bool;
+
+    /// Get the entity, returning a `Dereference` object which (base on whether the store is partial)
+    /// returns a residual or `NoSuchEntity`
+    fn entity<'e>(&'e self, uid: &EntityUID) -> Dereference<Cow<'e, Entity<PartialValue>>> {
+        match self.get(uid) {
+            Some(e) => Dereference::Data(e),
+            None => match self.is_partial() {
+                true => Dereference::Residual(Expr::unknown(format!("{uid}"))),
+                false => Dereference::NoSuchEntity,
+            },
+        }
+    }
 }
 
 impl EntityDatabase for Entities<PartialValue> {
