@@ -23,6 +23,7 @@
 pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
+use cedar_policy_core::ast::PartialValue;
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
@@ -2328,7 +2329,9 @@ pub fn eval_expression(
     expr: &Expression,
 ) -> Result<EvalResult, EvaluationError> {
     let all_ext = Extensions::all_available();
-    let eval = Evaluator::new(&request.0, &entities.0, &all_ext)
+    let entities: entities::Entities<PartialValue> = entities.0.clone().eval_attrs(&all_ext)
+        .map_err(|e| EvaluationError::StringMessage(e.to_string()))?;
+    let eval = Evaluator::new(&request.0, &entities, &all_ext)
         .map_err(|e| EvaluationError::StringMessage(e.to_string()))?;
     Ok(EvalResult::from(
         // Evaluate under the empty slot map, as an expression should not have slots
