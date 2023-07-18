@@ -27,6 +27,7 @@ use cedar_policy_core::ast::PartialValue;
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
+use cedar_policy_core::entities::Mode;
 use cedar_policy_core::entities::{ContextSchema, Dereference, JsonDeserializationError};
 use cedar_policy_core::est;
 use cedar_policy_core::evaluator::{Evaluator, RestrictedEvaluator};
@@ -41,6 +42,7 @@ use itertools::Itertools;
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::str::FromStr;
 use thiserror::Error;
@@ -84,6 +86,11 @@ impl From<SlotId> for ast::SlotId {
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq, RefCast)]
 pub struct Entity(ast::Entity);
+
+/// Entity datatype with attributes evaluated
+#[repr(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, RefCast)]
+pub struct ParsedEntity(ast::Entity<PartialValue>);
 
 impl Entity {
     /// Create a new `Entity` with this Uid, attributes, and parents.
@@ -131,6 +138,59 @@ impl Entity {
                 .map_err(|e| EvaluationError::StringMessage(e.to_string())),
         )
     }
+
+    /// Convert the entity into a `ParsedEntity` by evaluating the attributes and caching the results
+    pub fn eval_attr(self) -> Result<ParsedEntity, EvaluationError> {
+        let all_ext = Extensions::all_available();
+        let evaluator = RestrictedEvaluator::new(&all_ext);
+        let parsed = self.0.eval_attrs(&evaluator)
+            .map_err(|e| EvaluationError::StringMessage(e.to_string()))?;
+        Ok(ParsedEntity(parsed))
+    }
+}
+
+impl ParsedEntity {
+    fn cow_to_cow<'e>(e: Cow<'e, ParsedEntity>) -> Cow<'e, ast::Entity<PartialValue>> {
+        match e {
+            Cow::Borrowed(e) => Cow::Borrowed(&e.0),
+            Cow::Owned(e) => Cow::Owned(e.0),
+        }
+    }
+
+    /// Create a new `Entity` with this Uid, attributes, and parents.
+    ///
+    /// Attribute values are specified here as partial values
+    pub fn new(
+        uid: EntityUid,
+        attrs: HashMap<String, PartialValue>,
+        parents: HashSet<EntityUid>,
+    ) -> Self {
+        // note that we take a "parents" parameter here; we will compute TC when
+        // the `Entities` object is created
+        Self(ast::Entity::new(
+            uid.0,
+            attrs
+                .into_iter()
+                .map(|(k, v)| (SmolStr::from(k), v))
+                .collect(),
+            parents.into_iter().map(|uid| uid.0).collect(),
+        ))
+    }
+
+    /// Create a new `Entity` with this Uid, no attributes, and no parents.
+    pub fn with_uid(uid: EntityUid) -> Self {
+        Self(ast::Entity::with_uid(uid.0))
+    }
+
+    /// Get the Uid of this entity
+    pub fn uid(&self) -> EntityUid {
+        EntityUid(self.0.uid())
+    }
+
+    /// Get the value for the given attribute, or `None` if not present.
+    pub fn attr(&self, attr: &str) -> Option<&PartialValue> {
+        self.0.get(attr)
+    }
 }
 
 impl std::fmt::Display for Entity {
@@ -145,7 +205,22 @@ impl std::fmt::Display for Entity {
 #[derive(Debug, Clone, Default, PartialEq, Eq, RefCast)]
 pub struct Entities(pub(crate) entities::Entities);
 
+/// Represents an entity hierarchy, and allows looking up `Entity` objects by
+/// Uid.
+#[repr(transparent)]
+#[derive(Debug, Clone, Default, RefCast)]
+pub struct ParsedEntities(pub(crate) entities::Entities<PartialValue>);
+
 pub use entities::EntitiesError;
+
+/// Something that can return entities
+pub trait EntityDatabase {
+    /// Get the `Entity` with the given Uid, if any
+    fn get<'e>(&'e self, uid: &EntityUid) -> Option<Cow<'e, ParsedEntity>>;
+
+    /// Whether the database is partial
+    fn partial_mode(&self) -> Mode;
+}
 
 impl Entities {
     /// Create a fresh `Entities` with no entities
@@ -277,6 +352,86 @@ impl Entities {
     }
 }
 
+
+impl ParsedEntities {
+    /// Create a fresh `ParsedEntities` with no entities
+    pub fn empty() -> Self {
+        Self(entities::Entities::new())
+    }
+
+    /// Get the `Entity` with the given Uid, if any
+    pub fn get(&self, uid: &EntityUid) -> Option<&ParsedEntity> {
+        match self.0.entity(&uid.0) {
+            Dereference::Residual(_) | Dereference::NoSuchEntity => None,
+            Dereference::Data(e) => Some(ParsedEntity::ref_cast(e)),
+        }
+    }
+
+    /// Transform the store into a partial store, where
+    /// attempting to dereference a non-existent `EntityUID` results in
+    /// a residual instead of an error.
+    #[must_use]
+    #[cfg(feature = "partial-eval")]
+    pub fn partial(self) -> Self {
+        Self(self.0.partial())
+    }
+
+    /// Iterate over the `Entity`'s in the `Entities`
+    pub fn iter(&self) -> impl Iterator<Item = &ParsedEntity> {
+        self.0.iter().map(ParsedEntity::ref_cast)
+    }
+
+    /// Create an `Entities` object with the given entities
+    /// It will error if the entities cannot be read or if the entities hierarchy is cyclic
+    pub fn from_entities(
+        entities: impl IntoIterator<Item = ParsedEntity>,
+    ) -> Result<Self, entities::EntitiesError> {
+        entities::Entities::from_entities(
+            entities.into_iter().map(|e| e.0),
+            entities::TCComputation::ComputeNow,
+        )
+        .map(ParsedEntities)
+    }
+
+    /// Is entity `a` an ancestor of entity `b`?
+    /// Same semantics as `b in a` in the Cedar language
+    pub fn is_ancestor_of(&self, a: &EntityUid, b: &EntityUid) -> bool {
+        match self.0.entity(&b.0) {
+            Dereference::Data(b) => b.is_descendant_of(&a.0),
+            _ => a == b, // if b doesn't exist, `b in a` is only true if `b == a`
+        }
+    }
+
+    /// Get an iterator over the ancestors of the given Euid.
+    /// Returns `None` if the given `Euid` does not exist.
+    pub fn ancestors<'a>(
+        &'a self,
+        euid: &EntityUid,
+    ) -> Option<impl Iterator<Item = &'a EntityUid>> {
+        let entity = match self.0.entity(&euid.0) {
+            Dereference::Residual(_) | Dereference::NoSuchEntity => None,
+            Dereference::Data(e) => Some(e),
+        }?;
+        Some(entity.ancestors().map(EntityUid::ref_cast))
+    }
+
+}
+
+/// Wrapper for entity database object (needed to implement foreign trait)
+#[repr(transparent)]
+#[derive(RefCast)]
+struct EntityDatabaseWrapper<T: EntityDatabase>(T);
+
+impl<T: EntityDatabase> entities::EntityDatabase for EntityDatabaseWrapper<T> {
+    fn get<'e>(&'e self, uid: &ast::EntityUID) -> Option<Cow<'e, ast::Entity<PartialValue>>> {
+        self.0.get(EntityUid::ref_cast(uid)).map(|e| ParsedEntity::cow_to_cow(e))
+    }
+
+    fn partial_mode(&self) -> Mode {
+        self.0.partial_mode()
+    }
+}
+
 /// Authorizer object, which provides responses to authorization queries
 #[repr(transparent)]
 #[derive(Debug, RefCast)]
@@ -303,20 +458,7 @@ impl Authorizer {
         self.0.is_authorized(&r.0, &p.ast, &e.0).into()
     }
 
-    /// A partially evaluated authorization request.
-    /// The Authorizer will attempt to make as much progress as possible in the presence of unknowns.
-    /// If the Authorizer can reach a response, it will return that response.
-    /// Otherwise, it will return a list of residual policies that still need to be evaluated.
-    #[cfg(feature = "partial-eval")]
-    pub fn is_authorized_partial(
-        &self,
-        query: &Request,
-        policy_set: &PolicySet,
-        entities: &Entities,
-    ) -> PartialResponse {
-        let response = self
-            .0
-            .is_authorized_core(&query.0, &policy_set.ast, &entities.0);
+    fn handle_partial_response(response: authorizer::ResponseKind) -> PartialResponse {
         match response {
             authorizer::ResponseKind::FullyEvaluated(a) => PartialResponse::Concrete(Response {
                 decision: a.decision,
@@ -334,6 +476,35 @@ impl Authorizer {
             }),
         }
     }
+
+    /// Returns an authorization response for `q` with respect to the given `Slice`.
+    /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
+    #[cfg(feature = "partial-eval")]
+    pub fn is_authorized_parsed<T: EntityDatabase>(&self, r: &Request, p: &PolicySet, e: &T) -> PartialResponse {
+        Authorizer::handle_partial_response(
+            self.0.is_authorized_core_parsed(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e))
+        )
+    }
+
+    /// A partially evaluated authorization request.
+    /// The Authorizer will attempt to make as much progress as possible in the presence of unknowns.
+    /// If the Authorizer can reach a response, it will return that response.
+    /// Otherwise, it will return a list of residual policies that still need to be evaluated.
+    #[cfg(feature = "partial-eval")]
+    pub fn is_authorized_partial(
+        &self,
+        query: &Request,
+        policy_set: &PolicySet,
+        entities: &Entities,
+    ) -> PartialResponse {
+        let response = self
+            .0
+            .is_authorized_core(&query.0, &policy_set.ast, &entities.0);
+        Authorizer::handle_partial_response(response)
+    }
+
+    // #[cfg(feature = "partial-eval")]
+
 }
 
 /// Authorization response returned from the `Authorizer`

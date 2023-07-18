@@ -139,7 +139,8 @@ impl<'e> RestrictedEvaluator<'e> {
 }
 
 impl Entity {
-    fn eval_attrs(self, eval: &RestrictedEvaluator<'_>) -> Result<Entity<PartialValue>> {
+    /// Evaluate the attributes in the entity, using the given evaluator
+    pub fn eval_attrs(self, eval: &RestrictedEvaluator<'_>) -> Result<Entity<PartialValue>> {
         self.map_attrs(|v| {
             eval.partial_interpret(v.as_borrowed())
         })
