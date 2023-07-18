@@ -81,6 +81,7 @@ impl<T> Entities<T> {
     /// Transform the store into a partial store, where
     /// attempting to dereference a non-existent EntityUID results in
     /// a residual instead of an error.
+    #[cfg(feature = "partial-eval")]
     pub fn partial(self) -> Self {
         Self {
             entities: self.entities,
@@ -94,6 +95,7 @@ impl<T> Entities<T> {
             Some(e) => Dereference::Data(e),
             None => match self.mode {
                 Mode::Concrete => Dereference::NoSuchEntity,
+                #[cfg(feature = "partial-eval")]
                 Mode::Partial => Dereference::Residual(Expr::unknown(format!("{uid}"))),
             },
         }
@@ -271,6 +273,7 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Concrete,
+    #[cfg(feature = "partial-eval")]
     Partial,
 }
 
@@ -313,6 +316,7 @@ mod json_parsing_tests {
     use super::*;
     use crate::extensions::Extensions;
 
+    #[cfg(feature = "partial-eval")]
     #[test]
     fn basic_partial() {
         // Alice -> Jane -> Bob
@@ -403,6 +407,7 @@ mod json_parsing_tests {
         )
     }
 
+    #[cfg(feature = "ipaddr")]
     /// this one uses `__expr`, `__entity`, and `__extn` escapes, in various positions
     #[test]
     fn more_escapes() {
@@ -1015,6 +1020,7 @@ mod schema_based_parsing_tests {
         }
     }
 
+    #[cfg(feature = "ipaddr")]
     /// JSON that should parse differently with and without the above schema
     #[test]
     fn with_and_without_schema() {
@@ -1209,6 +1215,7 @@ mod schema_based_parsing_tests {
         );
     }
 
+    #[cfg(feature = "ipaddr")]
     /// simple type mismatch with expected type
     #[test]
     fn type_mismatch_string_long() {
@@ -1254,6 +1261,7 @@ mod schema_based_parsing_tests {
         );
     }
 
+    #[cfg(feature = "ipaddr")]
     /// another simple type mismatch with expected type
     #[test]
     fn type_mismatch_entity_record() {
@@ -1300,6 +1308,7 @@ mod schema_based_parsing_tests {
         );
     }
 
+    #[cfg(feature = "ipaddr")]
     /// type mismatch where we expect a set and get just a single element
     #[test]
     fn type_mismatch_set_element() {
@@ -1342,6 +1351,7 @@ mod schema_based_parsing_tests {
         );
     }
 
+    #[cfg(feature = "ipaddr")]
     /// type mismatch where we just get the wrong entity type
     #[test]
     fn type_mismatch_entity_types() {
@@ -1387,6 +1397,7 @@ mod schema_based_parsing_tests {
         );
     }
 
+    #[cfg(feature = "ipaddr")]
     /// type mismatch where we're expecting an extension type and get a
     /// different extension type
     #[test]
@@ -1433,6 +1444,7 @@ mod schema_based_parsing_tests {
         );
     }
 
+    #[cfg(feature = "ipaddr")]
     #[test]
     fn missing_record_attr() {
         // missing a record attribute entirely
@@ -1477,6 +1489,7 @@ mod schema_based_parsing_tests {
         );
     }
 
+    #[cfg(feature = "ipaddr")]
     /// record attribute has the wrong type
     #[test]
     fn type_mismatch_in_record_attr() {
@@ -1553,6 +1566,7 @@ mod schema_based_parsing_tests {
             .expect("this version with explicit __entity and __extn escapes should also pass");
     }
 
+    #[cfg(feature = "ipaddr")]
     /// unexpected record attribute
     #[test]
     fn unexpected_record_attr() {
@@ -1643,6 +1657,7 @@ mod schema_based_parsing_tests {
         );
     }
 
+    #[cfg(feature = "ipaddr")]
     /// unexpected entity attribute
     #[test]
     fn unexpected_entity_attr() {
@@ -1691,6 +1706,7 @@ mod schema_based_parsing_tests {
         );
     }
 
+    #[cfg(feature = "ipaddr")]
     /// Test that involves parents of wrong types
     #[test]
     fn parents_wrong_type() {
