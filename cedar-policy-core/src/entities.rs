@@ -21,7 +21,6 @@ use crate::transitive_closure::{compute_tc, enforce_tc_and_dag};
 use std::borrow::Cow;
 use std::collections::{hash_map, HashMap};
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -290,8 +289,7 @@ impl Default for Mode {
     }
 }
 
-impl<T> Default for Entities<T>
-    where T: DeserializeOwned + Serialize + Clone + PartialEq + Eq {
+impl<T> Default for Entities<T> {
     fn default() -> Self {
         Self {
             entities: Default::default(),
@@ -858,8 +856,8 @@ mod entities_tests {
         // Hierarchy
         // a -> b -> c
         // This isn't transitively closed, so it should fail
-        let mut e1: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("a"));
-        let mut e2: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("b"));
+        let mut e1: Entity = Entity::with_uid(EntityUID::with_eid("a"));
+        let mut e2: Entity = Entity::with_uid(EntityUID::with_eid("b"));
         let e3 = Entity::with_uid(EntityUID::with_eid("c"));
         e1.add_ancestor(EntityUID::with_eid("b"));
         e2.add_ancestor(EntityUID::with_eid("c"));
@@ -878,9 +876,9 @@ mod entities_tests {
         // a -> b -> c
         // a -> c
         // This is transitively closed, so it should succeed
-        let mut e1: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("a"));
-        let mut e2: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("b"));
-        let e3: Entity<RestrictedExpr> = Entity::with_uid(EntityUID::with_eid("c"));
+        let mut e1: Entity = Entity::with_uid(EntityUID::with_eid("a"));
+        let mut e2: Entity = Entity::with_uid(EntityUID::with_eid("b"));
+        let e3: Entity = Entity::with_uid(EntityUID::with_eid("c"));
         e1.add_ancestor(EntityUID::with_eid("b"));
         e1.add_ancestor(EntityUID::with_eid("c"));
         e2.add_ancestor(EntityUID::with_eid("c"));
