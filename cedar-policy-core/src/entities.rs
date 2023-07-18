@@ -47,7 +47,8 @@ pub struct Entities<T = RestrictedExpr> {
     /// Important internal invariant: for any `Entities` object that exists, the
     /// the `ancestor` relation is transitively closed.
     /// TODO: manually implement this (not sure why it doesn't work with generics)
-    // #[serde_as(as = "Vec<(_, _)>")]
+    #[serde_as(as = "Vec<(_, _)>")]
+    #[serde(bound(deserialize = "T: Deserialize<'de>", serialize = "T: Serialize"))]
     entities: HashMap<EntityUID, Entity<T>>,
 
     /// The mode flag determines whether this store functions as a partial store or
