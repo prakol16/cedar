@@ -184,16 +184,17 @@ pub trait EntityDatabase {
     fn get<'e>(&'e self, uid: &EntityUID) -> Option<Cow<'e, Entity<PartialValue>>>;
 
     /// Determine if this is a partial store
-    fn is_partial(&self) -> bool;
+    fn partial_mode(&self) -> Mode;
 
     /// Get the entity, returning a `Dereference` object which (base on whether the store is partial)
     /// returns a residual or `NoSuchEntity`
     fn entity<'e>(&'e self, uid: &EntityUID) -> Dereference<Cow<'e, Entity<PartialValue>>> {
         match self.get(uid) {
             Some(e) => Dereference::Data(e),
-            None => match self.is_partial() {
-                true => Dereference::Residual(Expr::unknown(format!("{uid}"))),
-                false => Dereference::NoSuchEntity,
+            None => match self.partial_mode() {
+                Mode::Concrete => Dereference::NoSuchEntity,
+                #[cfg(feature = "partial-eval")]
+                Mode::Partial => Dereference::Residual(Expr::unknown(format!("{uid}"))),
             },
         }
     }
@@ -204,8 +205,9 @@ impl EntityDatabase for Entities<PartialValue> {
         self.entities.get(uid).map(Cow::Borrowed)
     }
 
-    fn is_partial(&self) -> bool {
-        self.mode == Mode::Partial
+
+    fn partial_mode(&self) -> Mode {
+        self.mode
     }
 }
 
@@ -270,10 +272,15 @@ where
     }
 }
 
+/// The mode of an entity store
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
+pub enum Mode {
+    /// The store is a concrete store, meaning that if an entity does not exist
+    /// the evaluator should throw an error
     Concrete,
     #[cfg(feature = "partial-eval")]
+    /// The store is a partial store, meaning that if an entity does not exist
+    /// the evaluator should return a residual
     Partial,
 }
 
