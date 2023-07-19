@@ -27,7 +27,7 @@ use cedar_policy_core::ast::PartialValue;
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
-use cedar_policy_core::entities::Mode;
+pub use cedar_policy_core::entities::Mode;
 use cedar_policy_core::entities::{ContextSchema, Dereference, JsonDeserializationError};
 use cedar_policy_core::est;
 use cedar_policy_core::evaluator::{Evaluator, RestrictedEvaluator};
@@ -458,6 +458,7 @@ impl Authorizer {
         self.0.is_authorized(&r.0, &p.ast, &e.0).into()
     }
 
+    #[cfg(feature = "partial-eval")]
     fn handle_partial_response(response: authorizer::ResponseKind) -> PartialResponse {
         match response {
             authorizer::ResponseKind::FullyEvaluated(a) => PartialResponse::Concrete(Response {
