@@ -25,10 +25,10 @@ impl EntitySQLTypeFetcher {
         }
     }
 
-    pub fn new_default(table_name: &'static str, attr_names: Vec<&'static str>) -> Self {
+    pub fn new_default(table_name: &'static str, attr_names: &[&'static str]) -> Self {
         Self {
             table_name,
-            attr_names: attr_names.clone(),
+            attr_names: attr_names.into(),
             converter: Box::new(EntitySQLAttrConverterImpl::of_names(attr_names))
         }
     }
@@ -80,9 +80,9 @@ impl EntitySQLAttrConverterImpl {
         }
     }
 
-    pub fn of_names(attr_names: Vec<&'static str>) -> Self {
+    pub fn of_names(attr_names: &[&'static str]) -> Self {
         Self {
-            attr_names: attr_names.into_iter().enumerate().map(|(i, n)| (i, n)).collect()
+            attr_names: attr_names.into_iter().enumerate().map(|(n, v)| (n, *v)).collect()
         }
     }
 }
