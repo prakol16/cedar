@@ -28,17 +28,19 @@ pub struct EntitySQLFetcher<'e, T = EntitySQLAttrConverterImpl<'e>, U = EntitySQ
           {
     conn: &'e Connection,
     table_name: &'e str,
+    id_attr_name: &'e str,
     attr_names: String,
     converter: T,
     ancestors: U
 }
 
 impl<'e, T: EntitySQLAttrConverter, U: EntitySQLAncestorFetcher> EntitySQLFetcher<'e, T, U> {
-    pub fn new(conn: &'e Connection, table_name: &'e str, attr_names: &[&str], converter: T, ancestors: U) -> Self {
+    pub fn new(conn: &'e Connection, table_name: &'e str, id_attr_name: &'e str, attr_names: &[&str], converter: T, ancestors: U) -> Self {
         let attr_names_string: String = attr_names.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<String>>().join(", ");
         Self {
             conn,
             table_name,
+            id_attr_name,
             attr_names: attr_names_string,
             converter,
             ancestors
@@ -51,7 +53,7 @@ impl<'a, T: EntitySQLAttrConverter> EntityFetcher for EntitySQLFetcher<'a, T> {
         // TODO: escape attr names and table_name?
         let query = format!("SELECT {} FROM \"{}\" WHERE uid = ?", self.attr_names, self.table_name);
          self.conn.query_row(&query,
-            &[id.as_ref()], |row| Ok((self.converter.convert(row)?, self.ancestors.get_ancestors(self.conn, row)?)))
+            &[id.as_ref()], |row| Ok((self.converter.convert(row)?, self.ancestors.get_ancestors(id, self.conn, row)?)))
             .optional().expect("SQL query failed")  // TODO: if panic, return a result (maybe make return type Result<Option<...>>?)
     }
 }
@@ -63,6 +65,7 @@ impl<'e> EntitySQLFetcher<'e> {
         EntitySQLFetcher::new(
             conn,
             table_name,
+            "uid",
             &attr_names_with_ancestor,
             EntitySQLAttrConverterImpl::of_names(attr_names),
             EntitySQLAncestorFetcherByAttr::new(attr_names.len())
@@ -76,7 +79,7 @@ pub trait EntitySQLAttrConverter {
 }
 
 pub trait EntitySQLAncestorFetcher {
-    fn get_ancestors(&self, conn: &Connection, query_result: &Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error>;
+    fn get_ancestors(&self, id: &EntityId, conn: &Connection, query_result: &Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error>;
 }
 
 pub struct EntitySQLAttrConverterImpl<'e> {
@@ -88,6 +91,18 @@ pub struct EntitySQLAncestorFetcherByAttr {
     attr_index: usize
 }
 
+pub struct EntitySQLAncestorFetcherByTable {
+    query_string: String
+}
+
+impl EntitySQLAncestorFetcherByTable {
+    fn new(table_name: &str, child_attr: &str, parent_attr: &str) -> Self {
+        Self {
+            query_string: format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = ?" , parent_attr, table_name, child_attr)
+        }
+    }
+}
+
 impl EntitySQLAncestorFetcherByAttr {
     fn new(attr_index: usize) -> Self {
         Self {
@@ -96,8 +111,18 @@ impl EntitySQLAncestorFetcherByAttr {
     }
 }
 
+impl EntitySQLAncestorFetcher for EntitySQLAncestorFetcherByTable {
+    fn get_ancestors(&self, id: &EntityId, conn: &Connection, _: &Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error> {
+        let mut stmt = conn.prepare(&self.query_string).unwrap();
+        stmt.query_and_then(&[id.as_ref()], |row| {
+            todo!()
+        });
+        todo!()
+    }
+}
+
 impl EntitySQLAncestorFetcher for EntitySQLAncestorFetcherByAttr {
-    fn get_ancestors(&self, _conn: &Connection, row: &Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error> {
+    fn get_ancestors(&self, _: &EntityId, _: &Connection, row: &Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error> {
         serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(self.attr_index)?)
             .map_err(|e| FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?
             .as_array().ok_or(rusqlite::Error::InvalidQuery)? // TODO: make an error type
