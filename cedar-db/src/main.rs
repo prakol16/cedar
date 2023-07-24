@@ -15,17 +15,13 @@ fn main() {
         ("Photos".parse().unwrap(), EntitySQLFetcher::simple(&conn, "photos", &["title", "location"], "ancestors"))
     ]));
 
-    println!("Alice: {:?}", table.get(&"Users::\"0\"".parse().unwrap()));
-
-    // let auth = Authorizer::new();
-    // let euid: EntityUid = "Users::\"0\"".parse().unwrap();
-    // let result = auth.is_authorized_parsed(
-    //     &Request::new(Some(euid.clone()),
-    //         Some("Actions::\"view\"".parse().unwrap()),
-    //         Some("Photos::\"20\"".parse().unwrap()), Context::empty())
-    //     , &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
-    //     &table);
-    // println!("Result {:?}", result);
-
-    // println!("Euid: {}", euid.to_json_implicit());
+    let auth = Authorizer::new();
+    let euid: EntityUid = "Users::\"0\"".parse().unwrap();
+    let result = auth.is_authorized_parsed(
+        &Request::new(Some(euid.clone()),
+            Some("Actions::\"view\"".parse().unwrap()),
+            Some("Photos::\"20\"".parse().unwrap()), Context::empty())
+        , &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
+        &table);
+    println!("Result {:?}", result);
 }
