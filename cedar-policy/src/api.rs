@@ -1250,6 +1250,12 @@ impl EntityUid {
         ))
     }
 
+    /// Convert this `EntityUid` to a JSON value, which will have the implicit encoding
+    pub fn to_json_implicit(&self) -> serde_json::Value {
+        let euid_json = entities::EntityUidJSON::from_euid_implicit_escape(&self.0);
+        serde_json::to_value(euid_json).unwrap()
+    }
+
     /// Testing utility for creating `EntityUids` a bit easier
     #[cfg(test)]
     pub(crate) fn from_strs(typename: &str, id: &str) -> Self {

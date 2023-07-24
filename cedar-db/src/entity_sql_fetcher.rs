@@ -1,36 +1,65 @@
 use std::{collections::{HashMap, HashSet}, borrow::Cow};
 
-use cedar_policy::{EntityTypeName, PartialValue, EntityUid, EntityDatabase, ParsedEntity, Mode};
+use cedar_policy::{EntityTypeName, PartialValue, EntityUid, EntityId, EntityDatabase, Mode, ParsedEntity};
 use ref_cast::RefCast;
 use rusqlite::{Connection, Row, OptionalExtension, types::{FromSql, ValueRef}};
 
 
-pub struct EntitySQLFetchTable {
-    conn: Connection,
-    table: &'static HashMap<EntityTypeName, EntitySQLTypeFetcher>
+pub struct EntityFetchTable<T: EntityFetcher>(pub HashMap<EntityTypeName, T>);
+
+pub trait EntityFetcher {
+    fn get<'e>(&'e self, uid: &EntityId) -> Option<(HashMap<String, PartialValue>, HashSet<EntityUid>)>;
 }
 
-pub struct EntitySQLTypeFetcher {
-    table_name: &'static str,
-    attr_names: Vec<&'static str>,
-    converter: Box<dyn EntitySQLAttrConverter + Send + Sync>,
+impl<T: EntityFetcher> EntityDatabase for EntityFetchTable<T> {
+    fn get<'e>(&'e self, uid: &EntityUid) -> Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>> {
+        let (attrs, parents) = self.0.get(&uid.type_name())?.get(uid.id())?;
+        Some(Cow::Owned(ParsedEntity::new(uid.clone(), attrs, parents)))
+    }
+
+    fn partial_mode(&self) -> cedar_policy::Mode {
+        Mode::Partial
+    }
 }
 
-impl EntitySQLTypeFetcher {
-    pub fn new(table_name: &'static str, attr_names: Vec<&'static str>, converter:  Box<dyn EntitySQLAttrConverter + Send + Sync>) -> Self {
+pub struct EntitySQLFetcher<'e, T: EntitySQLAttrConverter = EntitySQLAttrConverterImpl<'e>> {
+    conn: &'e Connection,
+    table_name: &'e str,
+    attr_names: String,
+    converter: T,
+}
+
+impl<'e, T: EntitySQLAttrConverter> EntitySQLFetcher<'e, T> {
+    pub fn new(conn: &'e Connection, table_name: &'e str, attr_names: &[&str], converter: T) -> Self {
+        let attr_names_string: String = attr_names.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<String>>().join(", ");
         Self {
+            conn,
             table_name,
-            attr_names,
+            attr_names: attr_names_string,
             converter
         }
     }
+}
 
-    pub fn new_default(table_name: &'static str, attr_names: &[&'static str]) -> Self {
-        Self {
+impl<'a, T: EntitySQLAttrConverter> EntityFetcher for EntitySQLFetcher<'a, T> {
+    fn get<'e>(&'e self, id: &EntityId) -> Option<(HashMap<String, PartialValue>, HashSet<EntityUid>)> {
+        // TODO: escape attr names and table_name?
+        let query = format!("SELECT {} FROM \"{}\" WHERE uid = ?", self.attr_names, self.table_name);
+        let attrs: Option<HashMap<String, PartialValue>> = self.conn.query_row(&query,
+            &[id.as_ref()], |row| self.converter.convert(row))
+            .optional().expect("SQL query failed");  // TODO: if panic, return a result (maybe make return type Result<Option<...>>?)
+        Some((attrs?, HashSet::new()))
+    }
+}
+
+impl<'e> EntitySQLFetcher<'e> {
+    pub fn new_default(conn: &'e Connection, table_name: &'e str, attr_names: &[&'e str]) -> Self {
+        EntitySQLFetcher::new(
+            conn,
             table_name,
-            attr_names: attr_names.into(),
-            converter: Box::new(EntitySQLAttrConverterImpl::of_names(attr_names))
-        }
+            attr_names,
+            EntitySQLAttrConverterImpl::of_names(attr_names)
+        )
     }
 }
 
@@ -39,18 +68,9 @@ pub trait EntitySQLAttrConverter {
     fn convert(&self, query_result: &Row) -> Result<HashMap<String, PartialValue>, rusqlite::Error>;
 }
 
-impl EntitySQLFetchTable {
-    pub fn new(conn: Connection, table: &'static HashMap<EntityTypeName, EntitySQLTypeFetcher>) -> Self {
-        Self {
-            conn,
-            table
-        }
-    }
-}
-
-pub struct EntitySQLAttrConverterImpl {
+pub struct EntitySQLAttrConverterImpl<'e> {
     // TODO: allow type checking?
-    attr_names: Vec<(usize, &'static str)>,
+    attr_names: Vec<(usize, &'e str)>,
 }
 
 #[derive(Debug, Clone, PartialEq, RefCast)]
@@ -73,21 +93,21 @@ impl FromSql for SQLPartialValue {
     }
 }
 
-impl EntitySQLAttrConverterImpl {
-    pub fn new(attr_names: Vec<(usize, &'static str)>) -> Self {
+impl<'e> EntitySQLAttrConverterImpl<'e> {
+    pub fn new(attr_names: Vec<(usize, &'e str)>) -> Self {
         Self {
             attr_names
         }
     }
 
-    pub fn of_names(attr_names: &[&'static str]) -> Self {
+    pub fn of_names(attr_names: &[&'e str]) -> Self {
         Self {
             attr_names: attr_names.into_iter().enumerate().map(|(n, v)| (n, *v)).collect()
         }
     }
 }
 
-impl EntitySQLAttrConverter for EntitySQLAttrConverterImpl {
+impl<'e> EntitySQLAttrConverter for EntitySQLAttrConverterImpl<'e> {
     fn convert(&self, query_result: &Row) -> Result<HashMap<String, PartialValue>, rusqlite::Error> {
         self.attr_names.iter()
             .filter_map(|(ind, nm)| {
@@ -98,26 +118,5 @@ impl EntitySQLAttrConverter for EntitySQLAttrConverterImpl {
                 }
             })
             .collect()
-    }
-}
-
-impl EntityDatabase for EntitySQLFetchTable {
-    fn get<'e>(&'e self, uid: &EntityUid) -> Option<Cow<'e, ParsedEntity>> {
-        let type_fetcher = self.table.get(&uid.type_name())?;
-        // TODO: escape attr names and table_name?
-        let query = format!("SELECT {} FROM \"{}\" WHERE uid = ?",
-            type_fetcher.attr_names
-            .iter()
-            .map(|x| format!("\"{}\"", x))
-            .collect::<Vec<String>>()
-            .join(", "), type_fetcher.table_name);
-        let result: Option<HashMap<String, PartialValue>> = self.conn.query_row(&query,
-            &[uid.id().as_ref()], |row| type_fetcher.converter.convert(row))
-            .optional().expect("SQL query failed");  // TODO: if panic, return a result (maybe make return type Result<Option<...>>?)
-        result.map(|attrs| Cow::Owned(ParsedEntity::new(uid.clone(), attrs, HashSet::new())))
-    }
-
-    fn partial_mode(&self) -> Mode {
-        Mode::Partial
     }
 }
