@@ -51,7 +51,7 @@ impl<'e, T: EntitySQLAttrConverter, U: EntitySQLAncestorFetcher> EntitySQLFetche
 impl<'a, T: EntitySQLAttrConverter> EntityFetcher for EntitySQLFetcher<'a, T> {
     fn get<'e>(&'e self, id: &EntityId) -> Option<(HashMap<String, PartialValue>, HashSet<EntityUid>)> {
         // TODO: escape attr names and table_name?
-        let query = format!("SELECT {} FROM \"{}\" WHERE uid = ?", self.attr_names, self.table_name);
+        let query = format!("SELECT {} FROM \"{}\" WHERE \"{}\" = ?", self.attr_names, self.table_name, self.id_attr_name);
          self.conn.query_row(&query,
             &[id.as_ref()], |row| Ok((self.converter.convert(row)?, self.ancestors.get_ancestors(id, self.conn, row)?)))
             .optional().expect("SQL query failed")  // TODO: if panic, return a result (maybe make return type Result<Option<...>>?)
@@ -91,10 +91,12 @@ pub struct EntitySQLAncestorFetcherByAttr {
     attr_index: usize
 }
 
+// TODO: Finish implementing this
 pub struct EntitySQLAncestorFetcherByTable {
     query_string: String
 }
 
+#[allow(dead_code)]
 impl EntitySQLAncestorFetcherByTable {
     fn new(table_name: &str, child_attr: &str, parent_attr: &str) -> Self {
         Self {
@@ -111,12 +113,16 @@ impl EntitySQLAncestorFetcherByAttr {
     }
 }
 
+/// Should fetch ancestors based on a dedicated table for entities of this type
+/// TODO: how should the table organize the different types of ancestors?
+/// Or do we just make requests to all tables of ancestors?
+#[allow(unused_mut, unused_variables)]
 impl EntitySQLAncestorFetcher for EntitySQLAncestorFetcherByTable {
     fn get_ancestors(&self, id: &EntityId, conn: &Connection, _: &Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error> {
         let mut stmt = conn.prepare(&self.query_string).unwrap();
-        stmt.query_and_then(&[id.as_ref()], |row| {
-            todo!()
-        });
+        // stmt.query_and_then(&[id.as_ref()], |row| {
+        //     todo!()
+        // });
         todo!()
     }
 }
