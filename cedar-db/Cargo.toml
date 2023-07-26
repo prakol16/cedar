@@ -29,9 +29,3 @@ glob = "0.3.1"
 
 [lib]
 crate_type = ["rlib"]
-
-# We override the name of the binary for src/main.rs, which otherwise would be
-# cedar-cli (matching the crate name).
-[[bin]]
-name = "cedar"
-path = "src/main.rs"
