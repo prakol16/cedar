@@ -23,6 +23,7 @@
 pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
+use cedar_policy_core::ast::Literal;
 pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for PartialValue
 pub use cedar_policy_core::ast::Value; // TODO: add API for Value
 use cedar_policy_core::authorizer;
@@ -486,6 +487,12 @@ impl Authorizer {
         Authorizer::handle_partial_response(
             self.0.is_authorized_core_parsed(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e))
         )
+    }
+
+    /// Return an authorization response for `q` with respect to the given `Slice`.
+    /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
+    pub fn is_authorized_full_parsed<T: EntityDatabase>(&self, r: &Request, p: &PolicySet, e: &T) -> Response {
+        self.0.is_authorized_parsed(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e)).into()
     }
 
     /// A partially evaluated authorization request.
@@ -1285,6 +1292,12 @@ impl FromStr for EntityUid {
 impl std::fmt::Display for EntityUid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl From<EntityUid> for Value {
+    fn from(value: EntityUid) -> Self {
+        Value::Lit(value.0.into())
     }
 }
 

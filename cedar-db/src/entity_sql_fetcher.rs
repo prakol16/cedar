@@ -29,7 +29,11 @@ impl FromSql for SQLPartialValue {
 
 #[derive(Debug, Clone, PartialEq, RefCast)]
 #[repr(transparent)]
-struct EntitySQLId(EntityId);
+pub struct EntitySQLId(EntityId);
+
+impl EntitySQLId {
+    pub fn id(self) -> EntityId { self.0 }
+}
 
 impl FromSql for EntitySQLId {
     fn column_result(value: ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
@@ -52,7 +56,9 @@ pub struct EntitySQLInfo<'e> {
 
 impl<'e> EntitySQLInfo<'e> {
     pub fn new(table: &'e str, id_attr: &'e str, sql_attr_names: Vec<&'e str>, attr_names: Vec<(usize, &'e str)>, ancestor_attr_ind: Option<usize>) -> Self {
-        let attr_names_string: String = sql_attr_names.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<String>>().join(", ");
+        let attr_names_string: String =
+            if sql_attr_names.is_empty() { "*".into() }
+            else { sql_attr_names.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<String>>().join(", ") };
         Self {
             table,
             id_attr,
@@ -93,11 +99,26 @@ impl<'e> EntitySQLInfo<'e> {
         })
     }
 
+    pub fn get_query_string(&self) -> &str {
+        return &self.query_string;
+    }
+
     pub fn make_entity(&self, conn: &Connection, uid: &EntityUid, ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error>)
         -> Option<ParsedEntity> {
         make_entity_from_table(conn, uid, &self.query_string,
             |row| convert_attr_names(row, &self.attr_names),
             ancestors)
+    }
+
+    pub fn make_entity_extra_attrs(&self, conn: &Connection, uid: &EntityUid, ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error>,
+        extra_attrs: impl FnOnce(&Row<'_>) -> Result<HashMap<String, PartialValue>, rusqlite::Error>)
+        -> Option<ParsedEntity> {
+        make_entity_from_table(conn, uid, &self.query_string,
+            |row| {
+                let mut attrs = convert_attr_names(row, &self.attr_names)?;
+                attrs.extend(extra_attrs(row)?);
+                Ok(attrs)
+            }, ancestors)
     }
 }
 
@@ -119,7 +140,7 @@ impl<'e> AncestorSQLInfo<'e> {
     }
 
     pub fn get_ancestors(&self, conn: &Connection, id: &EntityId, tp: &EntityTypeName) -> HashSet<EntityUid> {
-        println!("Running query: {}", self.query_string);
+        println!("Running query {} with params {}", self.query_string, id.as_ref());
         let mut stmt = conn.prepare(&self.query_string).expect("Failed to prepare statement");
         stmt.query_map(&[id.as_ref()], |row| -> Result<EntityUid, Error> {
             let parent_id: EntitySQLId = row.get(0)?;
