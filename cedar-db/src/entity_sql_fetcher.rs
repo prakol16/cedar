@@ -140,7 +140,7 @@ impl<'e> AncestorSQLInfo<'e> {
     }
 
     pub fn get_ancestors(&self, conn: &Connection, id: &EntityId, tp: &EntityTypeName) -> HashSet<EntityUid> {
-        println!("Running query {} with params {}", self.query_string, id.as_ref());
+        // println!("Running query {} with params {}", self.query_string, id.as_ref());
         let mut stmt = conn.prepare(&self.query_string).expect("Failed to prepare statement");
         stmt.query_map(&[id.as_ref()], |row| -> Result<EntityUid, Error> {
             let parent_id: EntitySQLId = row.get(0)?;
