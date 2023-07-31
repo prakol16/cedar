@@ -181,7 +181,7 @@ impl Authorizer {
                     Decision::Deny,
                     HashSet::new(),
                     vec![AuthorizationError::AttributeEvaluationError(e)],
-                ));
+                ))
             }
         }
     }
