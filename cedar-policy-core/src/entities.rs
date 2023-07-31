@@ -177,7 +177,44 @@ impl<T> IntoIterator for Entities<T> {
     }
 }
 
-/// Something that implements an `EntityDatabase` is something that can
+/// Something that implements an `EntityAttrDatabase` is something that can act in place of `ParsedEntities`
+/// It allows users to fetch attributes of entities without having to load the entire `ParsedEntity` object
+pub trait EntityAttrDatabase {
+    /// The type of error that can occur when accessing entities
+    type Error: std::error::Error;
+
+    /// Decide if an entity exists or not
+    fn exists_entity(&self, uid: &EntityUID) -> std::result::Result<bool, Self::Error>;
+
+    /// Get the attribute of an entity given the attribute string, if both the entity and attr exist
+    /// Should return None if the entity does not exist or attr is not present on the entity
+    fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) ->
+        std::result::Result<Option<Cow<'e, PartialValue>>, Self::Error>;
+
+    /// Decide if an entity exists and has a given attribute.
+    /// Returns false if the entity does not exist or the attribute doesn't exist.
+    /// A default implementation is given based on `entity_attr`, but there may be faster implementations
+    /// for some stores.
+    ///
+    /// TODO: make a helper method `has_attr_of_schema(tp, attr)` that returns whether entities of the given
+    /// type have the given attribute if the schema is known and the user promises that the entity database
+    /// will be valid
+    fn entity_has_attr(&self, uid: &EntityUID, attr: &str) ->
+        std::result::Result<bool, Self::Error> {
+        let attr = self.entity_attr(uid, attr)?;
+        Ok(attr.is_some())
+    }
+
+    /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
+    fn entity_in(&self, u1: &EntityUID, u2: &EntityUID) -> std::result::Result<bool, Self::Error>;
+
+    /// Determine if this is a partial store
+    fn partial_mode(&self) -> Mode;
+}
+
+
+/// Something that implements an `EntityDatabase` is something that can act in place of `Entities`
+/// It fetches whole entities given a `uid`
 pub trait EntityDatabase {
     /// Get entity by UID, returns None if no such entity exists.
     fn get<'e>(&'e self, uid: &EntityUID) -> Option<Cow<'e, Entity<PartialValue>>>;
@@ -196,6 +233,66 @@ pub trait EntityDatabase {
                 Mode::Partial => Dereference::Residual(Expr::unknown(format!("{uid}"))),
             },
         }
+    }
+}
+
+/// Bottom type (why does this not already exist? Can't use ! because it's "experimental" !?)
+#[derive(Debug)]
+pub enum NeverError {}
+
+impl NeverError {
+    fn exfalso<T>(&self) -> T {
+        match *self {}
+    }
+}
+
+impl std::fmt::Display for NeverError {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.exfalso()
+    }
+}
+
+impl std::error::Error for NeverError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.exfalso()
+    }
+
+    fn description(&self) -> &str {
+        self.exfalso()
+    }
+
+    fn cause(&self) -> Option<&dyn std::error::Error> {
+        self.source()
+    }
+}
+
+/// Any `EntityDatabase` is an `EntityAttrDatabase` in the obvious way
+/// Note: this implementation is rather inefficient if the underlying store is
+/// creating objects (i.e. Cow::Owned) on each invocation of `get`.
+impl<T: EntityDatabase> EntityAttrDatabase for T {
+    type Error = NeverError;
+
+    fn exists_entity(&self, uid: &EntityUID) -> std::result::Result<bool, Self::Error> {
+        Ok(self.get(uid).is_some())
+    }
+
+    fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) ->
+        std::result::Result<Option<Cow<'e, PartialValue>>, Self::Error> {
+        Ok(self.get(uid).and_then(|e| match e {
+            Cow::Borrowed(e) => e.attrs().get(attr).map(Cow::Borrowed),
+            Cow::Owned(e) => e.attrs().get(attr).cloned().map(Cow::Owned),
+        }))
+    }
+
+    fn entity_in(&self, u1: &EntityUID, u2: &EntityUID) -> std::result::Result<bool, Self::Error> {
+        match self.get(u1) {
+            Some(e) => Ok(e.as_ref().is_descendant_of(u2)),
+            None => Ok(false),
+        }
+    }
+
+    fn partial_mode(&self) -> Mode {
+        EntityDatabase::partial_mode(self)
     }
 }
 

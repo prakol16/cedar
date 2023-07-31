@@ -23,7 +23,6 @@
 pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
-use cedar_policy_core::ast::Literal;
 pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for PartialValue
 pub use cedar_policy_core::ast::Value; // TODO: add API for Value
 use cedar_policy_core::authorizer;
