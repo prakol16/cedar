@@ -49,7 +49,13 @@ use super::NamespaceDefinition;
 /// types. All action entities are required to use a single `Action` entity
 /// type. However, the action entity type may be namespaced, so an action entity
 /// may have a fully qualified entity type `My::Namespace::Action`.
+/// This string must be parsable by as an entity type name.
 pub(crate) static ACTION_ENTITY_TYPE: &str = "Action";
+
+#[test]
+fn action_entity_type_parses() {
+    Id::from_normalized_str(ACTION_ENTITY_TYPE).unwrap();
+}
 
 /// Return true when an entity type is an action entity type. This compares the
 /// base name for the type, so this will return true for any entity type named
@@ -338,7 +344,7 @@ impl ValidatorNamespaceDef {
     // `JSONValue`s, we must update `convert_attr_jsonval_map_to_attributes` to
     // handle errors that may occur when parsing these values. This will require
     // a breaking change in the `SchemaError` type in the public API.
-    fn jsonval_to_type_helper(v: &JSONValue) -> Result<Type> {
+    fn jsonval_to_type_helper(v: &JSONValue, action_id: &EntityUID) -> Result<Type> {
         match v {
             JSONValue::Bool(_) => Ok(Type::primitive_boolean()),
             JSONValue::Long(_) => Ok(Type::primitive_long()),
@@ -346,7 +352,7 @@ impl ValidatorNamespaceDef {
             JSONValue::Record(r) => {
                 let mut required_attrs: HashMap<SmolStr, Type> = HashMap::new();
                 for (k, v_prime) in r {
-                    let t = Self::jsonval_to_type_helper(v_prime);
+                    let t = Self::jsonval_to_type_helper(v_prime, action_id);
                     match t {
                         Ok(ty) => required_attrs.insert(k.clone(), ty),
                         Err(e) => return Err(e),
@@ -359,9 +365,11 @@ impl ValidatorNamespaceDef {
             }
             JSONValue::Set(v) => match v.get(0) {
                 //sets with elements of different types will be rejected elsewhere
-                None => Err(SchemaError::ActionEntityAttributeEmptySet),
+                None => Err(SchemaError::ActionAttributesContainEmptySet(
+                    action_id.clone(),
+                )),
                 Some(element) => {
-                    let element_type = Self::jsonval_to_type_helper(element);
+                    let element_type = Self::jsonval_to_type_helper(element, action_id);
                     match element_type {
                         Ok(t) => Ok(Type::Set {
                             element_type: Some(Box::new(t)),
@@ -370,19 +378,22 @@ impl ValidatorNamespaceDef {
                     }
                 }
             },
-            _ => Err(SchemaError::ActionEntityAttributeUnsupportedType),
+            _ => Err(SchemaError::UnsupportedActionAttributeType(
+                action_id.clone(),
+            )),
         }
     }
 
     //Convert jsonval map to attributes
     fn convert_attr_jsonval_map_to_attributes(
         m: HashMap<SmolStr, JSONValue>,
+        action_id: &EntityUID,
     ) -> Result<(Attributes, HashMap<SmolStr, RestrictedExpr>)> {
         let mut attr_types: HashMap<SmolStr, Type> = HashMap::new();
         let mut attr_values: HashMap<SmolStr, RestrictedExpr> = HashMap::new();
 
         for (k, v) in m {
-            let t = Self::jsonval_to_type_helper(&v);
+            let t = Self::jsonval_to_type_helper(&v, action_id);
             match t {
                 Ok(ty) => attr_types.insert(k.clone(), ty),
                 Err(e) => return Err(e),
@@ -396,6 +407,8 @@ impl ValidatorNamespaceDef {
             // handling an error here would mean adding a new error variant to
             // `SchemaError` in the public API, but we didn't make that enum
             // `non_exhaustive`, so any new variants are a breaking change.
+            // PANIC SAFETY: see above
+            #[allow(clippy::expect_used)]
             let e = v.into_expr().expect("`Self::jsonval_to_type_helper` will always return `Err` for a `JSONValue` that might make `into_expr` return `Err`");
             attr_values.insert(k.clone(), e);
         }
@@ -457,6 +470,7 @@ impl ValidatorNamespaceDef {
                     let (attribute_types, attributes) =
                         Self::convert_attr_jsonval_map_to_attributes(
                             action_type.attributes.unwrap_or_default(),
+                            &action_id,
                         )?;
 
                     Ok((
@@ -501,7 +515,7 @@ impl ValidatorNamespaceDef {
                 }
             }
             if !actions_with_attributes.is_empty() {
-                return Err(SchemaError::ActionEntityAttributes(actions_with_attributes));
+                return Err(SchemaError::ActionHasAttributes(actions_with_attributes));
             }
         }
 
@@ -624,6 +638,8 @@ impl ValidatorNamespaceDef {
             Self::parse_possibly_qualified_name_with_default_namespace(action_ty, namespace)
                 .map_err(SchemaError::EntityTypeParseError)?
         } else {
+            // PANIC SAFETY: The constant ACTION_ENTITY_TYPE is valid entity type.
+            #[allow(clippy::expect_used)]
             let id = Id::from_normalized_str(ACTION_ENTITY_TYPE).expect(
                 "Expected that the constant ACTION_ENTITY_TYPE would be a valid entity type.",
             );
@@ -660,7 +676,7 @@ impl ValidatorNamespaceDef {
                 additional_attributes,
             }) => {
                 if additional_attributes {
-                    Err(SchemaError::UnsupportedSchemaFeature(
+                    Err(SchemaError::UnsupportedFeature(
                         UnsupportedFeature::OpenRecordsAndEntities,
                     ))
                 } else {
@@ -692,7 +708,7 @@ impl ValidatorNamespaceDef {
                 .map_err(SchemaError::CommonTypeParseError)?;
                 Ok(WithUnresolvedTypeDefs::new(move |typ_defs| {
                     typ_defs.get(&defined_type_name).cloned().ok_or(
-                        SchemaError::UndeclaredCommonType(HashSet::from([type_name.to_string()])),
+                        SchemaError::UndeclaredCommonTypes(HashSet::from([type_name.to_string()])),
                     )
                 }))
             }
@@ -1173,13 +1189,19 @@ impl ValidatorSchema {
         action: &EntityUID,
     ) -> Option<impl cedar_policy_core::entities::ContextSchema> {
         self.get_action_id(action).map(|action_id| {
-            crate::types::Type::record_with_attributes(
+            // The invariant on `ContextSchema` requires that the inner type is
+            // representable as a schema type. Here we build a closed record
+            // type, which are representable as long as their values are
+            // representable. The values are representable because they are
+            // taken from the context of a `ValidatorActionId` which was
+            // constructed directly from a schema.
+            ContextSchema(crate::types::Type::record_with_attributes(
                 action_id
                     .context
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone())),
                 OpenTag::ClosedAttributes,
-            )
+            ))
         })
     }
 
@@ -1315,6 +1337,11 @@ impl cedar_policy_core::entities::EntityTypeDescription for EntityTypeDescriptio
 
     fn attr_type(&self, attr: &str) -> Option<cedar_policy_core::entities::SchemaType> {
         let attr_type: &crate::types::Type = &self.validator_type.attr(attr)?.attr_type;
+        // This converts a type from a schema into the representation of schema
+        // types used by core. `attr_type` is taken from a `ValidatorEntityType`
+        // which was constructed from a schema.
+        // PANIC SAFETY: see above
+        #[allow(clippy::expect_used)]
         let core_schema_type: cedar_policy_core::entities::SchemaType = attr_type
             .clone()
             .try_into()
@@ -1338,10 +1365,18 @@ impl cedar_policy_core::entities::EntityTypeDescription for EntityTypeDescriptio
     }
 }
 
+/// Struct which carries enough information that it can impl Core's
+/// `ContextSchema` INVARIANT: The `Type` stored in this struct must be
+/// representable as a `SchemaType` to avoid panicking in `context_type`.
+struct ContextSchema(crate::types::Type);
+
 /// A `Type` contains all the information we need for a Core `ContextSchema`.
-impl cedar_policy_core::entities::ContextSchema for crate::types::Type {
+impl cedar_policy_core::entities::ContextSchema for ContextSchema {
     fn context_type(&self) -> cedar_policy_core::entities::SchemaType {
-        self.clone()
+        // PANIC SAFETY: By `ContextSchema` invariant, `self.0` is representable as a schema type.
+        #[allow(clippy::expect_used)]
+        self.0
+            .clone()
             .try_into()
             .expect("failed to convert validator type into Core SchemaType")
     }
@@ -1714,7 +1749,7 @@ mod test {
         }}"#;
 
         match ValidatorSchema::from_str(src) {
-            Err(SchemaError::ParseFileFormat(_)) => (),
+            Err(SchemaError::Serde(_)) => (),
             _ => panic!("Expected serde error due to duplicate entity type."),
         }
     }
@@ -1749,7 +1784,7 @@ mod test {
             }
         }"#;
         match ValidatorSchema::from_str(src) {
-            Err(SchemaError::ParseFileFormat(_)) => (),
+            Err(SchemaError::Serde(_)) => (),
             _ => panic!("Expected serde error due to duplicate action type."),
         }
     }
@@ -2142,7 +2177,7 @@ mod test {
             ActionBehavior::ProhibitAttributes,
         );
         match schema {
-            Err(SchemaError::ActionEntityAttributes(actions)) => {
+            Err(SchemaError::ActionHasAttributes(actions)) => {
                 assert_eq!(
                     actions.into_iter().collect::<HashSet<_>>(),
                     HashSet::from([
@@ -2624,7 +2659,7 @@ mod test {
         }))
         .unwrap();
         match TryInto::<ValidatorSchema>::try_into(fragment) {
-            Err(SchemaError::UndeclaredCommonType(_)) => (),
+            Err(SchemaError::UndeclaredCommonTypes(_)) => (),
             s => panic!(
                 "Expected Err(SchemaError::UndeclaredCommonType), got {:?}",
                 s
@@ -2645,7 +2680,7 @@ mod test {
         }))
         .unwrap();
         match TryInto::<ValidatorSchema>::try_into(fragment) {
-            Err(SchemaError::UndeclaredCommonType(_)) => (),
+            Err(SchemaError::UndeclaredCommonTypes(_)) => (),
             s => panic!(
                 "Expected Err(SchemaError::UndeclaredCommonType), got {:?}",
                 s

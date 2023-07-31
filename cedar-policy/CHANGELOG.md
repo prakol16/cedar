@@ -14,6 +14,8 @@
 
 ### Changed
 
+- Added list of attributes that do exist to `RecordAttrDoesNotExist` error message.
+- Removed deprecated `__expr` escapes from integration tests.
 - Improved error detection in schema based parsing (fix issues #73, #74).
   - Detect entities with parents of an incorrect entity type.
   - Detect entities with an undeclared entity type.
@@ -36,9 +38,13 @@
   particular, this applies to the action context, so `context has attr` can now
   have type False where before it had type Boolean, creating some new
   short-circuiting opportunities.  The same applies to record literals.
+- Improved error messages and documentation for some errors raised during
+  policy evaluation.
 - Fix a panic in `PolicySet::link` that could occur when the function was called
   with a policy id corresponding to a static policy.
 - Renamed `cedar_policy_core::est::EstToAstError` to `cedar_policy_core::est::FromJsonError`
+- More precise "expected tokens" lists in some parse errors
+- Renamed `cedar_policy_core::entities::JsonDeserializationError::ExtensionsError` to `cedar_policy_core::entities::JsonDeserializationError::FailedExtensionsFunctionLookup`.
 
 ## 2.3.0
 

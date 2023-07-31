@@ -25,8 +25,6 @@ use lazy_static::lazy_static;
 use miette::{Diagnostic, LabeledSpan, Severity, SourceCode};
 use thiserror::Error;
 
-use crate::ast::RestrictedExpressionError;
-
 use crate::parser::fmt::join_with_conjunction;
 use crate::parser::node::ASTNode;
 
@@ -50,9 +48,6 @@ pub enum ParseError {
     #[error("poorly formed: {0}")]
     #[diagnostic(code(cedar_policy_core::parser::to_ast_err))]
     ToAST(String),
-    /// Error concerning restricted expressions.
-    #[error(transparent)]
-    RestrictedExpressionError(#[from] RestrictedExpressionError),
 }
 
 /// Error from the CST parser.
@@ -77,7 +72,7 @@ impl Display for ToCSTError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.err {
             OwnedRawParseError::InvalidToken { .. } => write!(f, "invalid token"),
-            OwnedRawParseError::UnrecognizedEOF { .. } => write!(f, "unexpected end of input"),
+            OwnedRawParseError::UnrecognizedEof { .. } => write!(f, "unexpected end of input"),
             OwnedRawParseError::UnrecognizedToken {
                 token: (_, token, _),
                 ..
@@ -101,7 +96,7 @@ impl Diagnostic for ToCSTError {
             OwnedRawParseError::InvalidToken { location } => {
                 LabeledSpan::underline(*location..*location)
             }
-            OwnedRawParseError::UnrecognizedEOF { location, expected } => {
+            OwnedRawParseError::UnrecognizedEof { location, expected } => {
                 LabeledSpan::new_with_span(expected_to_string(expected), *location..*location)
             }
             OwnedRawParseError::UnrecognizedToken {
@@ -306,12 +301,6 @@ impl From<ToCSTError> for ParseErrors {
     }
 }
 
-impl From<RestrictedExpressionError> for ParseErrors {
-    fn from(err: RestrictedExpressionError) -> Self {
-        ParseError::from(err).into()
-    }
-}
-
 impl From<Vec<ParseError>> for ParseErrors {
     fn from(errs: Vec<ParseError>) -> Self {
         ParseErrors(errs)
@@ -348,50 +337,5 @@ impl<'a> IntoIterator for &'a mut ParseErrors {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter_mut()
-    }
-}
-
-/// One or more parse errors occurred while performing a task.
-#[derive(Clone, Debug, Default, Error, PartialEq)]
-#[error("{context}")]
-pub struct WithContext {
-    /// What we were trying to do.
-    pub context: String,
-    /// Error(s) we encountered while doing it.
-    #[source]
-    pub errs: ParseErrors,
-}
-
-impl Diagnostic for WithContext {
-    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        self.errs.code()
-    }
-
-    fn severity(&self) -> Option<Severity> {
-        self.errs.severity()
-    }
-
-    fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        self.errs.help()
-    }
-
-    fn url<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        self.errs.url()
-    }
-
-    fn source_code(&self) -> Option<&dyn SourceCode> {
-        self.errs.source_code()
-    }
-
-    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
-        self.errs.labels()
-    }
-
-    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
-        self.errs.related()
-    }
-
-    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
-        self.errs.diagnostic_source()
     }
 }

@@ -266,7 +266,7 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
             ExprKind::Lit(lit) => Ok(lit.clone().into()),
             ExprKind::Slot(id) => slots
                 .get(id)
-                .ok_or_else(|| err::EvaluationError::TemplateInstantiationError(*id))
+                .ok_or_else(|| err::EvaluationError::UnlinkedSlot(*id))
                 .map(|euid| PartialValue::from(euid.clone())),
             ExprKind::Var(v) => match v {
                 Var::Principal => Ok(self.principal.evaluate(*v)),
@@ -663,7 +663,10 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
                                 .filter_map(|(k, v)| if k == attr { Some(v) } else { None })
                                 .next()
                                 .ok_or_else(|| {
-                                    EvaluationError::RecordAttrDoesNotExist(attr.clone())
+                                    EvaluationError::RecordAttrDoesNotExist(
+                                        attr.clone(),
+                                        pairs.iter().map(|(f, _)| f.clone()).collect(),
+                                    )
                                 })
                                 .and_then(|e| self.partial_interpret(e, slots))
                         } else if pairs.iter().any(|(k, _v)| k == attr) {
@@ -672,7 +675,10 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
                                 attr.clone(),
                             )))
                         } else {
-                            Err(EvaluationError::RecordAttrDoesNotExist(attr.clone()))
+                            Err(EvaluationError::RecordAttrDoesNotExist(
+                                attr.clone(),
+                                pairs.iter().map(|(f, _)| f.clone()).collect(),
+                            ))
                         }
                     }
                     // We got a residual, that is not a record at the top level
@@ -682,7 +688,12 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
             PartialValue::Value(Value::Record(attrs)) => attrs
                 .as_ref()
                 .get(attr)
-                .ok_or_else(|| EvaluationError::RecordAttrDoesNotExist(attr.clone()))
+                .ok_or_else(|| {
+                    EvaluationError::RecordAttrDoesNotExist(
+                        attr.clone(),
+                        attrs.iter().map(|(f, _)| f.clone()).collect(),
+                    )
+                })
                 .map(|v| PartialValue::Value(v.clone())),
             PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
                 match self.get_all_attrs(uid.as_ref()) {
@@ -1366,7 +1377,10 @@ pub mod test {
                 Expr::val(3),
                 Expr::get_attr(Expr::record(vec![]), "foo".into()),
             )),
-            Err(EvaluationError::RecordAttrDoesNotExist("foo".into()))
+            Err(EvaluationError::RecordAttrDoesNotExist(
+                "foo".into(),
+                vec![]
+            ))
         );
         // if true then <err> else 3
         assert_eq!(
@@ -1375,7 +1389,10 @@ pub mod test {
                 Expr::get_attr(Expr::record(vec![]), "foo".into()),
                 Expr::val(3),
             )),
-            Err(EvaluationError::RecordAttrDoesNotExist("foo".into()))
+            Err(EvaluationError::RecordAttrDoesNotExist(
+                "foo".into(),
+                vec![]
+            ))
         );
         // if false then <err> else 3
         assert_eq!(
@@ -1564,7 +1581,10 @@ pub mod test {
         // {"ham": 3, "eggs": 7}["what"]
         assert_eq!(
             eval.interpret_inline_policy(&Expr::get_attr(ham_and_eggs, "what".into())),
-            Err(EvaluationError::RecordAttrDoesNotExist("what".into()))
+            Err(EvaluationError::RecordAttrDoesNotExist(
+                "what".into(),
+                vec!["eggs".into(), "ham".into()]
+            ))
         );
 
         // {"ham": 3, "eggs": "why"}["ham"]
@@ -3718,7 +3738,7 @@ pub mod test {
         let slots = HashMap::new();
         let r = evaluator.partial_interpret(&e, &slots);
         match r {
-            Err(EvaluationError::TemplateInstantiationError(slotid)) => {
+            Err(EvaluationError::UnlinkedSlot(slotid)) => {
                 assert_eq!(slotid, SlotId::principal())
             }
             Err(e) => panic!("Got wrong error: {e}"),
