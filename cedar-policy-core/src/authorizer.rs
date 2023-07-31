@@ -29,6 +29,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::iter::once;
 
+mod err;
+pub use err::AuthorizationError;
+
 /// Authorizer
 pub struct Authorizer {
     /// Cedar `Extension`s which will be used during requests to this `Authorizer`
@@ -86,7 +89,7 @@ impl Authorizer {
         }
     }
 
-    /// Converta response kind into a response based on the authorizer's error handling
+    /// Convert a response kind into a response based on the authorizer's error handling
     fn handle_response(&self, pset: &PolicySet, response: ResponseKind) -> Response {
         match response {
             ResponseKind::FullyEvaluated(response) => response,
@@ -96,11 +99,10 @@ impl Authorizer {
                 // `error_handling` is `SkipOnerror`, no forbids evaluated to a concrete response, and some permits evaluated to `true`
                 let mut errors = partial.diagnostics.errors;
                 errors.extend(partial.residuals.policies().map(|p| {
-                    format!(
-                        "while evaluating policy {}, encountered the following error: {}",
-                        p.id(),
-                        EvaluationError::NonValue(p.condition())
-                    )
+                    AuthorizationError::PolicyEvaluationError {
+                        id: p.id().clone(),
+                        error: EvaluationError::NonValue(p.condition()),
+                    }
                 }));
 
                 let idset = partial.residuals.policies().map(|p| p.id().clone());
@@ -175,14 +177,11 @@ impl Authorizer {
         match entities_parsed {
             Ok(entities_parsed) => self.is_authorized_core_parsed(q, pset, &entities_parsed),
             Err(e) => {
-                let msg = format!(
-                    "Failed to parse attributes of entities: {e}"
-                );
                 ResponseKind::FullyEvaluated(Response::new(
                     Decision::Deny,
                     HashSet::new(),
-                    vec![msg],
-                ))
+                    vec![AuthorizationError::AttributeEvaluationError(e)],
+                ));
             }
         }
     }
@@ -202,11 +201,20 @@ impl Authorizer {
 
         let results = self.evaluate_policies(pset, eval);
 
+        let errors = results
+            .errors
+            .into_iter()
+            .map(|(pid, err)| AuthorizationError::PolicyEvaluationError {
+                id: pid,
+                error: err,
+            })
+            .collect();
+
         if !results.global_deny_policies.is_empty() {
             return ResponseKind::FullyEvaluated(Response::new(
                 Decision::Deny,
                 results.global_deny_policies,
-                results.all_warnings,
+                errors,
             ));
         }
         // Semantics ask for the set C_I^+ of all satisfied Permit policies
@@ -234,11 +242,7 @@ impl Authorizer {
             // If we have a satisfied permit and _no_ residual forbids, we can return Allow (this is true regardless of residual permits)
             (true, false | true, false) => {
                 let idset = satisfied_permits.map(|p| p.id().clone()).collect();
-                ResponseKind::FullyEvaluated(Response::new(
-                    Decision::Allow,
-                    idset,
-                    results.all_warnings,
-                ))
+                ResponseKind::FullyEvaluated(Response::new(Decision::Allow, idset, errors))
             }
             // If we have a satisfied permit, and there are residual forbids, we must return a residual response. (this is true regardless of residual permits)
             (true, false | true, true) => {
@@ -261,11 +265,7 @@ impl Authorizer {
                         .chain(once(trivial_true)),
                 )
                 .unwrap();
-                ResponseKind::Partial(PartialResponse::new(
-                    policy_set,
-                    idset,
-                    results.all_warnings,
-                ))
+                ResponseKind::Partial(PartialResponse::new(policy_set, idset, errors))
             }
             // If there are no satisfied permits, and no residual permits, then the request cannot succeed
             (false, false, false | true) => {
@@ -274,11 +274,7 @@ impl Authorizer {
                     .into_iter()
                     .map(|p| p.id().clone())
                     .collect();
-                ResponseKind::FullyEvaluated(Response::new(
-                    Decision::Deny,
-                    idset,
-                    results.all_warnings,
-                ))
+                ResponseKind::FullyEvaluated(Response::new(Decision::Deny, idset, errors))
             }
             // If there are no satisfied permits, but residual permits, then request may still succeed. Return residual
             // Add in the forbid_residuals if any
@@ -290,11 +286,7 @@ impl Authorizer {
                         .into_iter()
                         .map(|p| p.id().clone())
                         .collect();
-                    ResponseKind::FullyEvaluated(Response::new(
-                        Decision::Deny,
-                        idset,
-                        results.all_warnings,
-                    ))
+                    ResponseKind::FullyEvaluated(Response::new(Decision::Deny, idset, errors))
                 } else {
                     // No satisfied forbids
                     // PANIC SAFETY all policy IDs in the original policy are unique by construction
@@ -306,7 +298,7 @@ impl Authorizer {
                     ResponseKind::Partial(PartialResponse::new(
                         all_residuals,
                         HashSet::new(),
-                        results.all_warnings,
+                        errors,
                     ))
                 }
             }
@@ -341,10 +333,7 @@ impl Authorizer {
                     )),
                 },
                 Err(e) => {
-                    results.all_warnings.push(format!(
-                        "while evaluating policy {}, encountered the following error: {e}",
-                        p.id()
-                    ));
+                    results.errors.push((p.id().clone(), e));
                     let satisfied = match self.error_handling {
                         ErrorHandling::Deny => {
                             results.global_deny_policies.insert(p.id().clone());
@@ -408,7 +397,7 @@ struct EvaluationResults<'a> {
     satisfied_permits: Vec<&'a Policy>,
     satisfied_forbids: Vec<&'a Policy>,
     global_deny_policies: HashSet<PolicyID>,
-    all_warnings: Vec<String>,
+    errors: Vec<(PolicyID, EvaluationError)>,
     permit_residuals: Vec<Policy>,
     forbid_residuals: Vec<Policy>,
 }
@@ -835,7 +824,7 @@ mod test {
 // GRCOV_BEGIN_COVERAGE
 
 /// Authorization response returned from the `Authorizer`
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Response {
     /// Authorization decision
     pub decision: Decision,
@@ -854,7 +843,11 @@ pub struct PartialResponse {
 
 impl PartialResponse {
     /// Create a partial response with a residual PolicySet
-    pub fn new(pset: PolicySet, reason: HashSet<PolicyID>, errors: Vec<String>) -> Self {
+    pub fn new(
+        pset: PolicySet,
+        reason: HashSet<PolicyID>,
+        errors: Vec<AuthorizationError>,
+    ) -> Self {
         PartialResponse {
             residuals: pset,
             diagnostics: Diagnostics { reason, errors },
@@ -863,18 +856,22 @@ impl PartialResponse {
 }
 
 /// Diagnostics providing more information on how a `Decision` was reached
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Diagnostics {
     /// `PolicyID`s of the policies that contributed to the decision. If no
     /// policies applied to the request, this set will be empty.
     pub reason: HashSet<PolicyID>,
-    /// list of error messages which occurred
-    pub errors: Vec<String>,
+    /// List of errors that occurred
+    pub errors: Vec<AuthorizationError>,
 }
 
 impl Response {
     /// Create a new `Response`
-    pub fn new(decision: Decision, reason: HashSet<PolicyID>, errors: Vec<String>) -> Self {
+    pub fn new(
+        decision: Decision,
+        reason: HashSet<PolicyID>,
+        errors: Vec<AuthorizationError>,
+    ) -> Self {
         Response {
             decision,
             diagnostics: Diagnostics { reason, errors },
