@@ -17,10 +17,8 @@
 //! This module contains the Cedar evaluator.
 
 use crate::ast::*;
-use crate::entities::{Dereference, Entities, EntityDatabase, EntityAttrDatabase};
+use crate::entities::{Dereference, Entities, EntityAttrDatabase};
 use crate::extensions::Extensions;
-use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 mod err;
@@ -158,7 +156,7 @@ impl Entities {
     }
 }
 
-impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
+impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
     /// Create a fresh `Evaluator` for the given `request`, which uses the given
     /// `Entities` to resolve entity references. Use the given `Extension`s when
     /// evaluating the request.
@@ -412,12 +410,12 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
                     // hierarchy membership operator; see note on `BinaryOp::In`
                     BinaryOp::In => {
                         let uid1 = arg1.get_as_entity()?;
-                        match self.entities.entity(uid1) {
+                        match self.entities.entity(uid1).map_err(EvaluationError::mk_request)? {
                             Dereference::Residual(r) => Ok(PartialValue::Residual(
                                 Expr::binary_app(BinaryOp::In, r, arg2.into()),
                             )),
-                            Dereference::NoSuchEntity => self.eval_in(uid1, None, arg2),
-                            Dereference::Data(e) => self.eval_in(uid1, Some(e.as_ref()), arg2),
+                            Dereference::NoSuchEntity => self.eval_in(uid1, false, arg2),
+                            Dereference::Data(_) => self.eval_in(uid1, true, arg2),
                         }
                     }
                     // contains, which works on Sets
@@ -520,12 +518,12 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
             ExprKind::HasAttr { expr, attr } => match self.partial_interpret(expr, slots)? {
                 PartialValue::Value(Value::Record(record)) => Ok(record.get(attr).is_some().into()),
                 PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
-                    match self.entities.entity(&uid) {
+                    match self.entities.entity(&uid).map_err(EvaluationError::mk_request)? {
                         Dereference::NoSuchEntity => Ok(false.into()),
                         Dereference::Residual(r) => {
                             Ok(PartialValue::Residual(Expr::has_attr(r, attr.clone())))
                         }
-                        Dereference::Data(e) => Ok(e.get(attr).is_some().into()),
+                        Dereference::Data(_) => self.entities.entity_has_attr(&uid, attr.as_str()).map_err(EvaluationError::mk_request).map(|b| b.into()),
                     }
                 }
                 PartialValue::Value(val) => Err(err::EvaluationError::TypeError {
@@ -575,7 +573,8 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
     fn eval_in(
         &self,
         uid1: &EntityUID,
-        entity1: Option<&Entity<PartialValue>>,
+        uid1_exists: bool,
+        // entity1: Option<&Entity<PartialValue>>,
         arg2: Value,
     ) -> Result<PartialValue> {
         // `rhs` is a list of all the UIDs for which we need to
@@ -597,9 +596,11 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
         };
         for uid2 in rhs {
             if uid1 == &uid2
-                || entity1
-                    .map(|e1| e1.is_descendant_of(&uid2))
-                    .unwrap_or(false)
+                || (uid1_exists &&
+                    self.entities.entity_in(uid1, &uid2).map_err(EvaluationError::mk_request)?)
+                // || entity1
+                //     .map(|e1| e1.is_descendant_of(&uid2))
+                //     .unwrap_or(false)
             {
                 return Ok(true.into());
             }
@@ -635,14 +636,6 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
                     _ => Ok(Expr::ite(guard.clone(), consequent.into(), alternative.into()).into()),
                 }
             }
-        }
-    }
-
-    fn get_all_attrs<'a>(&'a self, uid: &EntityUID) -> Dereference<Cow<'a, HashMap<SmolStr, PartialValue>>> {
-        match self.entities.entity(uid) {
-            Dereference::NoSuchEntity => Dereference::NoSuchEntity,
-            Dereference::Residual(r) => Dereference::Residual(r),
-            Dereference::Data(e) => Dereference::Data(Entity::attrs_cow(e))
         }
     }
 
@@ -696,7 +689,7 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
                 })
                 .map(|v| PartialValue::Value(v.clone())),
             PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
-                match self.get_all_attrs(uid.as_ref()) {
+                match self.entities.entity(uid.as_ref()).map_err(EvaluationError::mk_request)? {
                     Dereference::NoSuchEntity => Err(match *uid.entity_type() {
                         EntityType::Unspecified => {
                             EvaluationError::UnspecifiedEntityAccess(attr.clone())
@@ -706,13 +699,11 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
                     Dereference::Residual(r) => {
                         Ok(PartialValue::Residual(Expr::get_attr(r, attr.clone())))
                     }
-                    Dereference::Data(attrs) => attrs
-                        .get(attr)
-                        .ok_or_else(|| EvaluationError::EntityAttrDoesNotExist {
-                            entity: uid,
-                            attr: attr.clone(),
-                        })
-                        .cloned(),
+                    Dereference::Data(_) => {
+                        self.entities.entity_attr(&uid, attr)
+                            .map_err(EvaluationError::mk_request)?
+                            .ok_or_else(|| EvaluationError::EntityAttrDoesNotExist { entity: uid, attr: attr.clone() })
+                    },
                 }
             }
             PartialValue::Value(v) => {
@@ -731,6 +722,8 @@ impl<'q, 'e, T: EntityDatabase> Evaluator<'e, T> {
 
     #[cfg(test)]
     pub fn interpret_inline_policy(&self, e: &Expr) -> Result<Value> {
+        use std::collections::HashMap;
+
         match self.partial_interpret(e, &HashMap::new())? {
             PartialValue::Value(v) => Ok(v),
             PartialValue::Residual(r) => Err(err::EvaluationError::NonValue(r)),
@@ -838,6 +831,7 @@ fn stack_size_check() -> Result<()> {
 #[cfg(test)]
 pub mod test {
     use std::str::FromStr;
+    use std::collections::HashMap;
 
     use super::*;
 

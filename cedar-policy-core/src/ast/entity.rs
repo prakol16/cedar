@@ -21,7 +21,8 @@ use crate::FromNormalizedStr;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
-use std::{collections::{HashMap, HashSet}, borrow::Cow};
+use std::collections::HashSet;
+use std::collections::HashMap;
 
 /// We support two types of entities. The first is a nominal type (e.g., User, Action)
 /// and the second is an unspecified type, which is used (internally) to represent cases
@@ -310,16 +311,6 @@ impl<T> Entity<T> {
     #[cfg(fuzzing)]
     pub fn add_ancestor(&mut self, uid: EntityUID) {
         self.ancestors.insert(uid);
-    }
-}
-
-impl<T: Clone> Entity<T> {
-    /// Same as `attrs`, but also allow the case where the caller owns the entity by using `Cow`
-    pub(crate) fn attrs_cow<'a>(e: Cow<'a, Self>) -> Cow<'a, HashMap<SmolStr, T>> {
-        match e {
-            Cow::Borrowed(e) => Cow::Borrowed(&e.attrs),
-            Cow::Owned(e) => Cow::Owned(e.attrs),
-        }
     }
 }
 

@@ -253,10 +253,10 @@ pub trait EntityAttrDatabase {
     /// Get the attribute of an entity given the attribute string, if both the entity and attr exist
     /// Should return None if the entity does not exist or attr is not present on the entity
     fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) ->
-        std::result::Result<Option<Cow<'e, PartialValue>>, Self::Error>;
+        std::result::Result<Option<PartialValue>, Self::Error>;
 
     /// Decide if an entity exists and has a given attribute.
-    /// Returns false if the entity does not exist or the attribute doesn't exist.
+    /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
     ///
@@ -270,10 +270,23 @@ pub trait EntityAttrDatabase {
     }
 
     /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
+    /// Should return false if `u2` does not exist; `u1` is guaranteed to exist
     fn entity_in(&self, u1: &EntityUID, u2: &EntityUID) -> std::result::Result<bool, Self::Error>;
 
     /// Determine if this is a partial store
     fn partial_mode(&self) -> Mode;
+
+    /// Check whether the entity exists as a `Dereference` based on `mode` and `exists_entity`
+    fn entity(&self, uid: &EntityUID) -> std::result::Result<Dereference<()>, Self::Error> {
+        match self.exists_entity(uid)? {
+            true => Ok(Dereference::Data(())),
+            false => match self.partial_mode() {
+                Mode::Concrete => Ok(Dereference::NoSuchEntity),
+                #[cfg(feature = "partial-eval")]
+                Mode::Partial => Ok(Dereference::Residual(Expr::unknown(format!("{uid}")))),
+            }
+        }
+    }
 }
 
 
@@ -286,18 +299,18 @@ pub trait EntityDatabase {
     /// Determine if this is a partial store
     fn partial_mode(&self) -> Mode;
 
-    /// Get the entity, returning a `Dereference` object which (base on whether the store is partial)
-    /// returns a residual or `NoSuchEntity`
-    fn entity<'e>(&'e self, uid: &EntityUID) -> Dereference<Cow<'e, Entity<PartialValue>>> {
-        match self.get(uid) {
-            Some(e) => Dereference::Data(e),
-            None => match self.partial_mode() {
-                Mode::Concrete => Dereference::NoSuchEntity,
-                #[cfg(feature = "partial-eval")]
-                Mode::Partial => Dereference::Residual(Expr::unknown(format!("{uid}"))),
-            },
-        }
-    }
+    // Get the entity, returning a `Dereference` object which (base on whether the store is partial)
+    // returns a residual or `NoSuchEntity`
+    // fn entity<'e>(&'e self, uid: &EntityUID) -> Dereference<Cow<'e, Entity<PartialValue>>> {
+    //     match self.get(uid) {
+    //         Some(e) => Dereference::Data(e),
+    //         None => match self.partial_mode() {
+    //             Mode::Concrete => Dereference::NoSuchEntity,
+    //             #[cfg(feature = "partial-eval")]
+    //             Mode::Partial => Dereference::Residual(Expr::unknown(format!("{uid}"))),
+    //         },
+    //     }
+    // }
 }
 
 /// Bottom type (why does this not already exist? Can't use ! because it's "experimental" !?)
@@ -341,11 +354,8 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
     }
 
     fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) ->
-        std::result::Result<Option<Cow<'e, PartialValue>>, Self::Error> {
-        Ok(self.get(uid).and_then(|e| match e {
-            Cow::Borrowed(e) => e.attrs().get(attr).map(Cow::Borrowed),
-            Cow::Owned(e) => e.attrs().get(attr).cloned().map(Cow::Owned),
-        }))
+        std::result::Result<Option<PartialValue>, Self::Error> {
+        Ok(self.get(uid).and_then(|e| e.as_ref().attrs().get(attr).cloned()))
     }
 
     fn entity_in(&self, u1: &EntityUID, u2: &EntityUID) -> std::result::Result<bool, Self::Error> {

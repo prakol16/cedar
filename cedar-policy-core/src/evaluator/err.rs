@@ -16,7 +16,7 @@
 
 use crate::ast::*;
 use smol_str::SmolStr;
-use std::sync::Arc;
+use std::{sync::Arc, error::Error};
 use thiserror::Error;
 
 /// Errors that can occur during evaluation
@@ -103,6 +103,17 @@ pub enum EvaluationError {
     /// Maximum recursion limit reached for expression evaluation
     #[error("recursion limit reached")]
     RecursionLimit,
+
+    /// Misc. error when requesting an entity occurs
+    #[error("error while requesting entity: {0}")]
+    EntityRequestError(String),
+}
+
+impl EvaluationError {
+    /// Make a new error for when an entity request fails
+    pub fn mk_request<T: Error>(e: T) -> Self {
+        Self::EntityRequestError(format!("Error while fetching entity: {}", e.to_string()))
+    }
 }
 
 /// helper function for pretty-printing type errors
