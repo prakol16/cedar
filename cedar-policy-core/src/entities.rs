@@ -298,19 +298,6 @@ pub trait EntityDatabase {
 
     /// Determine if this is a partial store
     fn partial_mode(&self) -> Mode;
-
-    // Get the entity, returning a `Dereference` object which (base on whether the store is partial)
-    // returns a residual or `NoSuchEntity`
-    // fn entity<'e>(&'e self, uid: &EntityUID) -> Dereference<Cow<'e, Entity<PartialValue>>> {
-    //     match self.get(uid) {
-    //         Some(e) => Dereference::Data(e),
-    //         None => match self.partial_mode() {
-    //             Mode::Concrete => Dereference::NoSuchEntity,
-    //             #[cfg(feature = "partial-eval")]
-    //             Mode::Partial => Dereference::Residual(Expr::unknown(format!("{uid}"))),
-    //         },
-    //     }
-    // }
 }
 
 /// Bottom type (why does this not already exist? Can't use ! because it's "experimental" !?)

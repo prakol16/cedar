@@ -21,7 +21,7 @@
 //! the "authorization engine".
 
 use crate::ast::*;
-use crate::entities::{Entities, EntityDatabase};
+use crate::entities::{Entities, EntityAttrDatabase};
 use crate::evaluator::{EvaluationError, Evaluator};
 use crate::extensions::Extensions;
 use itertools::Either;
@@ -167,7 +167,7 @@ impl Authorizer {
 
     /// Returns an authorization response for `q` with respect to the given `Slice`.
     /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
-    pub fn is_authorized_parsed<T: EntityDatabase>(&self, q: &Request, pset: &PolicySet, entities: &T) -> Response {
+    pub fn is_authorized_parsed<T: EntityAttrDatabase>(&self, q: &Request, pset: &PolicySet, entities: &T) -> Response {
         self.handle_response(pset, self.is_authorized_core_parsed(q, pset, entities))
     }
 
@@ -191,7 +191,7 @@ impl Authorizer {
     ///
     /// The language spec and Dafny model give a precise definition of how this is
     /// computed.
-    pub fn is_authorized_core_parsed<T: EntityDatabase>(
+    pub fn is_authorized_core_parsed<T: EntityAttrDatabase>(
         &self,
         q: &Request,
         pset: &PolicySet,
@@ -305,7 +305,7 @@ impl Authorizer {
         }
     }
 
-    fn evaluate_policies<'a, T: EntityDatabase>(
+    fn evaluate_policies<'a, T: EntityAttrDatabase>(
         &'a self,
         pset: &'a PolicySet,
         eval: Evaluator<'_, T>,

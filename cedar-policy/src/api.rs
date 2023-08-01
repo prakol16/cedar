@@ -28,7 +28,6 @@ pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for Partial
 pub use cedar_policy_core::ast::Value; // TODO: add API for Value
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
-use cedar_policy_core::entities::EntityAttrDatabase;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
 pub use cedar_policy_core::entities::Mode;
 use cedar_policy_core::entities::{ContextSchema, Dereference, JsonDeserializationError};
@@ -154,13 +153,6 @@ impl Entity {
 }
 
 impl ParsedEntity {
-    fn cow_to_cow<'e>(e: Cow<'e, ParsedEntity>) -> Cow<'e, ast::Entity<PartialValue>> {
-        match e {
-            Cow::Borrowed(e) => Cow::Borrowed(&e.0),
-            Cow::Owned(e) => Cow::Owned(e.0),
-        }
-    }
-
     /// Create a new `Entity` with this Uid, attributes, and parents.
     ///
     /// Attribute values are specified here as partial values
@@ -195,6 +187,10 @@ impl ParsedEntity {
     pub fn attr(&self, attr: &str) -> Option<&PartialValue> {
         self.0.get(attr)
     }
+
+    fn is_descendant_of(&self, u2: &EntityUid) -> bool {
+        self.0.is_descendant_of(&u2.0)
+    }
 }
 
 impl std::fmt::Display for Entity {
@@ -227,9 +223,54 @@ pub trait EntityDatabase {
 }
 
 /// Something that can return entity attributes and determine entity ancestry
-// pub trait EntityAttrDatabase {
+pub trait EntityAttrDatabase {
+    /// Decide if an entity exists or not
+    fn exists_entity(&self, uid: &EntityUid) -> std::result::Result<bool, EvaluationError>;
 
-// }
+    /// Get the attribute of an entity given the attribute string
+    /// Should return None if the attr is not present on the entity; the entity is guaranteed to exist
+    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) ->
+        std::result::Result<Option<PartialValue>, EvaluationError>;
+
+    /// Decide if an entity exists and has a given attribute.
+    /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
+    /// A default implementation is given based on `entity_attr`, but there may be faster implementations
+    /// for some stores.
+    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> std::result::Result<bool, EvaluationError> {
+        let attr = self.entity_attr(uid, attr)?;
+        Ok(attr.is_some())
+    }
+
+    /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
+    /// Should return false if `u2` does not exist; `u1` is guaranteed to exist
+    fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, EvaluationError>;
+
+    /// Determine if this is a partial store
+    fn partial_mode(&self) -> Mode;
+
+}
+
+impl<T: EntityDatabase> EntityAttrDatabase for T {
+    fn exists_entity(&self, uid: &EntityUid) -> std::result::Result<bool, EvaluationError> {
+        Ok(self.get(uid).is_some())
+    }
+
+    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) ->
+        std::result::Result<Option<PartialValue>, EvaluationError> {
+        Ok(self.get(uid).and_then(|e| e.as_ref().attr(attr).cloned()))
+    }
+
+    fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, EvaluationError> {
+        match self.get(u1) {
+            Some(e) => Ok(e.as_ref().is_descendant_of(u2)),
+            None => Ok(false),
+        }
+    }
+
+    fn partial_mode(&self) -> Mode {
+        EntityDatabase::partial_mode(self)
+    }
+}
 
 impl Entities {
     /// Create a fresh `Entities` with no entities
@@ -369,7 +410,7 @@ impl EntityDatabase for ParsedEntities {
     }
 
     fn partial_mode(&self) -> Mode {
-        self.0.partial_mode()
+        entities::EntityAttrDatabase::partial_mode(&self.0)
     }
 }
 
@@ -440,15 +481,25 @@ impl ParsedEntities {
 /// Wrapper for entity database object (needed to implement foreign trait)
 #[repr(transparent)]
 #[derive(RefCast)]
-struct EntityDatabaseWrapper<T: EntityDatabase>(T);
+struct EntityDatabaseWrapper<T: EntityAttrDatabase>(T);
 
-impl<T: EntityDatabase> entities::EntityDatabase for EntityDatabaseWrapper<T> {
-    fn get<'e>(&'e self, uid: &ast::EntityUID) -> Option<Cow<'e, ast::Entity<PartialValue>>> {
-        self.0.get(EntityUid::ref_cast(uid)).map(|e| ParsedEntity::cow_to_cow(e))
-    }
+impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapper<T> {
+    type Error = EvaluationError;
 
     fn partial_mode(&self) -> Mode {
         self.0.partial_mode()
+    }
+
+    fn exists_entity(&self, uid: &ast::EntityUID) -> std::result::Result<bool, Self::Error> {
+        self.0.exists_entity(EntityUid::ref_cast(uid))
+    }
+
+    fn entity_attr<'e>(&'e self, uid: &ast::EntityUID, attr: &str) -> std::result::Result<Option<PartialValue>, Self::Error> {
+        self.0.entity_attr(EntityUid::ref_cast(uid), attr)
+    }
+
+    fn entity_in(&self, u1: &ast::EntityUID, u2: &ast::EntityUID) -> std::result::Result<bool, Self::Error> {
+        self.0.entity_in(EntityUid::ref_cast(u1), EntityUid::ref_cast(u2))
     }
 }
 
@@ -586,7 +637,7 @@ impl Authorizer {
     /// Returns an authorization response for `q` with respect to the given `Slice`.
     /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
     #[cfg(feature = "partial-eval")]
-    pub fn is_authorized_parsed<T: EntityDatabase>(&self, r: &Request, p: &PolicySet, e: &T) -> PartialResponse {
+    pub fn is_authorized_parsed<T: EntityAttrDatabase>(&self, r: &Request, p: &PolicySet, e: &T) -> PartialResponse {
         Authorizer::handle_partial_response(
             self.0.is_authorized_core_parsed(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e))
         )
@@ -594,7 +645,7 @@ impl Authorizer {
 
     /// Return an authorization response for `q` with respect to the given `Slice`.
     /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
-    pub fn is_authorized_full_parsed<T: EntityDatabase>(&self, r: &Request, p: &PolicySet, e: &T) -> Response {
+    pub fn is_authorized_full_parsed<T: EntityAttrDatabase>(&self, r: &Request, p: &PolicySet, e: &T) -> Response {
         self.0.is_authorized_parsed(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e)).into()
     }
 
