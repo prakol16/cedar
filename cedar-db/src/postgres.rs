@@ -1,12 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use cedar_policy::Value;
-use postgres::{Client, NoTls, types::{FromSql, Type, Kind}};
+use cedar_policy::{Value, ParsedEntity, EntityUid, PartialValue, EntityId, EntityTypeName};
+use postgres::{Client, NoTls, types::{FromSql, Type, Kind}, Row};
 use ref_cast::RefCast;
 
 #[derive(Debug, Clone, PartialEq, RefCast)]
 #[repr(transparent)]
 struct SQLValue(Option<Value>);
+
+type StringError = String;
+
+
 
 impl<T: Into<Value>> From<T> for SQLValue {
     fn from(v: T) -> Self {
@@ -61,6 +65,136 @@ impl<'a> FromSql<'a> for SQLValue {
         })
     }
 }
+
+
+pub struct EntitySQLInfo<'e> {
+    pub table: &'e str,
+    pub id_attr: &'e str,
+    pub sql_attr_names: Vec<&'e str>,
+    pub attr_names: Vec<(usize, &'e str)>,
+    pub ancestor_attr_ind: Option<usize>,
+    query_string: String
+}
+
+impl<'e> EntitySQLInfo<'e> {
+    pub fn new(table: &'e str, id_attr: &'e str, sql_attr_names: Vec<&'e str>, attr_names: Vec<(usize, &'e str)>, ancestor_attr_ind: Option<usize>) -> Self {
+        let attr_names_string: String =
+            if sql_attr_names.is_empty() { "*".into() }
+            else { sql_attr_names.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<String>>().join(", ") };
+        Self {
+            table,
+            id_attr,
+            sql_attr_names,
+            attr_names,
+            ancestor_attr_ind,
+            query_string: format!("SELECT {} FROM \"{}\" WHERE \"{}\" = ?", attr_names_string, table, id_attr)
+        }
+    }
+
+    pub fn simple(table: &'e str, attr_names: Vec<&'e str>, ancestor_attr: Option<&'e str>) -> Self {
+        let mut sql_attr_names: Vec<&'e str> = attr_names.clone();
+        if let Some(ancestor_attr) = ancestor_attr {
+            sql_attr_names.push(ancestor_attr);
+        }
+
+        let len = attr_names.len();
+        let attr_names: Vec<(usize, &'e str)> = attr_names.into_iter().enumerate().collect();
+
+        Self::new(table, "uid", sql_attr_names, attr_names, ancestor_attr.map(|_| len))
+    }
+
+    pub fn make_entity_ancestors(&self, conn: &mut Client, uid: &EntityUid) -> Result<Option<ParsedEntity>, StringError> {
+        self.make_entity(conn, uid, |row| {
+            match self.ancestor_attr_ind {
+                Some(ancestors_attr_ind) => {
+                    serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(ancestors_attr_ind))
+                    .map_err(|e| e.to_string())?
+                    .as_array().ok_or(StringError::from("not an array"))? // TODO: make an error type
+                    .iter()
+                    .map(|x| {
+                        EntityUid::from_json(x.clone()).map_err(|e| e.to_string())
+                    })
+                    .collect()
+                },
+                None => panic!("make_entity_ancestors should only be called when `ancestors_attr_ind` is filled"),
+            }
+        })
+    }
+
+    pub fn get_query_string(&self) -> &str {
+        return &self.query_string;
+    }
+
+    pub fn make_entity(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(Row) -> Result<HashSet<EntityUid>, StringError>)
+        -> Result<Option<ParsedEntity>, StringError> {
+        make_entity_from_table(conn, uid, &self.query_string,
+            |row| convert_attr_names(&row, &self.attr_names),
+            ancestors)
+    }
+
+    pub fn make_entity_extra_attrs(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(Row) -> Result<HashSet<EntityUid>, StringError>,
+        extra_attrs: impl FnOnce(Row) -> Result<HashMap<String, PartialValue>, StringError>)
+        -> Result<Option<ParsedEntity>, StringError> {
+        make_entity_from_table(conn, uid, &self.query_string,
+            |row| {
+                let mut attrs = convert_attr_names(&row, &self.attr_names)?;
+                attrs.extend(extra_attrs(row)?);
+                Ok(attrs)
+            }, ancestors)
+    }
+}
+
+pub struct AncestorSQLInfo<'e> {
+    pub table: &'e str,
+    pub child_id: &'e str,
+    pub parent_id: &'e str,
+    query_string: String
+}
+
+impl<'e> AncestorSQLInfo<'e> {
+    pub fn new(table: &'e str, child_id: &'e str, parent_id: &'e str) -> Self {
+        Self {
+            table,
+            child_id,
+            parent_id,
+            query_string: format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = ?", parent_id, table, child_id)
+        }
+    }
+
+    pub fn get_ancestors(&self, conn: &mut Client, id: &EntityId, tp: &EntityTypeName) -> Result<HashSet<EntityUid>, StringError> {
+        // let mut stmt = conn.prepare(&self.query_string)?;
+        let result = conn.query_map(&[id.as_ref()], |row| -> Result<EntityUid, StringError> {
+            let parent_id: String = row.get(0)?;
+            Ok(EntityUid::from_type_name_and_id(tp.clone(), parent_id.0))
+        });
+        match result {
+            Ok(x) => x.collect::<Result<HashSet<EntityUid>, StringError>>(),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+pub fn convert_attr_names(query_result: &Row, attr_names: &[(usize, &str)]) -> Result<HashMap<String, PartialValue>, StringError> {
+    attr_names.iter()
+        .filter_map(|(ind, nm)| {
+            match query_result.get::<_, SQLValue>(*ind) {
+                SQLValue(Some(v)) => Some(Ok((nm.to_string(), v.into()))),
+                SQLValue(None) => None
+            }
+        })
+        .collect()
+}
+
+pub fn make_entity_from_table(conn: &mut Client, uid: &EntityUid,
+    query_string: &str,
+    attrs: impl FnOnce(Row) -> Result<HashMap<String, PartialValue>, StringError>,
+    ancestors: impl FnOnce(Row) -> Result<HashSet<EntityUid>, StringError>) -> Result<Option<ParsedEntity>, StringError> {
+    conn.query_row_and_then(query_string, &[uid.id().as_ref()], |row| {
+        Ok::<ParsedEntity, StringError>(ParsedEntity::new(uid.clone(), attrs(row)?, ancestors(row)?))
+    })
+    .optional()
+}
+
 
 pub fn do_random_stuff() {
     let mut client = Client::connect("host=localhost user=postgres dbname=example_postgres password=postgres", NoTls)
