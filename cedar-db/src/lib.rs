@@ -1,16 +1,16 @@
-pub use crate::entity_sql_fetcher::*;
+#[cfg(feature = "rusqlite")]
+pub mod sqlite;
 
-mod entity_sql_fetcher;
-
+#[cfg(feature = "rusqlite")]
 #[cfg(test)]
-mod test {
+mod test_sqlite {
     use std::borrow::Cow;
 
     use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError};
 
     use rusqlite::Connection;
 
-    use crate::entity_sql_fetcher::*;
+    use crate::sqlite::*;
 
     #[cfg(test)]
     lazy_static::lazy_static! {
