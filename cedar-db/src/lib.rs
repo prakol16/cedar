@@ -6,7 +6,7 @@ mod entity_sql_fetcher;
 mod test {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName};
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError};
 
     use rusqlite::Connection;
 
@@ -37,11 +37,11 @@ mod test {
         struct Table { conn: Connection }
 
         impl EntityDatabase for Table {
-            fn get<'e>(&'e self, uid: &EntityUid) -> Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>> {
+            fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, EvaluationError> {
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => USERS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map(Cow::Owned),
-                    t if *t == *PHOTOS_TYPE => PHOTOS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map(Cow::Owned),
-                    t => panic!("Unknown type: {:?}", t)
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_err)?.map(Cow::Owned)),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_err)?.map(Cow::Owned)),
+                    _ => Ok(None)
                 }
             }
 

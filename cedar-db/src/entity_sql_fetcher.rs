@@ -81,7 +81,7 @@ impl<'e> EntitySQLInfo<'e> {
         Self::new(table, "uid", sql_attr_names, attr_names, ancestor_attr.map(|_| len))
     }
 
-    pub fn make_entity_ancestors(&self, conn: &Connection, uid: &EntityUid) -> Option<ParsedEntity> {
+    pub fn make_entity_ancestors(&self, conn: &Connection, uid: &EntityUid) -> Result<Option<ParsedEntity>, rusqlite::Error> {
         self.make_entity(conn, uid, |row| {
             match self.ancestor_attr_ind {
                 Some(ancestors_attr_ind) => {
@@ -104,7 +104,7 @@ impl<'e> EntitySQLInfo<'e> {
     }
 
     pub fn make_entity(&self, conn: &Connection, uid: &EntityUid, ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error>)
-        -> Option<ParsedEntity> {
+        -> Result<Option<ParsedEntity>, rusqlite::Error> {
         make_entity_from_table(conn, uid, &self.query_string,
             |row| convert_attr_names(row, &self.attr_names),
             ancestors)
@@ -112,7 +112,7 @@ impl<'e> EntitySQLInfo<'e> {
 
     pub fn make_entity_extra_attrs(&self, conn: &Connection, uid: &EntityUid, ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error>,
         extra_attrs: impl FnOnce(&Row<'_>) -> Result<HashMap<String, PartialValue>, rusqlite::Error>)
-        -> Option<ParsedEntity> {
+        -> Result<Option<ParsedEntity>, rusqlite::Error> {
         make_entity_from_table(conn, uid, &self.query_string,
             |row| {
                 let mut attrs = convert_attr_names(row, &self.attr_names)?;
@@ -167,12 +167,11 @@ pub fn convert_attr_names(query_result: &Row, attr_names: &[(usize, &str)]) -> R
 pub fn make_entity_from_table(conn: &Connection, uid: &EntityUid,
     query_string: &str,
     attrs: impl FnOnce(&Row<'_>) -> Result<HashMap<String, PartialValue>, rusqlite::Error>,
-    ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error>) -> Option<ParsedEntity> {
+    ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, rusqlite::Error>) -> Result<Option<ParsedEntity>, rusqlite::Error> {
     conn.query_row_and_then(query_string, &[uid.id().as_ref()], |row| {
         Ok::<ParsedEntity, rusqlite::Error>(ParsedEntity::new(uid.clone(), attrs(row)?, ancestors(row)?))
     })
     .optional()
-    .expect("SQL query failed") // TODO: return a result instead of panicking
 }
 
 

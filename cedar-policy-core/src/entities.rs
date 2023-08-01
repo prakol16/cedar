@@ -292,7 +292,7 @@ pub trait EntityAttrDatabase {
 
 /// Something that implements an `EntityDatabase` is something that can act in place of `Entities`
 /// It fetches whole entities given a `uid`
-pub trait EntityDatabase {
+trait EntityDatabase {
     /// Get entity by UID, returns None if no such entity exists.
     fn get<'e>(&'e self, uid: &EntityUID) -> Option<Cow<'e, Entity<PartialValue>>>;
 

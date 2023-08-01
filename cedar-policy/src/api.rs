@@ -216,7 +216,7 @@ pub use entities::EntitiesError;
 /// Something that can return entities
 pub trait EntityDatabase {
     /// Get the `Entity` with the given Uid, if any
-    fn get<'e>(&'e self, uid: &EntityUid) -> Option<Cow<'e, ParsedEntity>>;
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, EvaluationError>;
 
     /// Whether the database is partial
     fn partial_mode(&self) -> Mode;
@@ -225,25 +225,24 @@ pub trait EntityDatabase {
 /// Something that can return entity attributes and determine entity ancestry
 pub trait EntityAttrDatabase {
     /// Decide if an entity exists or not
-    fn exists_entity(&self, uid: &EntityUid) -> std::result::Result<bool, EvaluationError>;
+    fn exists_entity(&self, uid: &EntityUid) -> Result<bool, EvaluationError>;
 
     /// Get the attribute of an entity given the attribute string
     /// Should return None if the attr is not present on the entity; the entity is guaranteed to exist
-    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) ->
-        std::result::Result<Option<PartialValue>, EvaluationError>;
+    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<Option<PartialValue>, EvaluationError>;
 
     /// Decide if an entity exists and has a given attribute.
     /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
-    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> std::result::Result<bool, EvaluationError> {
+    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> Result<bool, EvaluationError> {
         let attr = self.entity_attr(uid, attr)?;
         Ok(attr.is_some())
     }
 
     /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
     /// Should return false if `u2` does not exist; `u1` is guaranteed to exist
-    fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, EvaluationError>;
+    fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, EvaluationError>;
 
     /// Determine if this is a partial store
     fn partial_mode(&self) -> Mode;
@@ -251,17 +250,17 @@ pub trait EntityAttrDatabase {
 }
 
 impl<T: EntityDatabase> EntityAttrDatabase for T {
-    fn exists_entity(&self, uid: &EntityUid) -> std::result::Result<bool, EvaluationError> {
-        Ok(self.get(uid).is_some())
+    fn exists_entity(&self, uid: &EntityUid) -> Result<bool, EvaluationError> {
+        Ok(self.get(uid)?.is_some())
     }
 
     fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) ->
         std::result::Result<Option<PartialValue>, EvaluationError> {
-        Ok(self.get(uid).and_then(|e| e.as_ref().attr(attr).cloned()))
+        Ok(self.get(uid)?.and_then(|e| e.as_ref().attr(attr).cloned()))
     }
 
     fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, EvaluationError> {
-        match self.get(u1) {
+        match self.get(u1)? {
             Some(e) => Ok(e.as_ref().is_descendant_of(u2)),
             None => Ok(false),
         }
@@ -403,10 +402,10 @@ impl Entities {
 }
 
 impl EntityDatabase for ParsedEntities {
-    fn get<'e>(&'e self, uid: &EntityUid) -> Option<Cow<'e, ParsedEntity>> {
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, EvaluationError> {
         // TODO: this will create (and immediately destroy)
         // an unused residual expression in partial mode; rework to avoid this
-        self.get(uid).map(Cow::Borrowed)
+        Ok(self.get(uid).map(Cow::Borrowed))
     }
 
     fn partial_mode(&self) -> Mode {
