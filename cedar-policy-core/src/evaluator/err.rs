@@ -114,6 +114,13 @@ impl EvaluationError {
     pub fn mk_request<T: Error>(e: T) -> Self {
         Self::EntityRequestError(format!("Error while fetching entity: {}", e.to_string()))
     }
+
+    /// Returns true if this error should cause the entire authorization procedure to deny,
+    /// rather than use the default error handling behavior
+    pub fn is_global_deny_error(&self) -> bool {
+        // An `EntityRequestError` is an external error, unlike an ordinary evaluation error
+        matches!(self, Self::EntityRequestError(_))
+    }
 }
 
 /// helper function for pretty-printing type errors

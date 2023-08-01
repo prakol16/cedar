@@ -28,6 +28,7 @@ pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for Partial
 pub use cedar_policy_core::ast::Value; // TODO: add API for Value
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
+use cedar_policy_core::entities::EntityAttrDatabase;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
 pub use cedar_policy_core::entities::Mode;
 use cedar_policy_core::entities::{ContextSchema, Dereference, JsonDeserializationError};
@@ -138,7 +139,7 @@ impl Entity {
             evaluator
                 .interpret(expr.as_borrowed())
                 .map(EvalResult::from)
-                .map_err(|e| EvaluationError::StringMessage(e.to_string())),
+                .map_err(EvaluationError::mk_err),
         )
     }
 
@@ -147,7 +148,7 @@ impl Entity {
         let all_ext = Extensions::all_available();
         let evaluator = RestrictedEvaluator::new(&all_ext);
         let parsed = self.0.eval_attrs(&evaluator)
-            .map_err(|e| EvaluationError::StringMessage(e.to_string()))?;
+            .map_err(EvaluationError::mk_err)?;
         Ok(ParsedEntity(parsed))
     }
 }
@@ -224,6 +225,11 @@ pub trait EntityDatabase {
     /// Whether the database is partial
     fn partial_mode(&self) -> Mode;
 }
+
+/// Something that can return entity attributes and determine entity ancestry
+// pub trait EntityAttrDatabase {
+
+// }
 
 impl Entities {
     /// Create a fresh `Entities` with no entities
@@ -355,6 +361,17 @@ impl Entities {
     }
 }
 
+impl EntityDatabase for ParsedEntities {
+    fn get<'e>(&'e self, uid: &EntityUid) -> Option<Cow<'e, ParsedEntity>> {
+        // TODO: this will create (and immediately destroy)
+        // an unused residual expression in partial mode; rework to avoid this
+        self.get(uid).map(Cow::Borrowed)
+    }
+
+    fn partial_mode(&self) -> Mode {
+        self.0.partial_mode()
+    }
+}
 
 impl ParsedEntities {
     /// Create a fresh `ParsedEntities` with no entities
@@ -734,6 +751,13 @@ pub enum EvaluationError {
     /// TODO in the future this can/should be the actual Core `EvaluationError`
     #[error("{0}")]
     StringMessage(String),
+}
+
+impl EvaluationError {
+    /// Create an `EvaluationError` from something implementing `Error`
+    pub fn mk_err(msg: impl std::error::Error) -> Self {
+        Self::StringMessage(msg.to_string())
+    }
 }
 
 /// Used to select how a policy will be validated.
@@ -2794,13 +2818,13 @@ pub fn eval_expression(
 ) -> Result<EvalResult, EvaluationError> {
     let all_ext = Extensions::all_available();
     let entities: entities::Entities<PartialValue> = entities.0.clone().eval_attrs(&all_ext)
-        .map_err(|e| EvaluationError::StringMessage(e.to_string()))?;
+        .map_err(EvaluationError::mk_err)?;
     let eval = Evaluator::new(&request.0, &entities, &all_ext)
-        .map_err(|e| EvaluationError::StringMessage(e.to_string()))?;
+        .map_err(EvaluationError::mk_err)?;
     Ok(EvalResult::from(
         // Evaluate under the empty slot map, as an expression should not have slots
         eval.interpret(&expr.0, &ast::SlotEnv::new())
-            .map_err(|e| EvaluationError::StringMessage(e.to_string()))?,
+            .map_err(EvaluationError::mk_err)?,
     ))
 }
 

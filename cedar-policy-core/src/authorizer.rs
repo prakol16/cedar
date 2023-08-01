@@ -333,8 +333,9 @@ impl Authorizer {
                     )),
                 },
                 Err(e) => {
+                    let error_handling = if e.is_global_deny_error() { ErrorHandling::Deny } else { self.error_handling };
                     results.errors.push((p.id().clone(), e));
-                    let satisfied = match self.error_handling {
+                    let satisfied = match error_handling {
                         ErrorHandling::Deny => {
                             results.global_deny_policies.insert(p.id().clone());
                             true

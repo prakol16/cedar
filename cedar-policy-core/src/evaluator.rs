@@ -410,7 +410,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                     // hierarchy membership operator; see note on `BinaryOp::In`
                     BinaryOp::In => {
                         let uid1 = arg1.get_as_entity()?;
-                        match self.entities.entity(uid1).map_err(EvaluationError::mk_request)? {
+                        match self.entities.exists_entity_deref(uid1).map_err(EvaluationError::mk_request)? {
                             Dereference::Residual(r) => Ok(PartialValue::Residual(
                                 Expr::binary_app(BinaryOp::In, r, arg2.into()),
                             )),
@@ -518,7 +518,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
             ExprKind::HasAttr { expr, attr } => match self.partial_interpret(expr, slots)? {
                 PartialValue::Value(Value::Record(record)) => Ok(record.get(attr).is_some().into()),
                 PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
-                    match self.entities.entity(&uid).map_err(EvaluationError::mk_request)? {
+                    match self.entities.exists_entity_deref(&uid).map_err(EvaluationError::mk_request)? {
                         Dereference::NoSuchEntity => Ok(false.into()),
                         Dereference::Residual(r) => {
                             Ok(PartialValue::Residual(Expr::has_attr(r, attr.clone())))
@@ -689,7 +689,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                 })
                 .map(|v| PartialValue::Value(v.clone())),
             PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
-                match self.entities.entity(uid.as_ref()).map_err(EvaluationError::mk_request)? {
+                match self.entities.exists_entity_deref(uid.as_ref()).map_err(EvaluationError::mk_request)? {
                     Dereference::NoSuchEntity => Err(match *uid.entity_type() {
                         EntityType::Unspecified => {
                             EvaluationError::UnspecifiedEntityAccess(attr.clone())

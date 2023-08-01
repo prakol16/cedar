@@ -277,7 +277,7 @@ pub trait EntityAttrDatabase {
     fn partial_mode(&self) -> Mode;
 
     /// Check whether the entity exists as a `Dereference` based on `mode` and `exists_entity`
-    fn entity(&self, uid: &EntityUID) -> std::result::Result<Dereference<()>, Self::Error> {
+    fn exists_entity_deref(&self, uid: &EntityUID) -> std::result::Result<Dereference<()>, Self::Error> {
         match self.exists_entity(uid)? {
             true => Ok(Dereference::Data(())),
             false => match self.partial_mode() {
