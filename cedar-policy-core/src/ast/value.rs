@@ -396,9 +396,11 @@ where
 
 /// Create a `Value` directly from a `Vec` of `(String, Value)` pairs, which
 /// will be interpreted as (field, value) pairs for a first-class record
-impl From<Vec<(SmolStr, Value)>> for Value {
-    fn from(v: Vec<(SmolStr, Value)>) -> Self {
-        Self::Record(Arc::new(v.into_iter().collect()))
+impl<S> From<Vec<(S, Value)>> for Value
+where
+    S: Into<SmolStr> {
+    fn from(v: Vec<(S, Value)>) -> Self {
+        Self::Record(Arc::new(v.into_iter().map(|(k, v)| (k.into(), v)).collect()))
     }
 }
 
@@ -505,8 +507,8 @@ mod test {
         rec2.insert("eggs".into(), "hickory".into());
         assert_eq!(
             Value::from(vec![
-                ("hi".into(), "ham".into()),
-                ("eggs".into(), "hickory".into())
+                ("hi", "ham".into()),
+                ("eggs", "hickory".into())
             ]),
             Value::Record(Arc::new(rec2))
         );
@@ -527,7 +529,7 @@ mod test {
         assert_eq!(Value::empty_set().type_of(), Type::Set);
         assert_eq!(Value::empty_record().type_of(), Type::Record);
         assert_eq!(
-            Value::from(vec![("hello".into(), Value::from("ham"))]).type_of(),
+            Value::from(vec![("hello", Value::from("ham"))]).type_of(),
             Type::Record
         );
         assert_eq!(

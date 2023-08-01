@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use cedar_policy::{PartialValue, EntityUid, ParsedEntity, EntityId, EntityTypeName};
+use cedar_policy::{PartialValue, EntityUid, ParsedEntity, EntityId, EntityTypeName, Value};
 use ref_cast::RefCast;
 use rusqlite::{Connection, Row, OptionalExtension, types::{FromSql, ValueRef}, Error};
 use rusqlite::Error::FromSqlConversionFailure;
@@ -8,18 +8,18 @@ use rusqlite::Error::FromSqlConversionFailure;
 
 #[derive(Debug, Clone, PartialEq, RefCast)]
 #[repr(transparent)]
-struct SQLPartialValue(Option<PartialValue>);
+struct SQLValue(Option<Value>);
 
-impl FromSql for SQLPartialValue {
+impl FromSql for SQLValue {
     fn column_result(value: ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         match value {
-            ValueRef::Null => Ok(SQLPartialValue(None)),
-            ValueRef::Integer(x) => Ok(SQLPartialValue(Some(x.into()))),
+            ValueRef::Null => Ok(SQLValue(None)),
+            ValueRef::Integer(x) => Ok(SQLValue(Some(x.into()))),
             // TODO: use decimal type
             ValueRef::Real(_) => Err(rusqlite::types::FromSqlError::InvalidType),
             ValueRef::Text(s) => {
                 let decoded = std::str::from_utf8(s).map_err(|_| rusqlite::types::FromSqlError::InvalidType)?;
-                Ok(SQLPartialValue(Some(decoded.into())))
+                Ok(SQLValue(Some(decoded.into())))
             },
             ValueRef::Blob(_) => Err(rusqlite::types::FromSqlError::InvalidType),
         }
@@ -155,9 +155,9 @@ impl<'e> AncestorSQLInfo<'e> {
 pub fn convert_attr_names(query_result: &Row, attr_names: &[(usize, &str)]) -> Result<HashMap<String, PartialValue>, rusqlite::Error> {
     attr_names.iter()
         .filter_map(|(ind, nm)| {
-            match query_result.get::<_, SQLPartialValue>(*ind) {
-                Ok(SQLPartialValue(Some(v))) => Some(Ok((nm.to_string(), v))),
-                Ok(SQLPartialValue(None)) => None,
+            match query_result.get::<_, SQLValue>(*ind) {
+                Ok(SQLValue(Some(v))) => Some(Ok((nm.to_string(), v.into()))),
+                Ok(SQLValue(None)) => None,
                 Err(e) => Some(Err(e)),
             }
         })

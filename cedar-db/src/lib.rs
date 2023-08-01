@@ -1,6 +1,20 @@
 #[cfg(feature = "rusqlite")]
 pub mod sqlite;
 
+#[cfg(feature = "postgres")]
+pub mod postgres;
+
+#[cfg(feature = "postgres")]
+#[cfg(test)]
+mod test_postgres {
+    use crate::postgres::*;
+
+    #[test]
+    fn test_random_stuff() {
+        do_random_stuff();
+    }
+}
+
 #[cfg(feature = "rusqlite")]
 #[cfg(test)]
 mod test_sqlite {
@@ -14,6 +28,8 @@ mod test_sqlite {
 
     #[cfg(test)]
     lazy_static::lazy_static! {
+        static ref DB_PATH: &'static str = "test/example_sqlite.db";
+
         static ref USERS_TYPE: EntityTypeName = "Users".parse().unwrap();
         static ref PHOTOS_TYPE: EntityTypeName = "Photos".parse().unwrap();
         static ref TEAMS_TYPE: EntityTypeName = "Teams".parse().unwrap();
@@ -26,14 +42,14 @@ mod test_sqlite {
 
     #[test]
     fn test_ancestors() {
-        let conn = Connection::open("example.db").expect("Connection failed");
+        let conn = Connection::open(&*DB_PATH).expect("Connection failed");
 
         println!("Ancestors: {:?}", USERS_TEAMS_MEMBERSHIP_INFO.get_ancestors(&conn, &"1".parse().unwrap(), &TEAMS_TYPE));
     }
 
     #[test]
     fn test_basic() {
-        let conn = Connection::open("example.db").expect("Connection failed");
+        let conn = Connection::open(&*DB_PATH).expect("Connection failed");
         struct Table { conn: Connection }
 
         impl EntityDatabase for Table {
