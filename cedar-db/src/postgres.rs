@@ -66,6 +66,21 @@ impl<'a> FromSql<'a> for SQLValue {
     }
 }
 
+pub struct EntitySQLId(EntityId);
+
+impl<'a> FromSql<'a> for EntitySQLId {
+    fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        if String::accepts(ty) {
+            Ok(EntitySQLId((String::from_sql(ty, raw)?).parse().unwrap()))
+        } else {
+            Err(format!("unsupported type: {:?}", ty).into())
+        }
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        String::accepts(ty)
+    }
+}
 
 pub struct EntitySQLInfo<'e> {
     pub table: &'e str,
@@ -107,12 +122,10 @@ impl<'e> EntitySQLInfo<'e> {
         self.make_entity(conn, uid, |row| {
             match self.ancestor_attr_ind {
                 Some(ancestors_attr_ind) => {
-                    serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(ancestors_attr_ind))
-                    .map_err(|e| e.to_string())?
-                    .as_array().ok_or(StringError::from("not an array"))? // TODO: make an error type
-                    .iter()
+                    row.get::<_, Vec<serde_json::Value>>(ancestors_attr_ind)
+                    .into_iter()
                     .map(|x| {
-                        EntityUid::from_json(x.clone()).map_err(|e| e.to_string())
+                        EntityUid::from_json(x).map_err(|e| e.to_string())
                     })
                     .collect()
                 },
@@ -125,15 +138,15 @@ impl<'e> EntitySQLInfo<'e> {
         return &self.query_string;
     }
 
-    pub fn make_entity(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(Row) -> Result<HashSet<EntityUid>, StringError>)
+    pub fn make_entity(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, StringError>)
         -> Result<Option<ParsedEntity>, StringError> {
         make_entity_from_table(conn, uid, &self.query_string,
             |row| convert_attr_names(&row, &self.attr_names),
             ancestors)
     }
 
-    pub fn make_entity_extra_attrs(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(Row) -> Result<HashSet<EntityUid>, StringError>,
-        extra_attrs: impl FnOnce(Row) -> Result<HashMap<String, PartialValue>, StringError>)
+    pub fn make_entity_extra_attrs(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, StringError>,
+        extra_attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, StringError>)
         -> Result<Option<ParsedEntity>, StringError> {
         make_entity_from_table(conn, uid, &self.query_string,
             |row| {
@@ -157,20 +170,20 @@ impl<'e> AncestorSQLInfo<'e> {
             table,
             child_id,
             parent_id,
-            query_string: format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = ?", parent_id, table, child_id)
+            query_string: format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = $1", parent_id, table, child_id)
         }
     }
 
     pub fn get_ancestors(&self, conn: &mut Client, id: &EntityId, tp: &EntityTypeName) -> Result<HashSet<EntityUid>, StringError> {
-        // let mut stmt = conn.prepare(&self.query_string)?;
-        let result = conn.query_map(&[id.as_ref()], |row| -> Result<EntityUid, StringError> {
-            let parent_id: String = row.get(0)?;
-            Ok(EntityUid::from_type_name_and_id(tp.clone(), parent_id.0))
-        });
-        match result {
-            Ok(x) => x.collect::<Result<HashSet<EntityUid>, StringError>>(),
-            Err(e) => Err(e),
-        }
+        // TODO: prepare query_string for better performance
+        Ok(conn.query(&self.query_string, &[&id.as_ref()])
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|row| {
+                let parent_id: EntitySQLId = row.get(0);
+                EntityUid::from_type_name_and_id(tp.clone(), parent_id.0)
+            })
+            .collect())
     }
 }
 
@@ -187,12 +200,14 @@ pub fn convert_attr_names(query_result: &Row, attr_names: &[(usize, &str)]) -> R
 
 pub fn make_entity_from_table(conn: &mut Client, uid: &EntityUid,
     query_string: &str,
-    attrs: impl FnOnce(Row) -> Result<HashMap<String, PartialValue>, StringError>,
-    ancestors: impl FnOnce(Row) -> Result<HashSet<EntityUid>, StringError>) -> Result<Option<ParsedEntity>, StringError> {
-    conn.query_row_and_then(query_string, &[uid.id().as_ref()], |row| {
-        Ok::<ParsedEntity, StringError>(ParsedEntity::new(uid.clone(), attrs(row)?, ancestors(row)?))
-    })
-    .optional()
+    attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, StringError>,
+    ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, StringError>) -> Result<Option<ParsedEntity>, StringError> {
+    conn.query_opt(query_string, &[&uid.id().as_ref()])
+        .map_err(|e| e.to_string())?
+        .map(|row| {
+            Ok(ParsedEntity::new(uid.clone(), attrs(&row)?, ancestors(&row)?))
+        })
+        .transpose()
 }
 
 
