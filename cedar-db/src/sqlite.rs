@@ -126,7 +126,8 @@ pub struct AncestorSQLInfo<'e> {
     pub table: &'e str,
     pub child_id: &'e str,
     pub parent_id: &'e str,
-    query_string: String
+    query_all_string: String,
+    query_one_string: String,
 }
 
 impl<'e> AncestorSQLInfo<'e> {
@@ -135,12 +136,13 @@ impl<'e> AncestorSQLInfo<'e> {
             table,
             child_id,
             parent_id,
-            query_string: format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = ?", parent_id, table, child_id)
+            query_all_string: format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = ?", parent_id, table, child_id),
+            query_one_string: format!("SELECT 1 FROM \"{}\" WHERE \"{}\" = ? AND \"{}\" = ?", table, child_id, parent_id),
         }
     }
 
     pub fn get_ancestors(&self, conn: &Connection, id: &EntityId, tp: &EntityTypeName) -> Result<HashSet<EntityUid>, rusqlite::Error> {
-        let mut stmt = conn.prepare(&self.query_string)?;
+        let mut stmt = conn.prepare(&self.query_all_string)?;
         let result = stmt.query_map(&[id.as_ref()], |row| -> Result<EntityUid, Error> {
             let parent_id: EntitySQLId = row.get(0)?;
             Ok(EntityUid::from_type_name_and_id(tp.clone(), parent_id.0))
@@ -149,6 +151,12 @@ impl<'e> AncestorSQLInfo<'e> {
             Ok(x) => x.collect::<Result<HashSet<EntityUid>, Error>>(),
             Err(e) => Err(e),
         }
+    }
+
+    pub fn is_ancestor(&self, conn: &Connection, child_id: &EntityId, parent_id: &EntityId) -> Result<bool, rusqlite::Error> {
+        conn.query_row(&self.query_one_string, &[child_id.as_ref(), parent_id.as_ref()], |_| Ok(()))
+            .optional()
+            .map(|x| x.is_some())
     }
 }
 

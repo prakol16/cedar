@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cedar_policy::{Value, ParsedEntity, EntityUid, PartialValue, EntityId, EntityTypeName};
-use postgres::{Client, NoTls, types::{FromSql, Type, Kind}, Row};
+use postgres::{Client, types::{FromSql, Type, Kind}, Row};
 use ref_cast::RefCast;
 
 #[derive(Debug, Clone, PartialEq, RefCast)]
@@ -102,7 +102,7 @@ impl<'e> EntitySQLInfo<'e> {
             sql_attr_names,
             attr_names,
             ancestor_attr_ind,
-            query_string: format!("SELECT {} FROM \"{}\" WHERE \"{}\" = ?", attr_names_string, table, id_attr)
+            query_string: format!("SELECT {} FROM \"{}\" WHERE \"{}\" = $1", attr_names_string, table, id_attr)
         }
     }
 
@@ -122,10 +122,11 @@ impl<'e> EntitySQLInfo<'e> {
         self.make_entity(conn, uid, |row| {
             match self.ancestor_attr_ind {
                 Some(ancestors_attr_ind) => {
-                    row.get::<_, Vec<serde_json::Value>>(ancestors_attr_ind)
-                    .into_iter()
+                    row.get::<_, serde_json::Value>(ancestors_attr_ind)
+                    .as_array().ok_or(StringError::from("json ancestor value not array"))? // TODO: make an error type
+                    .iter()
                     .map(|x| {
-                        EntityUid::from_json(x).map_err(|e| e.to_string())
+                        EntityUid::from_json(x.clone()).map_err(|e| e.to_string())
                     })
                     .collect()
                 },
@@ -161,7 +162,8 @@ pub struct AncestorSQLInfo<'e> {
     pub table: &'e str,
     pub child_id: &'e str,
     pub parent_id: &'e str,
-    query_string: String
+    query_all_string: String,
+    query_one_string: String,
 }
 
 impl<'e> AncestorSQLInfo<'e> {
@@ -170,13 +172,14 @@ impl<'e> AncestorSQLInfo<'e> {
             table,
             child_id,
             parent_id,
-            query_string: format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = $1", parent_id, table, child_id)
+            query_all_string: format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = $1", parent_id, table, child_id),
+            query_one_string: format!("SELECT 1 FROM \"{}\" WHERE \"{}\" = $1 AND \"{}\" = $2", table, child_id, parent_id),
         }
     }
 
     pub fn get_ancestors(&self, conn: &mut Client, id: &EntityId, tp: &EntityTypeName) -> Result<HashSet<EntityUid>, StringError> {
         // TODO: prepare query_string for better performance
-        Ok(conn.query(&self.query_string, &[&id.as_ref()])
+        Ok(conn.query(&self.query_all_string, &[&id.as_ref()])
             .map_err(|e| e.to_string())?
             .into_iter()
             .map(|row| {
@@ -184,6 +187,12 @@ impl<'e> AncestorSQLInfo<'e> {
                 EntityUid::from_type_name_and_id(tp.clone(), parent_id.0)
             })
             .collect())
+    }
+
+    pub fn is_ancestor(&self, conn: &mut Client, child_id: &EntityId, parent_id: &EntityId) -> Result<bool, StringError> {
+        conn.query_opt(&self.query_one_string, &[&child_id.as_ref(), &parent_id.as_ref()])
+            .map(|x| x.is_some())
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -208,16 +217,4 @@ pub fn make_entity_from_table(conn: &mut Client, uid: &EntityUid,
             Ok(ParsedEntity::new(uid.clone(), attrs(&row)?, ancestors(&row)?))
         })
         .transpose()
-}
-
-
-pub fn do_random_stuff() {
-    let mut client = Client::connect("host=localhost user=postgres dbname=example_postgres password=postgres", NoTls)
-        .expect("Connection failed");
-    let rows = client.query("SELECT * FROM users", &[]).expect("query failed");
-    for row in rows {
-        let id: i32 = row.get(0);
-        let name: &str = row.get(1);
-        println!("found person: {} {}", id, name);
-    }
 }
