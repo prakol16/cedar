@@ -4,6 +4,8 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
+pub mod expr_to_query;
+
 #[cfg(feature = "postgres")]
 #[cfg(test)]
 mod test_postgres {
