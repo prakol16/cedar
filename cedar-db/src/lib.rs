@@ -139,7 +139,7 @@ mod test_postgres {
         let result = auth.is_authorized_parsed(
             &request,
               &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
-            &CachedEntities::cache_request(Table, &request));
+            &CachedEntities::cache_request(&Table, &request));
 
         println!("Result {:?}", result);  // should be allow
     }

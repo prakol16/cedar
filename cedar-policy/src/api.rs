@@ -510,15 +510,15 @@ impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapp
 /// Wrapper for entity database object which can additionally cache some entities
 /// Invariant: `CachedEntities(db).get(uid) == db.get(uid)`
 #[derive(Debug)]
-pub struct CachedEntities<T: EntityDatabase> {
-    db: T,
+pub struct CachedEntities<'e, T: EntityDatabase> {
+    db: &'e T,
     cache: HashMap<EntityUid, ParsedEntity>,
 }
 
 // TODO: generalize using the schema to `EntityAttrDatabase` instead of just `EntityDatabase`
-impl<T: EntityDatabase> CachedEntities<T> {
+impl<'e, T: EntityDatabase> CachedEntities<'e, T> {
     /// Create a new cached entities object, initialized with no cached entities
-    pub fn empty(db: T) -> Self {
+    pub fn empty(db: &'e T) -> Self {
         Self {
             db,
             cache: HashMap::new(),
@@ -534,7 +534,7 @@ impl<T: EntityDatabase> CachedEntities<T> {
     }
 
     /// Create a new cached entities object, initialized by eagerly caching the entities in `init`
-    pub fn new(db: T, init: &[&EntityUid]) -> Self {
+    pub fn new(db: &'e T, init: &[&EntityUid]) -> Self {
         let mut result = Self::empty(db);
         for uid in init {
             result.add_to_cache(uid);
@@ -544,7 +544,7 @@ impl<T: EntityDatabase> CachedEntities<T> {
 
     /// Create a new cached entities object, eagerly caching only the `principal` and `resource` of the given request
     /// (which are the most likely to be queried)
-    pub fn cache_request(db: T, r: &Request) -> Self {
+    pub fn cache_request(db: &'e T, r: &Request) -> Self {
         let entities: Vec<&EntityUid> = vec![r.principal(), r.resource()]
             .into_iter()
             .filter_map(|x| x)
@@ -553,7 +553,7 @@ impl<T: EntityDatabase> CachedEntities<T> {
     }
 }
 
-impl<T: EntityDatabase> EntityDatabase for CachedEntities<T> {
+impl<'a, T: EntityDatabase> EntityDatabase for CachedEntities<'a, T> {
     fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, EvaluationError> {
         if let Some(entity) = self.cache.get(uid) {
             Ok(Some(Cow::Borrowed(entity)))
