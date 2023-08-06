@@ -507,6 +507,66 @@ impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapp
     }
 }
 
+/// Wrapper for entity database object which can additionally cache some entities
+/// Invariant: `CachedEntities(db).get(uid) == db.get(uid)`
+#[derive(Debug)]
+pub struct CachedEntities<T: EntityDatabase> {
+    db: T,
+    cache: HashMap<EntityUid, ParsedEntity>,
+}
+
+// TODO: generalize using the schema to `EntityAttrDatabase` instead of just `EntityDatabase`
+impl<T: EntityDatabase> CachedEntities<T> {
+    /// Create a new cached entities object, initialized with no cached entities
+    pub fn empty(db: T) -> Self {
+        Self {
+            db,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Add the entity with the given `uid` to the cache
+    pub fn add_to_cache(&mut self, uid: &EntityUid) {
+        let entity = self.db.get(uid);
+        if let Ok(Some(entity)) = entity {
+            self.cache.insert(uid.clone(), entity.into_owned());
+        }
+    }
+
+    /// Create a new cached entities object, initialized by eagerly caching the entities in `init`
+    pub fn new(db: T, init: &[&EntityUid]) -> Self {
+        let mut result = Self::empty(db);
+        for uid in init {
+            result.add_to_cache(uid);
+        }
+        result
+    }
+
+    /// Create a new cached entities object, eagerly caching only the `principal` and `resource` of the given request
+    /// (which are the most likely to be queried)
+    pub fn cache_request(db: T, r: Request) -> Self {
+        let entities: Vec<&EntityUid> = vec![r.principal(), r.resource()]
+            .into_iter()
+            .filter_map(|x| x)
+            .collect();
+        Self::new(db, &entities)
+    }
+}
+
+impl<T: EntityDatabase> EntityDatabase for CachedEntities<T> {
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, EvaluationError> {
+        if let Some(entity) = self.cache.get(uid) {
+            Ok(Some(Cow::Borrowed(entity)))
+        } else {
+            self.db.get(uid)
+        }
+    }
+
+    fn partial_mode(&self) -> Mode {
+        self.db.partial_mode()
+    }
+}
+
 /// Authorizer object, which provides responses to authorization queries
 #[repr(transparent)]
 #[derive(Debug, RefCast)]
