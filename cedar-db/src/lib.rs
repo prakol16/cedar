@@ -9,7 +9,7 @@ pub mod postgres;
 mod test_postgres {
     use std::{borrow::Cow, collections::HashMap};
 
-    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EvaluationError, EntityAttrDatabase, PartialValue, EntityAttrAccessError};
+    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EvaluationError, EntityAttrDatabase, PartialValue, EntityAttrAccessError, CachedEntities};
     use postgres::{Client, NoTls};
 
     use crate::postgres::*;
@@ -132,12 +132,14 @@ mod test_postgres {
 
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
+        let request = Request::new(Some(euid.clone()),
+            Some("Actions::\"view\"".parse().unwrap()),
+            Some("Photos::\"2\"".parse().unwrap()), Context::empty());
+
         let result = auth.is_authorized_parsed(
-            &Request::new(Some(euid.clone()),
-                Some("Actions::\"view\"".parse().unwrap()),
-                Some("Photos::\"2\"".parse().unwrap()), Context::empty())
-            , &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
-            &Table);
+            &request,
+              &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
+            &CachedEntities::cache_request(Table, &request));
 
         println!("Result {:?}", result);  // should be allow
     }

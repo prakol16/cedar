@@ -544,7 +544,7 @@ impl<T: EntityDatabase> CachedEntities<T> {
 
     /// Create a new cached entities object, eagerly caching only the `principal` and `resource` of the given request
     /// (which are the most likely to be queried)
-    pub fn cache_request(db: T, r: Request) -> Self {
+    pub fn cache_request(db: T, r: &Request) -> Self {
         let entities: Vec<&EntityUid> = vec![r.principal(), r.resource()]
             .into_iter()
             .filter_map(|x| x)
