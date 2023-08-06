@@ -9,7 +9,7 @@ pub mod postgres;
 mod test_postgres {
     use std::{borrow::Cow, collections::HashMap};
 
-    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EvaluationError, EntityAttrDatabase, PartialValue};
+    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EvaluationError, EntityAttrDatabase, PartialValue, EntityAttrAccessError};
     use postgres::{Client, NoTls};
 
     use crate::postgres::*;
@@ -65,8 +65,10 @@ mod test_postgres {
                 Ok(get_entity_attrs(uid)?.is_some())
             }
 
-            fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<Option<PartialValue>, EvaluationError> {
-                Ok(get_entity_attrs(uid)?.and_then(|attrs| attrs.get(attr).cloned()))
+            fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<EvaluationError>> {
+                get_entity_attrs(uid)?
+                .ok_or(EntityAttrAccessError::UnknownEntity)
+                .and_then(|attrs| attrs.get(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr))
             }
 
             fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, EvaluationError> {

@@ -28,6 +28,8 @@ pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for Partial
 pub use cedar_policy_core::ast::Value; // TODO: add API for Value
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
+pub use cedar_policy_core::entities::EntityAccessError;
+pub use cedar_policy_core::entities::EntityAttrAccessError;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
 pub use cedar_policy_core::entities::Mode;
 use cedar_policy_core::entities::{ContextSchema, Dereference, JsonDeserializationError};
@@ -229,15 +231,15 @@ pub trait EntityAttrDatabase {
 
     /// Get the attribute of an entity given the attribute string
     /// Should return None if the attr is not present on the entity; the entity is guaranteed to exist
-    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<Option<PartialValue>, EvaluationError>;
+    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<EvaluationError>>;
 
     /// Decide if an entity exists and has a given attribute.
     /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
-    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> Result<bool, EvaluationError> {
-        let attr = self.entity_attr(uid, attr)?;
-        Ok(attr.is_some())
+    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> Result<bool, EntityAccessError<EvaluationError>> {
+        self.entity_attr(uid, attr)
+            .map_or_else(|e| e.handle_attr(false), |_| Ok(true))
     }
 
     /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
@@ -255,8 +257,11 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
     }
 
     fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) ->
-        std::result::Result<Option<PartialValue>, EvaluationError> {
-        Ok(self.get(uid)?.and_then(|e| e.as_ref().attr(attr).cloned()))
+        std::result::Result<PartialValue, EntityAttrAccessError<EvaluationError>> {
+        match self.get(uid)? {
+            Some(e) => e.as_ref().attr(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr),
+            None => Err(EntityAttrAccessError::UnknownEntity),
+        }
     }
 
     fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, EvaluationError> {
@@ -493,7 +498,7 @@ impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapp
         self.0.exists_entity(EntityUid::ref_cast(uid))
     }
 
-    fn entity_attr<'e>(&'e self, uid: &ast::EntityUID, attr: &str) -> std::result::Result<Option<PartialValue>, Self::Error> {
+    fn entity_attr<'e>(&'e self, uid: &ast::EntityUID, attr: &str) -> Result<PartialValue, EntityAttrAccessError<EvaluationError>> {
         self.0.entity_attr(EntityUid::ref_cast(uid), attr)
     }
 

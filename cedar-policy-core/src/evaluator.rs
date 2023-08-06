@@ -410,12 +410,17 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                     // hierarchy membership operator; see note on `BinaryOp::In`
                     BinaryOp::In => {
                         let uid1 = arg1.get_as_entity()?;
-                        match self.entities.exists_entity_deref(uid1).map_err(EvaluationError::mk_request)? {
-                            Dereference::Residual(r) => Ok(PartialValue::Residual(
-                                Expr::binary_app(BinaryOp::In, r, arg2.into()),
-                            )),
-                            Dereference::NoSuchEntity => self.eval_in(uid1, false, arg2),
-                            Dereference::Data(_) => self.eval_in(uid1, true, arg2),
+                        let rhs = self.eval_in_rhs_as_vec(&arg2)?;
+                        if rhs.contains(uid1) {
+                            Ok(true.into())
+                        } else {
+                            match self.entities.exists_entity_deref(uid1).map_err(EvaluationError::mk_request)? {
+                                Dereference::Residual(r) => Ok(PartialValue::Residual(
+                                    Expr::binary_app(BinaryOp::In, r, arg2.into()),
+                                )),
+                                Dereference::NoSuchEntity => Ok(false.into()),
+                                Dereference::Data(_) => self.eval_in(uid1, rhs),
+                            }
                         }
                     }
                     // contains, which works on Sets
@@ -518,12 +523,12 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
             ExprKind::HasAttr { expr, attr } => match self.partial_interpret(expr, slots)? {
                 PartialValue::Value(Value::Record(record)) => Ok(record.get(attr).is_some().into()),
                 PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
-                    match self.entities.exists_entity_deref(&uid).map_err(EvaluationError::mk_request)? {
+                    match self.entities.handle_access_error(&uid, self.entities.entity_has_attr(&uid, attr.as_str())).map_err(EvaluationError::mk_request)? {
                         Dereference::NoSuchEntity => Ok(false.into()),
                         Dereference::Residual(r) => {
                             Ok(PartialValue::Residual(Expr::has_attr(r, attr.clone())))
                         }
-                        Dereference::Data(_) => self.entities.entity_has_attr(&uid, attr.as_str()).map_err(EvaluationError::mk_request).map(|b| b.into()),
+                        Dereference::Data(b) => Ok(b.into()),
                     }
                 }
                 PartialValue::Value(val) => Err(err::EvaluationError::TypeError {
@@ -570,38 +575,33 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
         }
     }
 
-    fn eval_in(
-        &self,
-        uid1: &EntityUID,
-        uid1_exists: bool,
-        // entity1: Option<&Entity<PartialValue>>,
-        arg2: Value,
-    ) -> Result<PartialValue> {
+    fn eval_in_rhs_as_vec(&self, rhs: &Value) -> Result<Vec<EntityUID>> {
         // `rhs` is a list of all the UIDs for which we need to
         // check if `uid1` is a descendant of
-        let rhs = match arg2 {
-            Value::Lit(Literal::EntityUID(uid)) => vec![(*uid).clone()],
+        match rhs {
+            Value::Lit(Literal::EntityUID(uid)) => Ok(vec![(**uid).clone()]),
             // we assume that iterating the `authoritative` BTreeSet is
             // approximately the same cost as iterating the `fast` HashSet
             Value::Set(Set { authoritative, .. }) => authoritative
                 .iter()
                 .map(|val| Ok(val.get_as_entity()?.clone()))
-                .collect::<Result<Vec<EntityUID>>>()?,
+                .collect::<Result<Vec<EntityUID>>>(),
             _ => {
-                return Err(EvaluationError::TypeError {
+                Err(EvaluationError::TypeError {
                     expected: vec![Type::Set, Type::entity_type(names::ANY_ENTITY_TYPE.clone())],
-                    actual: arg2.type_of(),
+                    actual: rhs.type_of(),
                 })
             }
-        };
+        }
+    }
+
+    fn eval_in(
+        &self,
+        uid1: &EntityUID,
+        rhs: Vec<EntityUID>,
+    ) -> Result<PartialValue> {
         for uid2 in rhs {
-            if uid1 == &uid2
-                || (uid1_exists &&
-                    self.entities.entity_in(uid1, &uid2).map_err(EvaluationError::mk_request)?)
-                // || entity1
-                //     .map(|e1| e1.is_descendant_of(&uid2))
-                //     .unwrap_or(false)
-            {
+            if self.entities.entity_in(uid1, &uid2).map_err(EvaluationError::mk_request)? {
                 return Ok(true.into());
             }
         }
@@ -689,7 +689,13 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                 })
                 .map(|v| PartialValue::Value(v.clone())),
             PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
-                match self.entities.exists_entity_deref(uid.as_ref()).map_err(EvaluationError::mk_request)? {
+                let attr_value = match self.entities.entity_attr(&uid, attr) {
+                    Ok(v) => Ok(v),
+                    Err(e) =>
+                        Err(e.handle_attr(()).err()
+                        .ok_or_else(|| EvaluationError::EntityAttrDoesNotExist { entity: uid.clone(), attr: attr.clone() })?),
+                };
+                match self.entities.handle_access_error(&uid, attr_value).map_err(EvaluationError::mk_request)? {
                     Dereference::NoSuchEntity => Err(match *uid.entity_type() {
                         EntityType::Unspecified => {
                             EvaluationError::UnspecifiedEntityAccess(attr.clone())
@@ -699,11 +705,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                     Dereference::Residual(r) => {
                         Ok(PartialValue::Residual(Expr::get_attr(r, attr.clone())))
                     }
-                    Dereference::Data(_) => {
-                        self.entities.entity_attr(&uid, attr)
-                            .map_err(EvaluationError::mk_request)?
-                            .ok_or_else(|| EvaluationError::EntityAttrDoesNotExist { entity: uid, attr: attr.clone() })
-                    },
+                    Dereference::Data(v) => Ok(v)
                 }
             }
             PartialValue::Value(v) => {
