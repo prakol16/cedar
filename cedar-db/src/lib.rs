@@ -37,7 +37,7 @@ mod test_postgres {
 
         let entity = USERS_TABLE_INFO.make_entity_ancestors(&mut conn, &euid)
             .expect("Failed to make entity");
-        println!("Result: {:?}", entity);
+        println!("Result: {:?}", entity); // should be Users::"0" named "Alice" with parent Users::"1"
     }
 
     fn make_entity_attr_database() -> impl EntityAttrDatabase {
@@ -139,7 +139,7 @@ mod test_postgres {
             , &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
             &Table);
 
-        println!("Result {:?}", result);
+        println!("Result {:?}", result);  // should be allow
     }
 }
 
