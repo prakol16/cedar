@@ -11,7 +11,7 @@ pub mod expr_to_query;
 mod test_postgres {
     use std::{borrow::Cow, collections::HashMap};
 
-    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EvaluationError, EntityAttrDatabase, PartialValue};
+    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EvaluationError, EntityAttrDatabase, PartialValue, EntityAttrAccessError, CachedEntities};
     use postgres::{Client, NoTls};
 
     use crate::postgres::*;
@@ -39,7 +39,7 @@ mod test_postgres {
 
         let entity = USERS_TABLE_INFO.make_entity_ancestors(&mut conn, &euid)
             .expect("Failed to make entity");
-        println!("Result: {:?}", entity);
+        println!("Result: {:?}", entity); // should be Users::"0" named "Alice" with parent Users::"1"
     }
 
     fn make_entity_attr_database() -> impl EntityAttrDatabase {
@@ -67,8 +67,10 @@ mod test_postgres {
                 Ok(get_entity_attrs(uid)?.is_some())
             }
 
-            fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<Option<PartialValue>, EvaluationError> {
-                Ok(get_entity_attrs(uid)?.and_then(|attrs| attrs.get(attr).cloned()))
+            fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<EvaluationError>> {
+                get_entity_attrs(uid)?
+                .ok_or(EntityAttrAccessError::UnknownEntity)
+                .and_then(|attrs| attrs.get(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr))
             }
 
             fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, EvaluationError> {
@@ -132,14 +134,16 @@ mod test_postgres {
 
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
-        let result = auth.is_authorized_parsed(
-            &Request::new(Some(euid.clone()),
-                Some("Actions::\"view\"".parse().unwrap()),
-                Some("Photos::\"2\"".parse().unwrap()), Context::empty())
-            , &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
-            &Table);
+        let request = Request::new(Some(euid.clone()),
+            Some("Actions::\"view\"".parse().unwrap()),
+            Some("Photos::\"2\"".parse().unwrap()), Context::empty());
 
-        println!("Result {:?}", result);
+        let result = auth.is_authorized_parsed(
+            &request,
+              &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
+            &CachedEntities::cache_request(&Table, &request));
+
+        println!("Result {:?}", result);  // should be allow
     }
 }
 

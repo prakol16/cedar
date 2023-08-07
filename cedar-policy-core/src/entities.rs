@@ -252,21 +252,15 @@ pub trait EntityAttrDatabase {
 
     /// Get the attribute of an entity given the attribute string, if both the entity and attr exist
     /// Should return None if the entity does not exist or attr is not present on the entity
-    fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) ->
-        std::result::Result<Option<PartialValue>, Self::Error>;
+    fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>>;
 
     /// Decide if an entity exists and has a given attribute.
     /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
-    ///
-    /// TODO: make a helper method `has_attr_of_schema(tp, attr)` that returns whether entities of the given
-    /// type have the given attribute if the schema is known and the user promises that the entity database
-    /// will be valid
-    fn entity_has_attr(&self, uid: &EntityUID, attr: &str) ->
-        std::result::Result<bool, Self::Error> {
-        let attr = self.entity_attr(uid, attr)?;
-        Ok(attr.is_some())
+    fn entity_has_attr(&self, uid: &EntityUID, attr: &str) -> std::result::Result<bool, EntityAccessError<Self::Error>> {
+        self.entity_attr(uid, attr)
+            .map_or_else(|e| e.handle_attr(false), |_| Ok(true))
     }
 
     /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
@@ -285,6 +279,19 @@ pub trait EntityAttrDatabase {
                 #[cfg(feature = "partial-eval")]
                 Mode::Partial => Ok(Dereference::Residual(Expr::unknown(format!("{uid}")))),
             }
+        }
+    }
+
+    /// Internal function to handle an access error given the `uid` based on the `partial_mode()`
+    fn handle_access_error<T>(&self, uid: &EntityUID, t: std::result::Result<T, EntityAccessError<Self::Error>>) -> std::result::Result<Dereference<T>, Self::Error> {
+        match t {
+            Ok(v) => Ok(Dereference::Data(v)),
+            Err(EntityAccessError::UnknownEntity) => match self.partial_mode() {
+                Mode::Concrete => Ok(Dereference::NoSuchEntity),
+                #[cfg(feature = "partial-eval")]
+                Mode::Partial => Ok(Dereference::Residual(Expr::unknown(format!("{uid}")))),
+            },
+            Err(EntityAccessError::AccessError(e)) => Err(e)
         }
     }
 }
@@ -341,8 +348,11 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
     }
 
     fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) ->
-        std::result::Result<Option<PartialValue>, Self::Error> {
-        Ok(self.get(uid).and_then(|e| e.as_ref().attrs().get(attr).cloned()))
+        std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
+        match self.get(uid) {
+            Some(e) => e.as_ref().attrs().get(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr),
+            None => Err(EntityAttrAccessError::UnknownEntity),
+        }
     }
 
     fn entity_in(&self, u1: &EntityUID, u2: &EntityUID) -> std::result::Result<bool, Self::Error> {

@@ -28,6 +28,8 @@ pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for Partial
 pub use cedar_policy_core::ast::Value; // TODO: add API for Value
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
+pub use cedar_policy_core::entities::EntityAccessError;
+pub use cedar_policy_core::entities::EntityAttrAccessError;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
 pub use cedar_policy_core::entities::Mode;
 use cedar_policy_core::entities::{ContextSchema, Dereference, JsonDeserializationError};
@@ -229,15 +231,15 @@ pub trait EntityAttrDatabase {
 
     /// Get the attribute of an entity given the attribute string
     /// Should return None if the attr is not present on the entity; the entity is guaranteed to exist
-    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<Option<PartialValue>, EvaluationError>;
+    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<EvaluationError>>;
 
     /// Decide if an entity exists and has a given attribute.
     /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
-    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> Result<bool, EvaluationError> {
-        let attr = self.entity_attr(uid, attr)?;
-        Ok(attr.is_some())
+    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> Result<bool, EntityAccessError<EvaluationError>> {
+        self.entity_attr(uid, attr)
+            .map_or_else(|e| e.handle_attr(false), |_| Ok(true))
     }
 
     /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
@@ -255,8 +257,11 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
     }
 
     fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) ->
-        std::result::Result<Option<PartialValue>, EvaluationError> {
-        Ok(self.get(uid)?.and_then(|e| e.as_ref().attr(attr).cloned()))
+        std::result::Result<PartialValue, EntityAttrAccessError<EvaluationError>> {
+        match self.get(uid)? {
+            Some(e) => e.as_ref().attr(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr),
+            None => Err(EntityAttrAccessError::UnknownEntity),
+        }
     }
 
     fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, EvaluationError> {
@@ -299,7 +304,7 @@ impl Entities {
         self.0.iter().map(Entity::ref_cast)
     }
 
-    /// Create an `Entities` object with the given entities
+    /// Create an `Entities` object with the given entities.
     /// It will error if the entities cannot be read or if the entities hierarchy is cyclic
     pub fn from_entities(
         entities: impl IntoIterator<Item = Entity>,
@@ -493,12 +498,72 @@ impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapp
         self.0.exists_entity(EntityUid::ref_cast(uid))
     }
 
-    fn entity_attr<'e>(&'e self, uid: &ast::EntityUID, attr: &str) -> std::result::Result<Option<PartialValue>, Self::Error> {
+    fn entity_attr<'e>(&'e self, uid: &ast::EntityUID, attr: &str) -> Result<PartialValue, EntityAttrAccessError<EvaluationError>> {
         self.0.entity_attr(EntityUid::ref_cast(uid), attr)
     }
 
     fn entity_in(&self, u1: &ast::EntityUID, u2: &ast::EntityUID) -> std::result::Result<bool, Self::Error> {
         self.0.entity_in(EntityUid::ref_cast(u1), EntityUid::ref_cast(u2))
+    }
+}
+
+/// Wrapper for entity database object which can additionally cache some entities
+/// Invariant: `CachedEntities(db).get(uid) == db.get(uid)`
+#[derive(Debug)]
+pub struct CachedEntities<'e, T: EntityDatabase> {
+    db: &'e T,
+    cache: HashMap<EntityUid, ParsedEntity>,
+}
+
+// TODO: generalize using the schema to `EntityAttrDatabase` instead of just `EntityDatabase`
+impl<'e, T: EntityDatabase> CachedEntities<'e, T> {
+    /// Create a new cached entities object, initialized with no cached entities
+    pub fn empty(db: &'e T) -> Self {
+        Self {
+            db,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Add the entity with the given `uid` to the cache
+    pub fn add_to_cache(&mut self, uid: &EntityUid) {
+        let entity = self.db.get(uid);
+        if let Ok(Some(entity)) = entity {
+            self.cache.insert(uid.clone(), entity.into_owned());
+        }
+    }
+
+    /// Create a new cached entities object, initialized by eagerly caching the entities in `init`
+    pub fn new(db: &'e T, init: &[&EntityUid]) -> Self {
+        let mut result = Self::empty(db);
+        for uid in init {
+            result.add_to_cache(uid);
+        }
+        result
+    }
+
+    /// Create a new cached entities object, eagerly caching only the `principal` and `resource` of the given request
+    /// (which are the most likely to be queried)
+    pub fn cache_request(db: &'e T, r: &Request) -> Self {
+        let entities: Vec<&EntityUid> = vec![r.principal(), r.resource()]
+            .into_iter()
+            .filter_map(|x| x)
+            .collect();
+        Self::new(db, &entities)
+    }
+}
+
+impl<'a, T: EntityDatabase> EntityDatabase for CachedEntities<'a, T> {
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, EvaluationError> {
+        if let Some(entity) = self.cache.get(uid) {
+            Ok(Some(Cow::Borrowed(entity)))
+        } else {
+            self.db.get(uid)
+        }
+    }
+
+    fn partial_mode(&self) -> Mode {
+        self.db.partial_mode()
     }
 }
 
@@ -678,7 +743,7 @@ pub struct Response {
     diagnostics: Diagnostics,
 }
 
-/// Authorization response returned from `is_authorized_partial`
+/// Authorization response returned from `is_authorized_partial`.
 /// It can either be a full concrete response, or a residual response.
 #[cfg(feature = "partial-eval")]
 #[derive(Debug, PartialEq, Clone)]
@@ -1528,7 +1593,7 @@ impl FromStr for PolicySet {
 
     /// Create a policy set from multiple statements.
     ///
-    /// Policy ids will default to "policy*" with numbers from 0
+    /// Policy ids will default to "policy*" with numbers from 0.
     /// If you load more policies, do not use the default id, or there will be conflicts.
     ///
     /// See [`Policy`] for more.
@@ -1931,7 +1996,7 @@ pub enum TemplatePrincipalConstraint {
     /// Must be In the given EntityUid.
     /// If [`None`], then it is a template slot.
     In(Option<EntityUid>),
-    /// Must be equal to the given EntityUid
+    /// Must be equal to the given EntityUid.
     /// If [`None`], then it is a template slot.
     Eq(Option<EntityUid>),
 }
@@ -1976,7 +2041,7 @@ pub enum TemplateResourceConstraint {
     /// Must be In the given EntityUid.
     /// If [`None`], then it is a template slot.
     In(Option<EntityUid>),
-    /// Must be equal to the given EntityUid
+    /// Must be equal to the given EntityUid.
     /// If [`None`], then it is a template slot.
     Eq(Option<EntityUid>),
 }
@@ -2475,12 +2540,105 @@ impl FromStr for RestrictedExpression {
     }
 }
 
+/// Builder for a [`Request`]
+///
+/// Note that you can create the `EntityUid`s using `.parse()` on any
+/// string (via the `FromStr` implementation for `EntityUid`).
+/// The principal, action, and resource fields are optional to support
+/// the case where these fields do not contribute to authorization
+/// decisions (e.g., because they are not used in your policies).
+/// If any of the fields are `None`, we will automatically generate
+/// a unique entity UID that is not equal to any UID in the store.
+///
+/// The default for principal, action and resource fields is Unknown.
+#[cfg(feature = "partial-eval")]
+#[derive(Debug, Default)]
+pub struct RequestBuilder {
+    principal: Option<ast::EntityUIDEntry>,
+    action: Option<ast::EntityUIDEntry>,
+    resource: Option<ast::EntityUIDEntry>,
+    context: Option<ast::Context>,
+}
+
+#[cfg(feature = "partial-eval")]
+impl RequestBuilder {
+    /// Set the principal
+    pub fn principal(self, principal: Option<EntityUid>) -> Self {
+        Self {
+            principal: Some(match principal {
+                Some(p) => ast::EntityUIDEntry::concrete(p.0),
+                None => ast::EntityUIDEntry::concrete(ast::EntityUID::unspecified_from_eid(
+                    ast::Eid::new("principal"),
+                )),
+            }),
+            ..self
+        }
+    }
+
+    /// Set the action
+    pub fn action(self, action: Option<EntityUid>) -> Self {
+        Self {
+            action: Some(match action {
+                Some(a) => ast::EntityUIDEntry::concrete(a.0),
+                None => ast::EntityUIDEntry::concrete(ast::EntityUID::unspecified_from_eid(
+                    ast::Eid::new("action"),
+                )),
+            }),
+            ..self
+        }
+    }
+
+    /// Set the resource
+    pub fn resource(self, resource: Option<EntityUid>) -> Self {
+        Self {
+            resource: Some(match resource {
+                Some(r) => ast::EntityUIDEntry::concrete(r.0),
+                None => ast::EntityUIDEntry::concrete(ast::EntityUID::unspecified_from_eid(
+                    ast::Eid::new("resource"),
+                )),
+            }),
+            ..self
+        }
+    }
+
+    /// Set the context
+    pub fn context(self, context: Context) -> Self {
+        Self {
+            context: Some(context.0),
+            ..self
+        }
+    }
+
+    /// Create the [`Request`]
+    pub fn build(self) -> Request {
+        let p = match self.principal {
+            Some(p) => p,
+            None => ast::EntityUIDEntry::Unknown,
+        };
+        let a = match self.action {
+            Some(a) => a,
+            None => ast::EntityUIDEntry::Unknown,
+        };
+        let r = match self.resource {
+            Some(r) => r,
+            None => ast::EntityUIDEntry::Unknown,
+        };
+        Request(ast::Request::new_with_unknowns(p, a, r, self.context))
+    }
+}
+
 /// Represents the request tuple <P, A, R, C> (see the Cedar design doc).
 #[repr(transparent)]
 #[derive(Debug, RefCast)]
 pub struct Request(pub(crate) ast::Request);
 
 impl Request {
+    /// Create a [`RequestBuilder`]
+    #[cfg(feature = "partial-eval")]
+    pub fn builder() -> RequestBuilder {
+        RequestBuilder::default()
+    }
+
     /// Create a Request.
     ///
     /// Note that you can create the `EntityUid`s using `.parse()` on any
@@ -2858,7 +3016,7 @@ impl std::fmt::Display for EvalResult {
     }
 }
 
-/// Evaluate
+/// Evaluates an expression.
 /// If evaluation results in an error (e.g., attempting to access a non-existent Entity or Record,
 /// passing the wrong number of arguments to a function etc.), that error is returned as a String
 pub fn eval_expression(
