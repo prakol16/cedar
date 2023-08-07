@@ -17,6 +17,8 @@
 //! This module contains the `Entities` type and related functionality.
 
 use crate::ast::*;
+use crate::evaluator::{EvaluationError, RestrictedEvaluator};
+use crate::extensions::Extensions;
 use crate::transitive_closure::{compute_tc, enforce_tc_and_dag};
 use std::borrow::Cow;
 use std::collections::{hash_map, HashMap};
@@ -29,6 +31,7 @@ mod err;
 pub use err::*;
 mod json;
 pub use json::*;
+use smol_str::SmolStr;
 
 /// Represents an entity hierarchy, and allows looking up `Entity` objects by
 /// UID.
@@ -50,6 +53,9 @@ pub struct Entities<T = RestrictedExpr> {
     #[serde_as(as = "Vec<(_, _)>")]
     #[serde(bound(deserialize = "T: Deserialize<'de>", serialize = "T: Serialize"))]
     entities: HashMap<EntityUID, Entity<T>>,
+
+    #[serde(skip)]
+    evaluated_entities: Option<EvaluatedEntities>,
 
     /// The mode flag determines whether this store functions as a partial store or
     /// as a fully concrete store.
@@ -75,6 +81,7 @@ impl<T> Entities<T> {
         Self {
             entities: HashMap::new(),
             mode: Mode::default(),
+            evaluated_entities: None,
         }
     }
 
@@ -86,6 +93,7 @@ impl<T> Entities<T> {
         Self {
             entities: self.entities,
             mode: Mode::Partial,
+            evaluated_entities: self.evaluated_entities,
         }
     }
 
@@ -127,6 +135,7 @@ impl<T> Entities<T> {
         Ok(Self {
             entities: entity_map,
             mode: Mode::default(),
+            evaluated_entities: None,
         })
     }
 }
@@ -228,6 +237,104 @@ impl Entities {
 
         dot_str.write_str("}\n")?;
         Ok(dot_str)
+    }
+
+    /// Attempt to eagerly compute the values of attributes for all entities in the slice.
+    /// This can fail if evaluation of the [`RestrictedExpr`] fails.
+    /// In a future major version, we will likely make this function automatically called via the constructor.
+    pub fn evaluate(self) -> std::result::Result<Self, EvaluationError> {
+        if self.evaluated_entities.is_some() {
+            Ok(self)
+        } else {
+            let r = self.compute_entities_values()?;
+            Ok(Self {
+                entities: self.entities,
+                evaluated_entities: Some(r),
+                mode: self.mode,
+            })
+        }
+    }
+
+    fn compute_entities_values(&self) -> std::result::Result<EvaluatedEntities, EvaluationError> {
+        build_evaluated_entities(self, &Extensions::all_available())
+    }
+
+    /// Extracts the [`EntityAttrValues`] for this entity slice.
+    /// If the entity values have already been computed via [`Self::evaluate`], then that will be re-used.
+    /// Otherwise, the attributes will be evaluated.
+    pub fn get_attr_values(&self) -> std::result::Result<EntityAttrValues<'_>, EvaluationError> {
+        let map = match &self.evaluated_entities {
+            Some(cached) => Cow::Borrowed(cached),
+            None => Cow::Owned(self.compute_entities_values()?),
+        };
+        Ok(EntityAttrValues::new(map, self))
+    }
+}
+
+type EvaluatedEntities = HashMap<EntityUID, HashMap<SmolStr, PartialValue>>;
+
+/// Structure of borrowed entity information that is used in the evaluator
+#[derive(Debug)]
+pub struct EntityAttrValues<'a> {
+    /// The evaluated entity attributes. The attributes may either be owner or borrowed.
+    attrs: Cow<'a, EvaluatedEntities>,
+    /// The original entity slice, which contains hierarchy information.
+    entities: &'a Entities,
+}
+
+fn build_evaluated_entities(
+    entities: &Entities,
+    extensions: &'_ Extensions<'_>,
+) -> std::result::Result<EvaluatedEntities, EvaluationError> {
+    let restricted_eval = RestrictedEvaluator::new(extensions);
+    // Eagerly evaluate each attribute expression in the entities.
+    let attrs =
+        entities
+            .iter()
+            .map(|entity| {
+                Ok(
+                        (
+                            entity.uid(),
+                            entity
+                                .attrs()
+                                .iter()
+                                .map(|(attr, v)| {
+                                    Ok((
+                                        attr.to_owned(),
+                                        restricted_eval.partial_interpret(v.as_borrowed())?,
+                                    ))
+                                })
+                                .collect::<std::result::Result<
+                                    HashMap<SmolStr, PartialValue>,
+                                    EvaluationError,
+                                >>()?,
+                        ),
+                    )
+            })
+            .collect::<std::result::Result<
+                HashMap<EntityUID, HashMap<SmolStr, PartialValue>>,
+                EvaluationError,
+            >>()?;
+    Ok(attrs)
+}
+
+impl<'a> EntityAttrValues<'a> {
+    /// Construct an [`EntityAttrValues`] with either an owned or borrowed set of evaluated attributes.
+    pub fn new(attrs: Cow<'a, EvaluatedEntities>, entities: &'a Entities) -> Self {
+        Self { attrs, entities }
+    }
+
+    /// Get an entity's attribute map by its EntityUID.
+    pub fn get(&self, uid: &EntityUID) -> Dereference<'_, HashMap<SmolStr, PartialValue>> {
+        match self.entities.entity(uid) {
+            Dereference::NoSuchEntity => Dereference::NoSuchEntity,
+            Dereference::Residual(r) => Dereference::Residual(r),
+            Dereference::Data(_) => self
+                .attrs
+                .get(uid)
+                .map(Dereference::Data)
+                .unwrap_or_else(|| Dereference::NoSuchEntity),
+        }
     }
 }
 
