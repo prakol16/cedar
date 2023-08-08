@@ -152,14 +152,14 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, PartialResponse, RandomRequestEnv};
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, PartialResponse, Schema};
 
     use cedar_policy_core::{ast::{Expr, EntityType}, evaluator::RestrictedEvaluator, extensions::Extensions};
     use cedar_policy_validator::{typecheck::Typechecker, ValidatorSchema, ValidationMode, types::{RequestEnv, Attributes}};
     use rusqlite::Connection;
     use sea_query::{Alias, Query, Asterisk, SqliteQueryBuilder};
 
-    use crate::{sqlite::*, expr_to_query::expr_to_sql_query_entity_in_table};
+    use crate::{sqlite::*, expr_to_query::{expr_to_sql_query_entity_in_table, translate_residual_policies}};
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/example_sqlite.db";
@@ -241,35 +241,25 @@ mod test_sqlite {
             .build();
         println!("Request: {:?}", req);
         let result = auth.is_authorized_parsed(&req,
-            &"permit(principal, action, resource) when { principal == resource.user_id };".parse().unwrap(),
+            &r#"permit(principal, action, resource) when { principal == resource.user_id && principal.name == "Alice" };"#.parse().unwrap(),
             &get_sqlite_table());
         println!("\n\n\nResult of authorization: {:?}", result);
         println!("\n\n");
         match result {
             PartialResponse::Concrete(dec) => println!("Got response {dec:?}"),
             PartialResponse::Residual(resp) => {
-                let exprs = resp.residuals().policies().map(|p| p.non_head_constraints()).collect::<Vec<_>>();
-                println!("Got residuals {exprs:?}");
-
-                let schema = get_schema();
-                let req_env = RandomRequestEnv::new();
-                let typechecker = Typechecker::new(&schema, ValidationMode::Strict);
-
-                for expr in exprs {
-                    let typed_test_expr = typechecker.typecheck_expr_strict(
-                        &(&req_env).into(), &expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
-                        .expect("Type checking should succeed");
-                    println!("{typed_test_expr:?}");
-
-                    let translated = expr_to_sql_query_entity_in_table::<Alias, Alias, Alias>(&typed_test_expr, &|_t1, _t2| todo!())
-                        .expect("Failed to translate expression");
-                    println!("{}", Query::select()
-                                    .column(Asterisk)
-                                    .from_as(Alias::new("photos"), Alias::new("resource"))
-                                    .and_where(translated)
-                                    .to_string(SqliteQueryBuilder));
-                }
-            },
+                println!("Translating residual response into query: {}",
+                    translate_residual_policies(resp, &Schema(get_schema()),
+                    &|_, _| Ok((Alias::new("team_memberships"), Alias::new("user_uid"), Alias::new("team_uid"))))
+                    .into_values()
+                    .map(|q| Query::select()
+                        .column(Asterisk)
+                        .from_as(Alias::new("photos"), Alias::new("resource"))
+                        .and_where(q)
+                        .to_string(SqliteQueryBuilder))
+                    .collect::<Vec<_>>()
+                    .join("\n"));
+            }
         };
     }
 

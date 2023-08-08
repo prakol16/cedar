@@ -1,6 +1,8 @@
-use cedar_policy::EntityTypeName;
+use std::collections::HashMap;
+
+use cedar_policy::{EntityTypeName, ResidualResponse, PolicyId, Schema, RandomRequestEnv};
 use cedar_policy_core::ast::{Expr, ExprKind, Literal, UnaryOp, BinaryOp};
-use cedar_policy_validator::types::{Type, EntityRecordKind, Primitive};
+use cedar_policy_validator::{types::{Type, EntityRecordKind, Primitive}, typecheck::Typechecker, ValidationMode};
 use ref_cast::RefCast;
 use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query};
 use thiserror::Error;
@@ -187,3 +189,24 @@ pub fn expr_to_sql_query_entity_in_table<A, B, C>(e: &Expr<Option<Type>>, entity
     })
 }
 
+pub fn translate_residual_policies<A, B, C>(resp: ResidualResponse, schema: &Schema, entity_in_table: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> HashMap<PolicyId, SimpleExpr>
+    where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
+    // let val_schema = Schema::ref_cast(schema);
+    let req_env = RandomRequestEnv::new();
+    let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
+
+    let mut result = HashMap::new();
+
+    for p in resp.residuals().policies() {
+        let expr = p.non_head_constraints();
+        let typed_test_expr = typechecker.typecheck_expr_strict(
+            &(&req_env).into(), &expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
+            .expect("Type checking should succeed");
+        println!("{typed_test_expr:?}");
+
+        let translated = expr_to_sql_query_entity_in_table(&typed_test_expr, entity_in_table)
+            .expect("Failed to translate expression");
+        result.insert(p.id().clone(), translated);
+    }
+    result
+}

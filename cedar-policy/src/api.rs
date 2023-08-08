@@ -992,7 +992,7 @@ impl FromStr for SchemaFragment {
 /// Object containing schema information used by the validator.
 #[repr(transparent)]
 #[derive(Debug, Clone, RefCast)]
-pub struct Schema(pub(crate) cedar_policy_validator::ValidatorSchema);
+pub struct Schema(pub cedar_policy_validator::ValidatorSchema);
 
 impl FromStr for Schema {
     type Err = SchemaError;
