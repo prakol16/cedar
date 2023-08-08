@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::sync::Arc;
 
-use super::{Expr, Literal, PartialValue, Value, Var};
+use super::{Expr, Literal, PartialValue, Value, Var, Type, Name};
 
 /// Represents the request tuple <P, A, R, C> (see the Cedar design doc).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +51,8 @@ pub enum EntityUIDEntry {
     /// A concrete (but perhaps unspecified) EntityUID
     Concrete(Arc<EntityUID>),
     /// An EntityUID left as unknown for partial evaluation
-    Unknown,
+    /// The name is the type of the entity
+    Unknown(Option<Name>),
 }
 
 impl EntityUIDEntry {
@@ -61,7 +62,9 @@ impl EntityUIDEntry {
     pub fn evaluate(&self, var: Var) -> PartialValue {
         match self {
             EntityUIDEntry::Concrete(euid) => Value::Lit(Literal::EntityUID(euid.clone())).into(),
-            EntityUIDEntry::Unknown => Expr::unknown(var.to_string()).into(),
+            EntityUIDEntry::Unknown(name) => {
+                Expr::unknown_with_type(var.to_string(), name.clone().map(|n| Type::entity_type(n))).into()
+            }
         }
     }
 
@@ -128,7 +131,8 @@ impl std::fmt::Display for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let display_euid = |maybe_euid: &EntityUIDEntry| match maybe_euid {
             EntityUIDEntry::Concrete(euid) => format!("{euid}"),
-            EntityUIDEntry::Unknown => "unknown".to_string(),
+            EntityUIDEntry::Unknown(None) => "unknown".to_string(),
+            EntityUIDEntry::Unknown(Some(name)) => format!("unknown {}", name),
         };
         write!(
             f,

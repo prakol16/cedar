@@ -152,9 +152,9 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError};
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, PartialResponse};
 
-    use cedar_policy_core::{ast::{Expr, EntityType}, evaluator::RestrictedEvaluator, extensions::Extensions};
+    use cedar_policy_core::{ast::{Expr, EntityType, EntityUIDEntry, self}, evaluator::RestrictedEvaluator, extensions::Extensions};
     use cedar_policy_validator::{typecheck::Typechecker, ValidatorSchema, ValidationMode, types::{RequestEnv, Attributes}};
     use rusqlite::Connection;
     use sea_query::{Alias, Query, Asterisk, SqliteQueryBuilder};
@@ -174,17 +174,8 @@ mod test_sqlite {
         static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<'static> = AncestorSQLInfo::new("team_memberships", "user", "team");
     }
 
-    #[test]
-    fn test_partial_eval() {
-        // let photos_type: Type = Type::Entity { ty: EntityType::Concrete("Photos".parse().unwrap()) };
-        let extensions = Extensions::all_available();
-        let eval = RestrictedEvaluator::new(&extensions);
-        let test_expr: Expr =
-            eval.partial_interpret_unrestricted(
-                &r#"unknown("photos: Photos").owner == Users::"0""#.parse().expect("Failed to parse expression"),
-                &["unknown".parse().unwrap()].into(),
-            ).unwrap();
-        let schema: ValidatorSchema = r#"
+    fn get_schema() -> ValidatorSchema {
+        r#"
         {
             "": {
                 "entityTypes": {
@@ -206,12 +197,100 @@ mod test_sqlite {
                         }
                     }
                 },
-                "actions": {}
+                "actions": {
+                    "view": {
+                        "appliesTo": {
+                            "principalTypes": ["Users"],
+                            "resourceTypes": ["Photos"]
+                        }
+                    }
+                }
             }
         }
-        "#.parse().unwrap();
+        "#.parse().unwrap()
+    }
 
-        let req_env: RequestEnv = RequestEnv {
+    fn get_sqlite_table() -> impl EntityDatabase {
+        let conn = Connection::open(&*DB_PATH).expect("Connection failed");
+        struct Table { conn: Connection }
+
+        impl EntityDatabase for Table {
+            fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, EvaluationError> {
+                match uid.type_name() {
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_err)?.map(Cow::Owned)),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_err)?.map(Cow::Owned)),
+                    _ => Ok(None)
+                }
+            }
+
+            fn partial_mode(&self) -> cedar_policy::Mode {
+                cedar_policy::Mode::Concrete
+            }
+        }
+
+        Table { conn }
+    }
+
+    #[test]
+    fn test_partial_eval_policies() {
+        let auth = Authorizer::new();
+        let req: Request =
+            ast::Request::new_with_unknowns(EntityUIDEntry::concrete("Users::\"0\"".parse().unwrap()),
+            EntityUIDEntry::concrete("Action::\"view\"".parse().unwrap()),
+            EntityUIDEntry::Unknown(Some("Photos".parse().unwrap())),
+            None)
+            .into();
+        println!("Request: {:?}", req);
+        let result = auth.is_authorized_parsed(&req,
+            &"permit(principal, action, resource) when { principal == resource.user_id };".parse().unwrap(),
+            &get_sqlite_table());
+        println!("\n\n\nResult of authorization: {:?}", result);
+        println!("\n\n");
+        match result {
+            PartialResponse::Concrete(dec) => println!("Got response {dec:?}"),
+            PartialResponse::Residual(resp) => {
+                let exprs = resp.residuals().policies().map(|p| p.non_head_constraints()).collect::<Vec<_>>();
+                println!("Got residuals {exprs:?}");
+
+                let schema = get_schema();
+                let req_env = RequestEnv {
+                    principal: &EntityType::Concrete("Users".parse().unwrap()),
+                    action: &r#"Action::"view""#.parse().unwrap(),
+                    resource: &EntityType::Concrete("Photos".parse().unwrap()),
+                    context: &Attributes::default()
+                };
+                let typechecker = Typechecker::new(&schema, ValidationMode::Strict);
+
+                for expr in exprs {
+                    let typed_test_expr = typechecker.typecheck_expr_strict(
+                        &req_env, &expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
+                        .expect("Type checking should succeed");
+                    println!("{typed_test_expr:?}");
+
+                    let translated = expr_to_sql_query_entity_in_table::<Alias, Alias, Alias>(&typed_test_expr, &|_t1, _t2| todo!())
+                        .expect("Failed to translate expression");
+                    println!("{}", Query::select()
+                                    .column(Asterisk)
+                                    .from_as(Alias::new("photos"), Alias::new("resource"))
+                                    .and_where(translated)
+                                    .to_string(SqliteQueryBuilder));
+                }
+            },
+        };
+    }
+
+    #[test]
+    fn test_partial_eval_expr() {
+        // let photos_type: Type = Type::Entity { ty: EntityType::Concrete("Photos".parse().unwrap()) };
+        let extensions = Extensions::all_available();
+        let eval = RestrictedEvaluator::new(&extensions);
+        let test_expr: Expr =
+            eval.partial_interpret_unrestricted(
+                &r#"unknown("photos: Photos").owner == Users::"0""#.parse().expect("Failed to parse expression"),
+                &["unknown".parse().unwrap()].into(),
+            ).unwrap();
+        let schema = get_schema();
+        let req_env = RequestEnv {
             principal: &EntityType::Concrete("Users".parse().unwrap()),
             action: &r#"Action::"view""#.parse().unwrap(),
             resource: &EntityType::Concrete("Photos".parse().unwrap()),
@@ -246,22 +325,7 @@ mod test_sqlite {
 
     #[test]
     fn test_basic() {
-        let conn = Connection::open(&*DB_PATH).expect("Connection failed");
-        struct Table { conn: Connection }
 
-        impl EntityDatabase for Table {
-            fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, EvaluationError> {
-                match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_err)?.map(Cow::Owned)),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_err)?.map(Cow::Owned)),
-                    _ => Ok(None)
-                }
-            }
-
-            fn partial_mode(&self) -> cedar_policy::Mode {
-                cedar_policy::Mode::Concrete
-            }
-        }
 
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
@@ -270,7 +334,7 @@ mod test_sqlite {
                 Some("Actions::\"view\"".parse().unwrap()),
                 Some("Photos::\"2\"".parse().unwrap()), Context::empty())
             , &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
-            &Table { conn });
+            &get_sqlite_table());
 
         println!("Result {:?}", result);
         // TODO: assert(result.decision == Allow)

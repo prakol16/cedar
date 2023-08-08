@@ -3926,9 +3926,9 @@ pub mod test {
             .get(&PolicyID::from_string("policy0"))
             .expect("No such policy");
         let q = Request::new_with_unknowns(
-            EntityUIDEntry::Unknown,
-            EntityUIDEntry::Unknown,
-            EntityUIDEntry::Unknown,
+            EntityUIDEntry::Unknown(None),
+            EntityUIDEntry::Unknown(None),
+            EntityUIDEntry::Unknown(None),
             Some(Context::empty()),
         );
         let es = Entities::new();

@@ -2339,6 +2339,11 @@ impl Policy {
             lossless: LosslessPolicy::policy_or_template_text(text),
         }
     }
+
+    /// Get the non-head constraints as an expression
+    pub fn non_head_constraints(&self) -> &ast::Expr {
+        self.ast.non_head_constraints()
+    }
 }
 
 impl std::fmt::Display for Policy {
@@ -2613,15 +2618,15 @@ impl RequestBuilder {
     pub fn build(self) -> Request {
         let p = match self.principal {
             Some(p) => p,
-            None => ast::EntityUIDEntry::Unknown,
+            None => ast::EntityUIDEntry::Unknown(None),
         };
         let a = match self.action {
             Some(a) => a,
-            None => ast::EntityUIDEntry::Unknown,
+            None => ast::EntityUIDEntry::Unknown(None),
         };
         let r = match self.resource {
             Some(r) => r,
-            None => ast::EntityUIDEntry::Unknown,
+            None => ast::EntityUIDEntry::Unknown(None),
         };
         Request(ast::Request::new_with_unknowns(p, a, r, self.context))
     }
@@ -2631,6 +2636,12 @@ impl RequestBuilder {
 #[repr(transparent)]
 #[derive(Debug, RefCast)]
 pub struct Request(pub(crate) ast::Request);
+
+impl From<ast::Request> for Request {
+    fn from(r: ast::Request) -> Self {
+        Self(r)
+    }
+}
 
 impl Request {
     /// Create a [`RequestBuilder`]
@@ -2673,7 +2684,7 @@ impl Request {
     pub fn principal(&self) -> Option<&EntityUid> {
         match self.0.principal() {
             ast::EntityUIDEntry::Concrete(euid) => Some(EntityUid::ref_cast(euid.as_ref())),
-            ast::EntityUIDEntry::Unknown => None,
+            ast::EntityUIDEntry::Unknown(_) => None,
         }
     }
 
@@ -2681,7 +2692,7 @@ impl Request {
     pub fn action(&self) -> Option<&EntityUid> {
         match self.0.action() {
             ast::EntityUIDEntry::Concrete(euid) => Some(EntityUid::ref_cast(euid.as_ref())),
-            ast::EntityUIDEntry::Unknown => None,
+            ast::EntityUIDEntry::Unknown(_) => None,
         }
     }
 
@@ -2689,7 +2700,7 @@ impl Request {
     pub fn resource(&self) -> Option<&EntityUid> {
         match self.0.resource() {
             ast::EntityUIDEntry::Concrete(euid) => Some(EntityUid::ref_cast(euid.as_ref())),
-            ast::EntityUIDEntry::Unknown => None,
+            ast::EntityUIDEntry::Unknown(_) => None,
         }
     }
 }
