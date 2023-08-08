@@ -51,7 +51,7 @@ use super::type_error::TypeError;
 
 use cedar_policy_core::ast::{
     BinaryOp, EntityType, EntityUID, Expr, ExprBuilder, ExprKind, Literal, Name, Template, UnaryOp,
-    Var,
+    Var, self,
 };
 
 const REQUIRED_STACK_SPACE: usize = 1024 * 100;
@@ -168,6 +168,17 @@ impl<'a> TypecheckAnswer<'a> {
     pub fn into_fail(self) -> Self {
         match self {
             TypecheckAnswer::TypecheckSuccess { expr_type, .. } => TypecheckAnswer::fail(expr_type),
+            TypecheckAnswer::TypecheckFail { .. } => self,
+            TypecheckAnswer::RecursionLimit => self,
+        }
+    }
+
+    /// Fail if the type of the expression has type `None`
+    pub fn into_fail_if_none(self) -> Self {
+        match self {
+            TypecheckAnswer::TypecheckSuccess { expr_type, expr_effect } =>
+                if expr_type.data().is_none() { TypecheckAnswer::fail(expr_type) }
+                else { Self::TypecheckSuccess { expr_type, expr_effect } },
             TypecheckAnswer::TypecheckFail { .. } => self,
             TypecheckAnswer::RecursionLimit => self,
         }
@@ -457,6 +468,11 @@ impl<'a> Typechecker<'a> {
                         })
                 })
         })
+    }
+
+    pub fn typecheck_expr_strict(&self, request_env: &RequestEnv, e: &Expr,
+        expected_type: Type, type_errors: &mut Vec<TypeError>) -> Option<Expr<Option<Type>>> {
+        self.typecheck_strict(request_env, e, expected_type, type_errors).into_typed_expr()
     }
 
     fn typecheck_strict<'b>(
@@ -1082,9 +1098,18 @@ impl<'a> Typechecker<'a> {
             ExprKind::Unknown {
                 name,
                 type_annotation,
-            } => TypecheckAnswer::fail(
-                ExprBuilder::with_data(None).unknown(name.clone(), type_annotation.clone()),
-            ),
+            } => match type_annotation {
+                Some(ast::Type::Entity { ty: ast::EntityType::Concrete(tp_name) }) => TypecheckAnswer::success({
+                    let t = Type::entity_type_literal(tp_name, self.schema);
+                    ExprBuilder::with_data(t)
+                        .unknown(name.clone(), type_annotation.clone())
+                }).into_fail_if_none(),
+                // these types can be converted, I just haven't done it yet.
+                Some(ast::Type::Bool) | Some(ast::Type::Long) | Some(ast::Type::String) => todo!(),
+                _ => TypecheckAnswer::fail(
+                    ExprBuilder::with_data(None).unknown(name.clone(), type_annotation.clone()),
+                ),
+            },
             // Template Slots, always has to be an entity.
             ExprKind::Slot(slotid) => TypecheckAnswer::success(
                 ExprBuilder::with_data(Some(Type::any_entity_reference()))

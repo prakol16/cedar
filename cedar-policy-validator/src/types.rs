@@ -86,7 +86,7 @@ impl Type {
         }
     }
 
-    pub(crate) fn primitive_boolean() -> Type {
+    pub fn primitive_boolean() -> Type {
         Type::Primitive {
             primitive_type: Primitive::Bool,
         }
@@ -104,6 +104,13 @@ impl Type {
         }
     }
 
+    /// Create a type given a name describing the entity type name
+    pub(crate) fn entity_type_literal(name: &Name, schema: &ValidatorSchema) -> Option<Type> {
+        schema
+            .get_entity_type(name)
+            .map(Type::entity_reference_from_entity_type)
+    }
+
     /// Construct a type for a literal EUID. This type will be a named entity
     /// type for the type of the EntityUID.
     pub(crate) fn euid_literal(entity: EntityUID, schema: &ValidatorSchema) -> Option<Type> {
@@ -115,9 +122,7 @@ impl Type {
                         .get_action_id(&entity)
                         .and_then(Type::entity_reference_from_action_id)
                 } else {
-                    schema
-                        .get_entity_type(name)
-                        .map(Type::entity_reference_from_entity_type)
+                    Type::entity_type_literal(name, schema)
                 }
             }
         }
@@ -817,7 +822,7 @@ impl EntityLUB {
 
 /// Represents the attributes of a record or entity type. Each attribute has an
 /// identifier, a flag indicating weather it is required, and a type.
-#[derive(Hash, Ord, PartialOrd, Eq, PartialEq, Debug, Clone, Serialize)]
+#[derive(Hash, Ord, PartialOrd, Eq, PartialEq, Debug, Clone, Serialize, Default)]
 pub struct Attributes {
     pub attrs: BTreeMap<SmolStr, AttributeType>,
 }
