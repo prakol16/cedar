@@ -23,6 +23,9 @@
 pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
+use cedar_policy_core::ast::Eid;
+use cedar_policy_core::ast::EntityType;
+use cedar_policy_core::ast::EntityUID;
 use cedar_policy_core::ast::RestrictedExprError;
 pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for PartialValue
 pub use cedar_policy_core::ast::Value; // TODO: add API for Value
@@ -41,6 +44,8 @@ use cedar_policy_core::parser;
 pub use cedar_policy_core::parser::err::ParseErrors;
 use cedar_policy_core::parser::SourceInfo;
 use cedar_policy_core::FromNormalizedStr;
+use cedar_policy_validator::types::Attributes;
+use cedar_policy_validator::types::RequestEnv;
 pub use cedar_policy_validator::{
     TypeErrorKind, UnsupportedFeature, ValidationErrorKind, ValidationWarningKind,
 };
@@ -2629,6 +2634,34 @@ impl RequestBuilder {
             None => ast::EntityUIDEntry::Unknown(None),
         };
         Request(ast::Request::new_with_unknowns(p, a, r, self.context))
+    }
+}
+
+#[derive(Debug)]
+/// TODO: completely rework this; this is kind of awful
+pub struct RandomRequestEnv {
+    /// Carries memory for an id
+    id: EntityUID,
+
+    /// Carries memory for attributes
+    attrs: Attributes
+}
+
+impl RandomRequestEnv {
+    /// Allocate memory to create a `RequestEnv`
+    pub fn new() -> Self {
+        Self { id: EntityUID::unspecified_from_eid(Eid::new("")), attrs: Attributes::default() }
+    }
+}
+
+impl<'a> From<&'a RandomRequestEnv> for RequestEnv<'a> {
+    fn from(value: &'a RandomRequestEnv) -> Self {
+        RequestEnv {
+            principal: &value.id.entity_type(),
+            action: &value.id,
+            resource: &value.id.entity_type(),
+            context: &value.attrs,
+        }
     }
 }
 

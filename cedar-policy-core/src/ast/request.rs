@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::sync::Arc;
 
-use super::{Expr, Literal, PartialValue, Value, Var, Type, Name};
+use super::{Expr, Literal, PartialValue, Value, Var, Type, Name, EntityType};
 
 /// Represents the request tuple <P, A, R, C> (see the Cedar design doc).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +65,14 @@ impl EntityUIDEntry {
             EntityUIDEntry::Unknown(name) => {
                 Expr::unknown_with_type(var.to_string(), name.clone().map(|n| Type::entity_type(n))).into()
             }
+        }
+    }
+
+    /// Get the type if it is known
+    pub fn type_name(&self) -> Option<EntityType> {
+        match self {
+            EntityUIDEntry::Concrete(euid) => Some(euid.entity_type().clone()),
+            EntityUIDEntry::Unknown(name) => name.clone().map(|n| EntityType::Concrete(n)),
         }
     }
 

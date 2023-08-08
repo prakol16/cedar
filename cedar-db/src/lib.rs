@@ -152,7 +152,7 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, PartialResponse};
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, PartialResponse, RandomRequestEnv};
 
     use cedar_policy_core::{ast::{Expr, EntityType, EntityUIDEntry, self}, evaluator::RestrictedEvaluator, extensions::Extensions};
     use cedar_policy_validator::{typecheck::Typechecker, ValidatorSchema, ValidationMode, types::{RequestEnv, Attributes}};
@@ -253,17 +253,12 @@ mod test_sqlite {
                 println!("Got residuals {exprs:?}");
 
                 let schema = get_schema();
-                let req_env = RequestEnv {
-                    principal: &EntityType::Concrete("Users".parse().unwrap()),
-                    action: &r#"Action::"view""#.parse().unwrap(),
-                    resource: &EntityType::Concrete("Photos".parse().unwrap()),
-                    context: &Attributes::default()
-                };
+                let req_env = RandomRequestEnv::new();
                 let typechecker = Typechecker::new(&schema, ValidationMode::Strict);
 
                 for expr in exprs {
                     let typed_test_expr = typechecker.typecheck_expr_strict(
-                        &req_env, &expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
+                        &(&req_env).into(), &expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
                         .expect("Type checking should succeed");
                     println!("{typed_test_expr:?}");
 
