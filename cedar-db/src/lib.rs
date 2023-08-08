@@ -154,6 +154,8 @@ mod test_sqlite {
 
     use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError};
 
+    use cedar_policy_core::ast::{Expr, BinaryOp, Type, EntityType};
+    use cedar_policy_validator::{typecheck::Typechecker, ValidatorSchema, ValidationMode, types::{RequestEnv, Attributes}};
     use rusqlite::Connection;
 
     use crate::sqlite::*;
@@ -169,6 +171,56 @@ mod test_sqlite {
         static ref PHOTOS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("photos", vec!["title", "location"], Some("ancestors"));
 
         static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<'static> = AncestorSQLInfo::new("team_memberships", "user", "team");
+    }
+
+    #[test]
+    fn test_partial_eval() {
+        let photos_type: Type = Type::Entity { ty: EntityType::Concrete("Photos".parse().unwrap()) };
+        let test_expr: Expr =
+            Expr::binary_app(BinaryOp::Eq,
+            Expr::get_attr(Expr::unknown_with_type("photos", Some(photos_type)), "owner".into()),
+            r#"Users::"0""#.parse().unwrap());
+        let schema: ValidatorSchema = r#"
+        {
+            "": {
+                "entityTypes": {
+                    "Users": {
+                        "shape": {
+                            "type": "Record",
+                            "attributes": {}
+                        }
+                    },
+                    "Photos": {
+                        "shape": {
+                            "type": "Record",
+                            "attributes": {
+                                "owner": {
+                                    "type": "Entity",
+                                    "name": "Users"
+                                }
+                            }
+                        }
+                    }
+                },
+                "actions": {}
+            }
+        }
+        "#.parse().unwrap();
+
+        let req_env: RequestEnv = RequestEnv {
+            principal: &EntityType::Concrete("Users".parse().unwrap()),
+            action: &r#"Action::"view""#.parse().unwrap(),
+            resource: &EntityType::Concrete("Photos".parse().unwrap()),
+            context: &Attributes::default()
+        };
+        let typechecker = Typechecker::new(&schema, ValidationMode::Strict);
+        let typed_test_expr = typechecker.typecheck_expr_strict(
+            &req_env, &test_expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
+            .expect("Type checking should succeed");
+        println!("{typed_test_expr:?}");
+
+
+
     }
 
     #[test]
