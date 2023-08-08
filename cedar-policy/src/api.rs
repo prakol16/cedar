@@ -24,7 +24,6 @@ pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
 use cedar_policy_core::ast::Eid;
-use cedar_policy_core::ast::EntityType;
 use cedar_policy_core::ast::EntityUID;
 use cedar_policy_core::ast::RestrictedExprError;
 pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for PartialValue
@@ -2585,6 +2584,14 @@ impl RequestBuilder {
         }
     }
 
+    /// Set the principal to an unknown entity with a known type
+    pub fn principal_type(self, name: EntityTypeName) -> Self {
+        Self {
+            principal: Some(ast::EntityUIDEntry::Unknown(Some(name.0))),
+            ..self
+        }
+    }
+
     /// Set the action
     pub fn action(self, action: Option<EntityUid>) -> Self {
         Self {
@@ -2598,6 +2605,14 @@ impl RequestBuilder {
         }
     }
 
+    /// Set the action to an unknown entity with a known type
+    pub fn action_type(self, name: EntityTypeName) -> Self {
+        Self {
+            action: Some(ast::EntityUIDEntry::Unknown(Some(name.0))),
+            ..self
+        }
+    }
+
     /// Set the resource
     pub fn resource(self, resource: Option<EntityUid>) -> Self {
         Self {
@@ -2607,6 +2622,14 @@ impl RequestBuilder {
                     ast::Eid::new("resource"),
                 )),
             }),
+            ..self
+        }
+    }
+
+    /// Set the resource to an unknown entity with a known type
+    pub fn resource_type(self, name: EntityTypeName) -> Self {
+        Self {
+            resource: Some(ast::EntityUIDEntry::Unknown(Some(name.0))),
             ..self
         }
     }

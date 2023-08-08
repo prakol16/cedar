@@ -154,7 +154,7 @@ mod test_sqlite {
 
     use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, PartialResponse, RandomRequestEnv};
 
-    use cedar_policy_core::{ast::{Expr, EntityType, EntityUIDEntry, self}, evaluator::RestrictedEvaluator, extensions::Extensions};
+    use cedar_policy_core::{ast::{Expr, EntityType}, evaluator::RestrictedEvaluator, extensions::Extensions};
     use cedar_policy_validator::{typecheck::Typechecker, ValidatorSchema, ValidationMode, types::{RequestEnv, Attributes}};
     use rusqlite::Connection;
     use sea_query::{Alias, Query, Asterisk, SqliteQueryBuilder};
@@ -234,12 +234,11 @@ mod test_sqlite {
     #[test]
     fn test_partial_eval_policies() {
         let auth = Authorizer::new();
-        let req: Request =
-            ast::Request::new_with_unknowns(EntityUIDEntry::concrete("Users::\"0\"".parse().unwrap()),
-            EntityUIDEntry::concrete("Action::\"view\"".parse().unwrap()),
-            EntityUIDEntry::Unknown(Some("Photos".parse().unwrap())),
-            None)
-            .into();
+        let req: Request = Request::builder()
+            .principal(Some("Users::\"0\"".parse().unwrap()))
+            .action(Some("Actions::\"view\"".parse().unwrap()))
+            .resource_type("Photos".parse().unwrap())
+            .build();
         println!("Request: {:?}", req);
         let result = auth.is_authorized_parsed(&req,
             &"permit(principal, action, resource) when { principal == resource.user_id };".parse().unwrap(),
