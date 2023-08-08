@@ -157,8 +157,9 @@ mod test_sqlite {
     use cedar_policy_core::ast::{Expr, BinaryOp, Type, EntityType};
     use cedar_policy_validator::{typecheck::Typechecker, ValidatorSchema, ValidationMode, types::{RequestEnv, Attributes}};
     use rusqlite::Connection;
+    use sea_query::{Alias, Query, Asterisk, QueryStatementWriter, SqliteQueryBuilder};
 
-    use crate::sqlite::*;
+    use crate::{sqlite::*, expr_to_query::expr_to_sql_query_entity_in_table};
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/example_sqlite.db";
@@ -219,7 +220,13 @@ mod test_sqlite {
             .expect("Type checking should succeed");
         println!("{typed_test_expr:?}");
 
-
+        let translated = expr_to_sql_query_entity_in_table::<Alias, Alias, Alias>(&typed_test_expr, &|_t1, _t2| todo!())
+            .expect("Failed to translate expression");
+        println!("{}", Query::select()
+                        .column(Asterisk)
+                        .from(Alias::new("photos"))
+                        .and_where(translated)
+                        .to_string(SqliteQueryBuilder));
 
     }
 
