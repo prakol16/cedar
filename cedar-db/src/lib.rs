@@ -154,10 +154,10 @@ mod test_sqlite {
 
     use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError};
 
-    use cedar_policy_core::ast::{Expr, BinaryOp, Type, EntityType};
+    use cedar_policy_core::{ast::{Expr, EntityType}, evaluator::RestrictedEvaluator, extensions::Extensions};
     use cedar_policy_validator::{typecheck::Typechecker, ValidatorSchema, ValidationMode, types::{RequestEnv, Attributes}};
     use rusqlite::Connection;
-    use sea_query::{Alias, Query, Asterisk, QueryStatementWriter, SqliteQueryBuilder};
+    use sea_query::{Alias, Query, Asterisk, SqliteQueryBuilder};
 
     use crate::{sqlite::*, expr_to_query::expr_to_sql_query_entity_in_table};
 
@@ -176,11 +176,14 @@ mod test_sqlite {
 
     #[test]
     fn test_partial_eval() {
-        let photos_type: Type = Type::Entity { ty: EntityType::Concrete("Photos".parse().unwrap()) };
+        // let photos_type: Type = Type::Entity { ty: EntityType::Concrete("Photos".parse().unwrap()) };
+        let extensions = Extensions::all_available();
+        let eval = RestrictedEvaluator::new(&extensions);
         let test_expr: Expr =
-            Expr::binary_app(BinaryOp::Eq,
-            Expr::get_attr(Expr::unknown_with_type("photos", Some(photos_type)), "owner".into()),
-            r#"Users::"0""#.parse().unwrap());
+            eval.partial_interpret_unrestricted(
+                &r#"unknown("photos: Photos").owner == Users::"0""#.parse().expect("Failed to parse expression"),
+                &["unknown".parse().unwrap()].into(),
+            ).unwrap();
         let schema: ValidatorSchema = r#"
         {
             "": {

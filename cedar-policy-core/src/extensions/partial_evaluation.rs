@@ -16,13 +16,18 @@
 
 //! This module contains the extension for including unknown values
 use crate::{
-    ast::{CallStyle, Extension, ExtensionFunction, ExtensionOutputValue, Value},
+    ast::{CallStyle, Extension, ExtensionFunction, ExtensionOutputValue, Value, Type, EntityType},
     entities::SchemaType,
     evaluator::{self, EvaluationError},
 };
 
 fn create_new_unknown(v: Value) -> evaluator::Result<ExtensionOutputValue> {
-    Ok(ExtensionOutputValue::Unknown(v.get_as_string()?.clone()))
+    let mut s = v.get_as_string()?.to_string();
+    // Dirty hack to identify types
+    let tp = s.find(": ")
+        .map(|i| s.split_off(i)[": ".len()..].to_string())
+        .map(|s| Type::Entity { ty: EntityType::Concrete(s.parse().unwrap()) });
+    Ok(ExtensionOutputValue::Unknown(v.get_as_string()?.clone(), tp))
 }
 
 fn throw_error(v: Value) -> evaluator::Result<ExtensionOutputValue> {
@@ -54,7 +59,7 @@ pub fn extension() -> Extension {
                 CallStyle::FunctionStyle,
                 Box::new(throw_error),
                 Some(SchemaType::String),
-            ),
+            )
         ],
     )
 }

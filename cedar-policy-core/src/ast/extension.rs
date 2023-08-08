@@ -76,7 +76,7 @@ pub enum ExtensionOutputValue {
     /// A concrete value from an extension call
     Concrete(Value),
     /// An unknown returned from an extension call
-    Unknown(SmolStr),
+    Unknown(SmolStr, Option<Type>),
 }
 
 impl<T> From<T> for ExtensionOutputValue
@@ -313,7 +313,7 @@ impl ExtensionFunction {
     pub fn call(&self, args: &[Value]) -> evaluator::Result<PartialValue> {
         match (self.func)(args)? {
             ExtensionOutputValue::Concrete(v) => Ok(PartialValue::Value(v)),
-            ExtensionOutputValue::Unknown(name) => Ok(PartialValue::Residual(Expr::unknown(name))),
+            ExtensionOutputValue::Unknown(name, tp) => Ok(PartialValue::Residual(Expr::unknown_with_type(name, tp))),
         }
     }
 }

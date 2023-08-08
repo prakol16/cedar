@@ -19,6 +19,7 @@
 use crate::ast::*;
 use crate::entities::{Dereference, Entities, EntityAttrDatabase};
 use crate::extensions::Extensions;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 mod err;
@@ -82,6 +83,78 @@ impl<'e> RestrictedEvaluator<'e> {
         match self.partial_interpret(e)? {
             PartialValue::Value(v) => Ok(v),
             PartialValue::Residual(r) => Err(EvaluationError::non_value(r)),
+        }
+    }
+
+    /// Evaluates extension functions in the set `to_eval`.
+    pub fn partial_interpret_unrestricted(&self, e: &Expr, to_eval: &HashSet<Name>) -> Result<Expr> {
+        stack_size_check()?;
+
+        match e.expr_kind() {
+            ExprKind::Lit(_) | ExprKind::Var(_) | ExprKind::Slot(_) | ExprKind::Unknown { .. } => Ok(e.to_owned()),
+            ExprKind::If { test_expr, then_expr, else_expr } => {
+                let test_expr = self.partial_interpret_unrestricted(test_expr, to_eval)?;
+                let then_expr = self.partial_interpret_unrestricted(then_expr, to_eval)?;
+                let else_expr = self.partial_interpret_unrestricted(else_expr, to_eval)?;
+                Ok(Expr::ite(test_expr, then_expr, else_expr))
+            },
+            ExprKind::And { left, right } => {
+                let left = self.partial_interpret_unrestricted(left, to_eval)?;
+                let right = self.partial_interpret_unrestricted(right, to_eval)?;
+                Ok(Expr::and(left, right))
+            },
+            ExprKind::Or { left, right } => {
+                let left = self.partial_interpret_unrestricted(left, to_eval)?;
+                let right = self.partial_interpret_unrestricted(right, to_eval)?;
+                Ok(Expr::or(left, right))
+            },
+            ExprKind::UnaryApp { op, arg } => {
+                let arg = self.partial_interpret_unrestricted(arg, to_eval)?;
+                Ok(Expr::unary_app(*op, arg))
+            },
+            ExprKind::BinaryApp { op, arg1, arg2 } => {
+                let arg1 = self.partial_interpret_unrestricted(arg1, to_eval)?;
+                let arg2 = self.partial_interpret_unrestricted(arg2, to_eval)?;
+                Ok(Expr::binary_app(*op, arg1, arg2))
+            },
+            ExprKind::MulByConst { arg, constant } => {
+                let arg = self.partial_interpret_unrestricted(arg, to_eval)?;
+                Ok(Expr::mul(arg, *constant))
+            },
+            ExprKind::ExtensionFunctionApp { fn_name, args } => {
+                if to_eval.contains(fn_name) {
+                    let e_restricted = BorrowedRestrictedExpr::new(e)?;
+                    match self.partial_interpret(e_restricted)? {
+                        PartialValue::Value(v) => Ok(v.into()),
+                        PartialValue::Residual(r) => Ok(r),
+                    }
+                } else {
+                    Ok(Expr::call_extension_fn(fn_name.clone(),
+                    args.iter()
+                            .map(|f| self.partial_interpret_unrestricted(f, to_eval))
+                            .collect::<Result<Vec<_>>>()?))
+                }
+            },
+            ExprKind::GetAttr { expr, attr } => {
+                let expr = self.partial_interpret_unrestricted(expr, to_eval)?;
+                Ok(Expr::get_attr(expr, attr.clone()))
+            },
+            ExprKind::HasAttr { expr, attr } => {
+                let expr = self.partial_interpret_unrestricted(expr, to_eval)?;
+                Ok(Expr::has_attr(expr, attr.clone()))
+            },
+            ExprKind::Like { expr, pattern } => {
+                let expr = self.partial_interpret_unrestricted(expr, to_eval)?;
+                Ok(Expr::like(expr, pattern.iter().cloned()))
+            },
+            ExprKind::Set(vals) => {
+                let vals = vals.iter().map(|e| self.partial_interpret_unrestricted(e, to_eval)).collect::<Result<Vec<_>>>()?;
+                Ok(Expr::set(vals))
+            },
+            ExprKind::Record { pairs } => {
+                let pairs = pairs.iter().map(|(k, v)| Ok((k.clone(), self.partial_interpret_unrestricted(v, to_eval)?))).collect::<Result<Vec<_>>>()?;
+                Ok(Expr::record(pairs))
+            },
         }
     }
 
