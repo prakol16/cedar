@@ -4,7 +4,7 @@ use cedar_policy::{EntityTypeName, ResidualResponse, PolicyId, Schema, RandomReq
 use cedar_policy_core::ast::{Expr, ExprKind, Literal, UnaryOp, BinaryOp};
 use cedar_policy_validator::{types::{Type, EntityRecordKind, Primitive}, typecheck::Typechecker, ValidationMode};
 use ref_cast::RefCast;
-use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query};
+use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -165,7 +165,22 @@ pub fn expr_to_sql_query(e: &Expr<Option<Type>>, ein: &impl Fn(&EntityTypeName, 
             },
             None => Err(ExprToSqlError::StringError(format!("cannot get attribute {attr} of expression {expr:?} unknown type"))),
         },
-        ExprKind::HasAttr { .. } => unimplemented!("HasAttr unimplemented"),
+        ExprKind::HasAttr { expr, attr } => {
+            // TODO: if the attribute is required for the type, replace with "true" in partial evaluation
+            match expr.data() {
+                Some(Type::EntityOrRecord(EntityRecordKind::Record { .. })) => unimplemented!("HasAttr on records not supported yet"),
+                Some(_) => {
+                    match expr.expr_kind() {
+                        ExprKind::Unknown { name, .. } => {
+                            let val: SimpleExpr = (Alias::new(name.as_str()), Alias::new(attr.as_str())).into_column_ref().into();
+                            Ok(val.binary(BinOper::IsNot, Keyword::Null))
+                        },
+                        _ => Err(ExprToSqlError::StringError(format!("HasAttr can only be called on records or unknown (getting attribute {attr} of {expr:?}")))
+                    }
+                },
+                None => Err(ExprToSqlError::StringError(format!("cannot get attribute {attr} of expression {expr:?} unknown type"))),
+            }
+        },
         ExprKind::Like { .. } => unimplemented!("Like unimplemented"),
         ExprKind::Set(_) => unimplemented!("Set unimplemented"),
         ExprKind::Record { .. } => unimplemented!("Record unimplemented"),
@@ -177,15 +192,15 @@ pub fn expr_to_sql_query_entity_in_table<A, B, C>(e: &Expr<Option<Type>>, entity
     expr_to_sql_query(e, &|tp1, tp2, e1, e2| {
         let (tbl, col1, col2) = entity_in_table(tp1, tp2)?;
         let sub_query = Query::select()
-            .columns([(tbl.clone(), col1.clone()).into_column_ref(), (tbl.clone(), col2.clone()).into_column_ref()])
-            .from(tbl)
+            .column((tbl.clone(), col2.clone()).into_column_ref())
+            .from(tbl.clone())
             .and_where(sea_query::Expr::col(col1).eq(e1))
-            .and_where(sea_query::Expr::col(col2).eq(e2))
             .to_owned();
-        Ok(SimpleExpr::SubQuery(
-            Some(sea_query::SubQueryOper::Exists),
+        // e2 in (SELECT tbl.col2 FROM tbl WHERE tbl.col1 = e1)
+        Ok(e2.binary(BinOper::In, SimpleExpr::SubQuery(
+            None,
             Box::new(sub_query.into_sub_query_statement())
-        ))
+        )))
     })
 }
 
@@ -202,7 +217,6 @@ pub fn translate_residual_policies<A, B, C>(resp: ResidualResponse, schema: &Sch
         let typed_test_expr = typechecker.typecheck_expr_strict(
             &(&req_env).into(), &expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
             .expect("Type checking should succeed");
-        println!("{typed_test_expr:?}");
 
         let translated = expr_to_sql_query_entity_in_table(&typed_test_expr, entity_in_table)
             .expect("Failed to translate expression");
