@@ -516,7 +516,7 @@ impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapp
 #[derive(Debug)]
 pub struct CachedEntities<'e, T: EntityDatabase> {
     db: &'e T,
-    cache: HashMap<EntityUid, ParsedEntity>,
+    cache: HashMap<EntityUid, Option<ParsedEntity>>,
 }
 
 // TODO: generalize using the schema to `EntityAttrDatabase` instead of just `EntityDatabase`
@@ -531,9 +531,9 @@ impl<'e, T: EntityDatabase> CachedEntities<'e, T> {
 
     /// Add the entity with the given `uid` to the cache
     pub fn add_to_cache(&mut self, uid: &EntityUid) {
-        let entity = self.db.get(uid);
-        if let Ok(Some(entity)) = entity {
-            self.cache.insert(uid.clone(), entity.into_owned());
+        let entity_get = self.db.get(uid);
+        if let Ok(entity) = entity_get {
+            self.cache.insert(uid.clone(), entity.map(|e| e.into_owned()));
         }
     }
 
@@ -559,10 +559,10 @@ impl<'e, T: EntityDatabase> CachedEntities<'e, T> {
 
 impl<'a, T: EntityDatabase> EntityDatabase for CachedEntities<'a, T> {
     fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, EvaluationError> {
-        if let Some(entity) = self.cache.get(uid) {
-            Ok(Some(Cow::Borrowed(entity)))
-        } else {
-            self.db.get(uid)
+        match self.cache.get(uid) {
+            Some(Some(entity)) => Ok(Some(Cow::Borrowed(entity))),
+            Some(None) => Ok(None),
+            None => self.db.get(uid)
         }
     }
 
