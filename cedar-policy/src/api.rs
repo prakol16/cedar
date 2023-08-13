@@ -24,9 +24,11 @@ pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
 use cedar_policy_core::ast::Eid;
+use cedar_policy_core::ast::EntityType;
 use cedar_policy_core::ast::EntityUID;
 use cedar_policy_core::ast::RestrictedExprError;
-pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for PartialValue
+pub use cedar_policy_core::ast::PartialValue; use cedar_policy_core::ast::Type;
+// TODO: add small API for PartialValue
 pub use cedar_policy_core::ast::Value; // TODO: add API for Value
 use cedar_policy_core::authorizer;
 use cedar_policy_core::entities;
@@ -1396,6 +1398,12 @@ impl std::fmt::Display for EntityId {
 #[repr(transparent)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, RefCast)]
 pub struct EntityTypeName(ast::Name);
+
+impl From<EntityTypeName> for Type {
+    fn from(name: EntityTypeName) -> Self {
+        Type::Entity { ty: EntityType::Concrete(name.0) }
+    }
+}
 
 impl EntityTypeName {
     /// Get the basename of the `EntityTypeName` (ie, with namespaces stripped).

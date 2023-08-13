@@ -4,6 +4,7 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
+pub mod cedar_query;
 pub mod expr_to_query;
 
 #[cfg(feature = "postgres")]
