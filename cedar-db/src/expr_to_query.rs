@@ -1,9 +1,11 @@
-use cedar_policy::EntityTypeName;
-use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp};
+use cedar_policy::{EntityTypeName, Schema, RandomRequestEnv, ResidualResponse, Effect};
+use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp, Expr, ExprBuilder};
+use cedar_policy_validator::{typecheck::Typechecker, ValidationMode};
 use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, SelectStatement};
+use smol_str::SmolStr;
 use thiserror::Error;
 
-use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, ExprWithBindings, OtherUnknown};
+use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, ExprWithBindings, OtherUnknown, IdGen};
 
 #[derive(Debug, Error)]
 pub enum ExprToSqlError {
@@ -178,15 +180,43 @@ impl ExprWithBindings {
     }
 }
 
+/// Does the translation from Cedar to SQL without any renaming
+pub fn translate_expr<A, B, C>(expr: &Expr, schema: &Schema, ein_table: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> Result<SelectStatement>
+        where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
+    let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
+    let req_env = RandomRequestEnv::new();
+    let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
+        .ok_or(QueryExprError::TypecheckError)?;
+
+    let query_expr: QueryExpr<SmolStr> = (&typed_expr).try_into()?;
+    let query_expr_mapped: QueryExpr = query_expr.into();
+
+    let mut query_with_bindings: ExprWithBindings = query_expr_mapped.into();
+    query_with_bindings.reduce_attrs(&mut IdGen::new());
+
+
+    query_with_bindings.to_sql_query(ein_table)
+}
+
+
+pub fn translate_response<A, B, C>(resp: &ResidualResponse, schema: &Schema, ein_table: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> Result<SelectStatement>
+        where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
+    let (permits, forbids): (Vec<_>, Vec<_>) =
+        resp.residuals().policies()
+            .partition(|p| p.effect() == Effect::Permit);
+    let expr: Expr = ExprBuilder::new().and(
+        ExprBuilder::new().any(permits.into_iter().map(|p| p.non_head_constraints().clone())),
+        ExprBuilder::new().not(ExprBuilder::new().any(forbids.into_iter().map(|p| p.non_head_constraints().clone()))));
+    translate_expr(&expr, schema, ein_table)
+}
+
 #[cfg(test)]
 mod test {
-    use cedar_policy::{Schema, RandomRequestEnv};
+    use cedar_policy::Schema;
     use cedar_policy_core::{evaluator::RestrictedEvaluator, extensions::Extensions, ast};
-    use cedar_policy_validator::{typecheck::Typechecker, ValidationMode};
     use sea_query::{Alias, PostgresQueryBuilder, Asterisk};
-    use smol_str::SmolStr;
 
-    use crate::query_expr::{QueryExpr, ExprWithBindings, IdGen};
+    use super::translate_expr;
 
     /// Translation function for the purposes of testing; fills in lots of boilerplate
     pub fn translate_expr_test(expr: ast::Expr, schema: &Schema) -> String {
@@ -194,17 +224,7 @@ mod test {
         let eval = RestrictedEvaluator::new(&ext);
         let expr = eval.partial_interpret_unrestricted(&expr, &["unknown".parse().unwrap()].into()).unwrap();
 
-        let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
-        let req_env = RandomRequestEnv::new();
-        let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), &expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new()).unwrap();
-
-        let query_expr: QueryExpr<SmolStr> = (&typed_expr).try_into().unwrap();
-        let query_expr_mapped: QueryExpr = query_expr.into();
-
-        let mut query_with_bindings: ExprWithBindings = query_expr_mapped.into();
-        query_with_bindings.reduce_attrs(&mut IdGen::new());
-
-        let mut query = query_with_bindings.to_sql_query(&|t1, t2| {
+        let mut query = translate_expr(&expr, schema, &|t1, t2| {
             let t1_str = t1.to_string();
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);

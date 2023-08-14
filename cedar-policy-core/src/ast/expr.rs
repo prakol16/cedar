@@ -1138,6 +1138,15 @@ impl<T: Clone> ExprBuilder<T> {
         })
     }
 
+    /// Same as and_nary but returns true if given an empty iterator
+    pub fn all(self, exprs: impl IntoIterator<Item = Expr<T>>) -> Expr<T> {
+        let mut exprs = exprs.into_iter();
+        match exprs.next() {
+            Some(first) => self.and_nary(first, exprs),
+            None => self.val(true),
+        }
+    }
+
     /// Create an `or` expression that may have more than two subexpressions (A || B || C)
     /// or may have only one subexpression, in which case no `||` is performed at all.
     /// Arguments must evaluate to Bool type.
@@ -1151,6 +1160,15 @@ impl<T: Clone> ExprBuilder<T> {
                 .with_maybe_source_info(self.source_info.clone())
                 .or(acc, next)
         })
+    }
+
+    /// Same as or_nary but returns false if given an empty iterator
+    pub fn any(self, exprs: impl IntoIterator<Item = Expr<T>>) -> Expr<T> {
+        let mut exprs = exprs.into_iter();
+        match exprs.next() {
+            Some(first) => self.or_nary(first, exprs),
+            None => self.val(false),
+        }
     }
 }
 
