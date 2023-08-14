@@ -63,6 +63,13 @@ fn entity_lub_to_typename(lub: &EntityLUB) -> Result<&EntityTypeName> {
     lub.get_single_entity().ok_or(QueryExprError::GetAttrLUBNotSingle).map(|e| EntityTypeName::ref_cast(e))
 }
 
+fn type_to_entity_typename(tp: Option<&Type>) -> Result<&EntityTypeName> {
+    match tp.ok_or(QueryExprError::TypeAnnotationNone)? {
+        Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => entity_lub_to_typename(&lub),
+        _ => Err(QueryExprError::TypecheckError),
+    }
+}
+
 
 /// This is a Cedar expression intended to be more easily converted into a SQL query.
 /// It refines the Cedar expression language by specifying the types of
@@ -143,7 +150,23 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
             }),
             ExprKind::BinaryApp { op, arg1, arg2 } => {
                 if matches!(op, BinaryOp::In) {
-                    todo!()
+                    let arg1_tp_entity = type_to_entity_typename(arg1.data().as_ref())?;
+
+                    match arg2.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)? {
+                        Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => Ok(QueryExpr::InEntity {
+                            left: Box::new(QueryExpr::try_from(arg1.as_ref())?),
+                            right: Box::new(QueryExpr::try_from(arg2.as_ref())?),
+                            left_type: arg1_tp_entity.to_owned(),
+                            right_type: entity_lub_to_typename(lub)?.to_owned(),
+                        }),
+                        Type::Set { element_type } => Ok(QueryExpr::InSet {
+                            left: Box::new(QueryExpr::try_from(arg1.as_ref())?),
+                            right: Box::new(QueryExpr::try_from(arg2.as_ref())?),
+                            left_type: arg1_tp_entity.to_owned(),
+                            right_type: type_to_entity_typename(element_type.as_deref())?.to_owned(),
+                        }),
+                        _ => Err(QueryExprError::TypecheckError)
+                    }
                 } else {
                     Ok(QueryExpr::BinaryApp {
                         op: *op,

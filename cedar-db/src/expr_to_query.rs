@@ -136,6 +136,7 @@ impl QueryExpr {
     }
 
 
+    /// Wrapper around `to_sql_query` where `ein_table` should return the ordered pair (table, col1, col2)
     pub fn to_sql_query_ein_table<A, B, C>(&self, ein_table: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> Result<SimpleExpr>
             where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
         self.to_sql_query(&|tp1, tp2, e1, e2| {
@@ -359,7 +360,7 @@ mod test {
             let t1_str = t1.to_string();
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
-            Ok((Alias::new(t1_str), Alias::new(t2_str), Alias::new(in_table)))
+            Ok((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str)))
         }).unwrap();
 
         query
@@ -380,6 +381,17 @@ mod test {
                             "attributes": {
                                 "level": {
                                     "type": "Long"
+                                },
+                                "info": {
+                                    "type": "Record",
+                                    "attributes": {
+                                        "name": {
+                                            "type": "String"
+                                        },
+                                        "age": {
+                                            "type": "Long"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -397,7 +409,8 @@ mod test {
                                     "name": "Photos"
                                 }
                             }
-                        }
+                        },
+                        "memberOfTypes": ["Photos"]
                     }
                 },
                 "actions": {
@@ -455,7 +468,7 @@ mod test {
             r#"unknown("resource: Photos").nextPhoto.nextPhoto.nextPhoto.owner.level == 3"#.parse().unwrap(),
             &get_schema()
         );
-        println!("{}", result);
+        assert_eq!(result, r#"SELECT * FROM "resource" INNER JOIN "Photos" AS "v__entity_attr_0" ON "resource"."nextPhoto" = "v__entity_attr_0"."uid" INNER JOIN "Photos" AS "v__entity_attr_1" ON "v__entity_attr_0"."nextPhoto" = "v__entity_attr_1"."uid" INNER JOIN "Photos" AS "v__entity_attr_2" ON "v__entity_attr_1"."nextPhoto" = "v__entity_attr_2"."uid" INNER JOIN "Users" AS "v__entity_attr_3" ON "v__entity_attr_2"."owner" = "v__entity_attr_3"."uid" WHERE "v__entity_attr_3"."level" = 3"#);
     }
 
     #[test]
@@ -464,6 +477,42 @@ mod test {
             r#"(if unknown("resource: Photos") == Photos::"0" || unknown("resource: Photos") == Photos::"1" then unknown("resource: Photos") else unknown("resource: Photos").nextPhoto).owner == Users::"2""#.parse().unwrap(),
             &get_schema()
         );
-        println!("{}", result);
+        assert_eq!(result, r#"SELECT * FROM "resource" INNER JOIN "Photos" AS "v__entity_attr_0" ON (CASE WHEN (("resource"."uid" = '0') OR ("resource"."uid" = '1')) THEN "resource"."uid" ELSE "resource"."nextPhoto" END) = "v__entity_attr_0"."uid" WHERE "v__entity_attr_0"."owner" = '2'"#);
+    }
+
+    #[test]
+    fn test_in() {
+        let result: String = translate_expr_test(
+            r#"unknown("resource: Photos") in Users::"0""#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT * FROM "resource" WHERE '0' IN (SELECT "Photos_in_Users"."Users" FROM "Photos_in_Users" WHERE "Photos" = "resource"."uid")"#);
+    }
+
+    #[test]
+    fn test_in2() {
+        let result: String = translate_expr_test(
+            r#"Users::"0" in unknown("resource: Photos")"#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT * FROM "resource" WHERE "resource"."uid" IN (SELECT "Users_in_Photos"."Photos" FROM "Users_in_Photos" WHERE "Users" = '0')"#);
+    }
+
+    #[test]
+    fn test_in3() {
+        let result: String = translate_expr_test(
+            r#"unknown("resource: Photos") in unknown("resource: Photos").nextPhoto"#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT * FROM "resource" WHERE "resource"."nextPhoto" IN (SELECT "Photos_in_Photos"."Photos" FROM "Photos_in_Photos" WHERE "Photos" = "resource"."uid")"#);
+    }
+
+    #[test]
+    fn test_record_attr() {
+        let result: String = translate_expr_test(
+            r#"unknown("resource: Photos").owner.info.name == "Bob""#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT * FROM "resource" INNER JOIN "Users" AS "v__entity_attr_0" ON "resource"."owner" = "v__entity_attr_0"."uid" WHERE "v__entity_attr_0"."info" ->> 'name' = 'Bob'"#)
     }
 }
