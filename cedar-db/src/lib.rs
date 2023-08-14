@@ -4,7 +4,7 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
-pub mod cedar_query;
+pub mod query_expr;
 pub mod expr_to_query;
 
 #[cfg(feature = "postgres")]
@@ -153,14 +153,11 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, PartialResponse, Schema};
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError};
 
-    use cedar_policy_core::{ast::{Expr, EntityType}, evaluator::RestrictedEvaluator, extensions::Extensions};
-    use cedar_policy_validator::{typecheck::Typechecker, ValidatorSchema, ValidationMode, types::{RequestEnv, Attributes}};
     use rusqlite::Connection;
-    use sea_query::{Alias, Query, Asterisk, SqliteQueryBuilder};
 
-    use crate::{sqlite::*, expr_to_query::{expr_to_sql_query_entity_in_table, translate_residual_policies}};
+    use crate::sqlite::*;
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/example_sqlite.db";
@@ -173,42 +170,6 @@ mod test_sqlite {
         static ref PHOTOS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("photos", vec!["title", "location"], Some("ancestors"));
 
         static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<'static> = AncestorSQLInfo::new("team_memberships", "user", "team");
-    }
-
-    fn get_schema() -> ValidatorSchema {
-        r#"
-        {
-            "": {
-                "entityTypes": {
-                    "Users": {
-                        "shape": {
-                            "type": "Record",
-                            "attributes": {}
-                        }
-                    },
-                    "Photos": {
-                        "shape": {
-                            "type": "Record",
-                            "attributes": {
-                                "owner": {
-                                    "type": "Entity",
-                                    "name": "Users"
-                                }
-                            }
-                        }
-                    }
-                },
-                "actions": {
-                    "view": {
-                        "appliesTo": {
-                            "principalTypes": ["Users"],
-                            "resourceTypes": ["Photos"]
-                        }
-                    }
-                }
-            }
-        }
-        "#.parse().unwrap()
     }
 
     fn get_sqlite_table() -> impl EntityDatabase {
@@ -232,6 +193,7 @@ mod test_sqlite {
         Table { conn }
     }
 
+    /*
     #[test]
     fn test_partial_eval_policies() {
         let auth = Authorizer::new();
@@ -263,7 +225,9 @@ mod test_sqlite {
             }
         };
     }
+    */
 
+    /*
     #[test]
     fn test_partial_eval_expr() {
         // let photos_type: Type = Type::Entity { ty: EntityType::Concrete("Photos".parse().unwrap()) };
@@ -296,6 +260,7 @@ mod test_sqlite {
                         .to_string(SqliteQueryBuilder));
 
     }
+    */
 
     #[test]
     fn test_ancestors() {

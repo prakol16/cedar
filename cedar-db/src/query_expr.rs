@@ -23,6 +23,10 @@ pub enum QueryExprError {
     TypecheckError,
     #[error("Cannot get attribute when the type of the entity is not one particular entity. You can reduce if statements to ensure that no expression can be multiple different entity types.")]
     GetAttrLUBNotSingle,
+    #[error("Not attr-reduced. Entity deref unknown {0} found but not as argument of GetAttrEntity. Consider calling `reduce_attrs()`.")]
+    NotAttrReduced(SmolStr),
+    #[error("Not attr-reduced. Argument of GetAttrEntity is not an entity deref unknown. Consider calling `reduce_attrs()`.")]
+    NotAttrReducedGetAttrEntity,
 }
 
 type Result<T> = std::result::Result<T, QueryExprError>;
@@ -301,15 +305,16 @@ impl From<QueryExpr<SmolStr>> for QueryExpr {
 /// This describes a statement like `let name: ty = expr`.
 #[derive(Debug, Clone)]
 pub struct Binding {
-    name: SmolStr,
-    expr: Box<QueryExpr>,
-    ty: EntityTypeName
+    pub(crate) name: SmolStr,
+    pub(crate) expr: Box<QueryExpr>,
+    pub(crate) ty: EntityTypeName
 }
 
 /// A sequence of let bindings followed by an expression.
+#[derive(Debug, Clone)]
 pub struct ExprWithBindings {
-    bindings: Vec<Binding>,
-    expr: Box<QueryExpr>
+    pub(crate) bindings: Vec<Binding>,
+    pub(crate) expr: Box<QueryExpr>
 }
 
 impl From<QueryExpr> for ExprWithBindings {
@@ -341,7 +346,6 @@ impl IdGen {
 impl QueryExpr {
     /// An expression is said to be attr-reduced when the only
     /// expressions that appear on the left argument of a `GetAttrEntity` are of the form `Unknown(EntityDeref(_))`
-    /// and conversely, such unknowns only appear on the left argument of a `GetAttrEntity`.
     /// This function turns the expression into an attr-reduced form.
     pub fn reduce_attrs(&mut self, bindings: &mut Vec<Binding>, id_gen: &mut IdGen) {
         match self {
@@ -374,6 +378,7 @@ impl QueryExpr {
                 expr.reduce_attrs(bindings, id_gen);
             },
             QueryExpr::GetAttrEntity { expr, expr_type, .. } => {
+                if expr.is_unknown_entity_deref() { return };
                 expr.reduce_attrs(bindings, id_gen);
                 let new_name = id_gen.next();
                 let new_expr = QueryExpr::Unknown {
@@ -414,6 +419,20 @@ impl QueryExpr {
                 }
             },
         }
+    }
+
+    /// If this expression is of the form `Unknown(EntityDeref(s))`, return `Some(s)`.
+    /// In reduced-attr form, this should succeed on all arguments of GetAttrEntity.
+    pub fn get_unknown_entity_deref_name(&self) -> Option<SmolStr> {
+        match self {
+            QueryExpr::Unknown { name: UnknownType::EntityDeref(s), .. } => Some(s.clone()),
+            _ => None
+        }
+    }
+
+    /// Equivalent to `self.get_unknown_entity_deref_name().is_some()`
+    pub fn is_unknown_entity_deref(&self) -> bool {
+        matches!(self, QueryExpr::Unknown { name: UnknownType::EntityDeref(_), .. })
     }
 }
 

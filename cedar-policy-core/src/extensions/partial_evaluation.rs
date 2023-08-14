@@ -22,12 +22,12 @@ use crate::{
 };
 
 fn create_new_unknown(v: Value) -> evaluator::Result<ExtensionOutputValue> {
-    let mut s = v.get_as_string()?.to_string();
+    let s = v.get_as_string()?.to_string();
     // Dirty hack to identify types
-    let tp = s.find(": ")
-        .map(|i| s.split_off(i)[": ".len()..].to_string())
-        .map(|s| Type::Entity { ty: EntityType::Concrete(s.parse().unwrap()) });
-    Ok(ExtensionOutputValue::Unknown(v.get_as_string()?.clone(), tp))
+    match s.split_once(": ") {
+        Some((s1, s2)) => Ok(ExtensionOutputValue::Unknown(s1.into(), Some(Type::Entity { ty: EntityType::Concrete(s2.parse().unwrap()) }))),
+        None => Ok(ExtensionOutputValue::Unknown(s.into(), None))
+    }
 }
 
 fn throw_error(v: Value) -> evaluator::Result<ExtensionOutputValue> {
