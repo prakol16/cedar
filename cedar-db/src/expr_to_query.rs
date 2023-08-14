@@ -3,7 +3,7 @@ use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp};
 use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, SelectStatement};
 use thiserror::Error;
 
-use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, ExprWithBindings};
+use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, ExprWithBindings, OtherUnknown};
 
 #[derive(Debug, Error)]
 pub enum ExprToSqlError {
@@ -25,6 +25,15 @@ fn cedar_binary_to_sql_binary(op: BinaryOp) -> Option<BinOper> {
         BinaryOp::Contains => None,
         BinaryOp::ContainsAll => Some(BinOper::PgOperator(PgBinOper::Contains)),
         BinaryOp::ContainsAny => Some(BinOper::PgOperator(PgBinOper::Overlap)),
+    }
+}
+
+impl IntoColumnRef for OtherUnknown {
+    fn into_column_ref(self) -> sea_query::ColumnRef {
+        match self.pfx {
+            Some(pfx) => (Alias::new(pfx), Alias::new(self.name)).into_column_ref(),
+            None => Alias::new(self.name).into_column_ref(),
+        }
     }
 }
 
@@ -79,7 +88,7 @@ impl QueryExpr {
             QueryExpr::Lit(l) => Ok(Self::lit_to_sql(l)),
             QueryExpr::Unknown { name, .. } => match name {
                 UnknownType::EntityDeref(e) => Ok((Alias::new(e.clone()), Alias::new("uid")).into_column_ref().into()),
-                UnknownType::Other(c) => Ok(c.clone().into()),
+                UnknownType::Other(c) => Ok(c.clone().into_column_ref().into()),
             },
             QueryExpr::If { test_expr, then_expr, else_expr } => Ok(
                 sea_query::Expr::case(test_expr.to_sql_query(ein)?,
@@ -160,175 +169,14 @@ impl ExprWithBindings {
             where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
         let mut query = Query::select();
         query.and_where(self.expr.to_sql_query_ein_table(ein)?);
-        for b in self.bindings.iter() {
+        for (bv, e) in self.bindings.iter() {
             query.join_as(sea_query::JoinType::InnerJoin,
-                Alias::new(b.ty.basename()), Alias::new(b.name.clone()),
-                b.expr.to_sql_query_ein_table(ein)?.eq((Alias::new(b.name.clone()), Alias::new("uid")).into_column_ref()));
+                Alias::new(bv.ty.basename()), Alias::new(bv.name.clone()),
+                e.to_sql_query_ein_table(ein)?.eq((Alias::new(bv.name.clone()), Alias::new("uid")).into_column_ref()));
         }
         Ok(query)
     }
 }
-
-/*
-pub fn expr_to_sql_query(e: &Expr<Option<Type>>, ein: &impl Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>) -> Result<SimpleExpr> {
-    match e.expr_kind() {
-        ExprKind::Lit(e) => {
-            match e {
-                Literal::Bool(b) => Ok((*b).into()),
-                Literal::Long(l) => Ok((*l).into()),
-                Literal::String(s) => Ok(s.as_str().into()),
-                Literal::EntityUID(e) => Ok(<SimpleExpr as From<&str>>::from(e.eid().as_ref())),
-            }
-        },
-        ExprKind::Var(_) => Err(ExprToSqlError::StringError("variables should not appear in queries".into())),
-        ExprKind::Slot(_) => Err(ExprToSqlError::StringError("slots should not appear in queries".into())),
-        // todo: unknowns can contain table information
-        ExprKind::Unknown { name, .. } => Ok(Alias::new(name.as_str()).into_column_ref().into()),
-        ExprKind::If { test_expr, then_expr, else_expr } =>
-            Ok(sea_query::Expr::case(expr_to_sql_query(test_expr, ein)?, expr_to_sql_query(then_expr, ein)?)
-                .finally(expr_to_sql_query(else_expr, ein)?).into()),
-        ExprKind::And { left, right } => Ok(expr_to_sql_query(&left, ein)?.and(expr_to_sql_query(&right, ein)?)),
-        ExprKind::Or { left, right } => Ok(expr_to_sql_query(&left, ein)?.or(expr_to_sql_query(&right, ein)?)),
-        ExprKind::UnaryApp { op, arg } => match op {
-            UnaryOp::Not => Ok(expr_to_sql_query(arg, ein)?.not()),
-            UnaryOp::Neg => Ok(expr_to_sql_query(arg, ein)?.mul(-1)), // todo: find unary negation operator
-        },
-        ExprKind::BinaryApp { op, arg1, arg2 } =>  match op {
-            BinaryOp::In => {
-                match arg2.data() {
-                    Some(Type::Set { .. }) => unimplemented!("in set not supported yet in {e:?}"),
-                    Some(Type::EntityOrRecord(EntityRecordKind::Entity(tp2))) => {
-                        match arg1.data() {
-                            Some(Type::EntityOrRecord(EntityRecordKind::Entity(tp1))) => {
-                                if let Some(tp1) = tp1.get_single_entity() {
-                                    if let Some(tp2) = tp2.get_single_entity() {
-                                        ein(EntityTypeName::ref_cast(tp1), EntityTypeName::ref_cast(tp2),
-                                            expr_to_sql_query(arg1, ein)?, expr_to_sql_query(arg2, ein)?)
-                                    } else {
-                                        Err(ExprToSqlError::StringError(format!("expression {arg2:?} could refer to many entities")))
-                                    }
-                                } else {
-                                    Err(ExprToSqlError::StringError(format!("expression {arg1:?} could refer to many entities")))
-                                }
-                            },
-                            _ => Err(ExprToSqlError::StringError(format!("expression {arg1:?} could refer to any entity/action entity"))),
-                        }
-                    },
-                    Some(_) => Err(ExprToSqlError::StringError(format!("expression {arg1:?} could refer to any entity"))),
-                    None => Err(ExprToSqlError::StringError(format!("In operator requires a type: {e:?}"))),
-                }
-            },
-            BinaryOp::Contains => unimplemented!("contains not supported yet"),
-            op => Ok(expr_to_sql_query(arg1, ein)?.binary(cedar_binary_to_sql_binary(*op).unwrap(), expr_to_sql_query(arg2, ein)?)),
-        },
-        ExprKind::MulByConst { arg, constant } => Ok(expr_to_sql_query(arg, ein)?.mul(*constant)),
-        ExprKind::ExtensionFunctionApp { .. } => Err(ExprToSqlError::StringError("Extension functions not supported yet".into())),
-        ExprKind::GetAttr { expr, attr } => match expr.data() {
-            Some(Type::EntityOrRecord(EntityRecordKind::Record { .. })) => {
-                // Depending on if the resulting expression is meant to be a literal or another record, we may or may not have to cast
-                match e.data() {
-                    Some(t) => match t {
-                        Type::EntityOrRecord(t) => if matches!(t, EntityRecordKind::Record { .. }) {
-                            Ok(expr_to_sql_query(expr, ein)?.get_json_field(attr.as_str()))
-                        } else {
-                            // `expr` is an entity type, so we should cast it to a string
-                            Ok(expr_to_sql_query(expr, ein)?.cast_json_field(attr.as_str()))
-                        },
-                        // If it is a boolean or int, we should use -> and cast the json boolean value to a boolean/int
-                        Type::False | Type::True | Type::Primitive { primitive_type: Primitive::Bool } =>
-                            Ok(expr_to_sql_query(expr, ein)?.get_json_field(attr.as_str()).cast_as(Alias::new("boolean"))),
-                        Type::Primitive { primitive_type: Primitive::Long } =>
-                            Ok(expr_to_sql_query(expr, ein)?.get_json_field(attr.as_str()).cast_as(Alias::new("integer"))), // TODO: use bigint?
-                        Type::Primitive { primitive_type: Primitive::String } =>
-                            Ok(expr_to_sql_query(expr, ein)?.cast_json_field(attr.as_str())),
-                        t => Err(ExprToSqlError::StringError(format!("type error: cannot get attribute {attr} of expression {expr:?} of type {t}")))
-                    },
-                    None => Err(ExprToSqlError::StringError(format!("cannot get attribute {attr} of expression {expr:?} unknown type"))),
-                }
-            },
-            // this is how a subquery-based attribute selection mechanism might work
-            // Some(Type::EntityOrRecord(EntityRecordKind::Entity(t))) => {
-            //     if let Some(name) = t.get_single_entity() {
-            //         let sub_query = Query::select()
-            //             .column(Alias::new(name.basename().as_ref()))
-            //             .from(Alias::new(name.namespace()))
-            //             .and_where(sea_query::Expr::col(Alias::new("uid")).eq(expr_to_sql_query(expr)?))
-            //             .to_owned();
-            //         Ok(SimpleExpr::SubQuery(None, Box::new(sub_query.into_sub_query_statement())))
-            //     } else {
-            //         Err(ExprToSqlError::StringError(format!("expression {expr:?} could refer to more than one entity type; cannot get attribute")))
-            //     }
-            // },
-            Some(_) => {
-                match expr.expr_kind() {
-                    ExprKind::Unknown { name, .. } => {
-                        Ok((Alias::new(name.as_str()), Alias::new(attr.as_str())).into_column_ref().into())
-                    },
-                    _ => Err(ExprToSqlError::StringError(format!("GetAttribute can only be called on records or unknown (getting attribute {attr} of {expr:?}")))
-                }
-            },
-            None => Err(ExprToSqlError::StringError(format!("cannot get attribute {attr} of expression {expr:?} unknown type"))),
-        },
-        ExprKind::HasAttr { expr, attr } => {
-            // TODO: if the attribute is required for the type, replace with "true" in partial evaluation
-            match expr.data() {
-                Some(Type::EntityOrRecord(EntityRecordKind::Record { .. })) => unimplemented!("HasAttr on records not supported yet"),
-                Some(_) => {
-                    match expr.expr_kind() {
-                        ExprKind::Unknown { name, .. } => {
-                            let val: SimpleExpr = (Alias::new(name.as_str()), Alias::new(attr.as_str())).into_column_ref().into();
-                            Ok(val.binary(BinOper::IsNot, Keyword::Null))
-                        },
-                        _ => Err(ExprToSqlError::StringError(format!("HasAttr can only be called on records or unknown (getting attribute {attr} of {expr:?}")))
-                    }
-                },
-                None => Err(ExprToSqlError::StringError(format!("cannot get attribute {attr} of expression {expr:?} unknown type"))),
-            }
-        },
-        ExprKind::Like { .. } => unimplemented!("Like unimplemented"),
-        ExprKind::Set(_) => unimplemented!("Set unimplemented"),
-        ExprKind::Record { .. } => unimplemented!("Record unimplemented"),
-    }
-}
-
-pub fn expr_to_sql_query_entity_in_table<A, B, C>(e: &Expr<Option<Type>>, entity_in_table: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> Result<SimpleExpr>
-    where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
-    expr_to_sql_query(e, &|tp1, tp2, e1, e2| {
-        let (tbl, col1, col2) = entity_in_table(tp1, tp2)?;
-        let sub_query = Query::select()
-            .column((tbl.clone(), col2.clone()).into_column_ref())
-            .from(tbl.clone())
-            .and_where(sea_query::Expr::col(col1).eq(e1))
-            .to_owned();
-        // e2 in (SELECT tbl.col2 FROM tbl WHERE tbl.col1 = e1)
-        Ok(e2.binary(BinOper::In, SimpleExpr::SubQuery(
-            None,
-            Box::new(sub_query.into_sub_query_statement())
-        )))
-    })
-}
-
-pub fn translate_residual_policies<A, B, C>(resp: ResidualResponse, schema: &Schema, entity_in_table: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> HashMap<PolicyId, SimpleExpr>
-    where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
-    // let val_schema = Schema::ref_cast(schema);
-    let req_env = RandomRequestEnv::new();
-    let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
-
-    let mut result = HashMap::new();
-
-    for p in resp.residuals().policies() {
-        let expr = p.non_head_constraints();
-        let typed_test_expr = typechecker.typecheck_expr_strict(
-            &(&req_env).into(), &expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
-            .expect("Type checking should succeed");
-
-        let translated = expr_to_sql_query_entity_in_table(&typed_test_expr, entity_in_table)
-            .expect("Failed to translate expression");
-        result.insert(p.id().clone(), translated);
-    }
-    result
-}
-*/
 
 #[cfg(test)]
 mod test {
@@ -469,6 +317,15 @@ mod test {
             &get_schema()
         );
         assert_eq!(result, r#"SELECT * FROM "resource" INNER JOIN "Photos" AS "v__entity_attr_0" ON "resource"."nextPhoto" = "v__entity_attr_0"."uid" INNER JOIN "Photos" AS "v__entity_attr_1" ON "v__entity_attr_0"."nextPhoto" = "v__entity_attr_1"."uid" INNER JOIN "Photos" AS "v__entity_attr_2" ON "v__entity_attr_1"."nextPhoto" = "v__entity_attr_2"."uid" INNER JOIN "Users" AS "v__entity_attr_3" ON "v__entity_attr_2"."owner" = "v__entity_attr_3"."uid" WHERE "v__entity_attr_3"."level" = 3"#);
+    }
+
+    #[test]
+    fn test_double_getattr() {
+        let result = translate_expr_test(
+            r#"5 <= unknown("resource: Photos").owner.level && unknown("resource: Photos").owner.level <= 10"#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT * FROM "resource" INNER JOIN "Users" AS "v__entity_attr_0" ON "resource"."owner" = "v__entity_attr_0"."uid" WHERE (5 <= "v__entity_attr_0"."level") AND ("v__entity_attr_0"."level" <= 10)"#);
     }
 
     #[test]

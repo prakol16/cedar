@@ -1,8 +1,9 @@
+use std::collections::HashMap;
+
 use cedar_policy::EntityTypeName;
 use cedar_policy_core::ast::{Expr, Literal, UnaryOp, BinaryOp, Pattern, ExprKind, SlotId, Var, Name};
 use cedar_policy_validator::types::{Type, Primitive, EntityRecordKind, EntityLUB};
 use ref_cast::RefCast;
-use sea_query::ColumnRef;
 use smol_str::SmolStr;
 use thiserror::Error;
 
@@ -117,6 +118,12 @@ pub enum QueryExpr<U = UnknownType> {
     Like { expr: Box<QueryExpr<U>>, pattern: Pattern },
     Set(Vec<QueryExpr<U>>),
     Record { pairs: Vec<(SmolStr, QueryExpr<U>)> }
+}
+
+impl<U> Default for QueryExpr<U> {
+    fn default() -> Self {
+        QueryExpr::Lit(false.into())
+    }
 }
 
 impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
@@ -235,14 +242,20 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OtherUnknown {
+    pub(crate) pfx: Option<SmolStr>,
+    pub(crate) name: SmolStr
+}
+
 /// The default unknown type for a query expression.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UnknownType {
     /// This is the type of unknown that refers to a dereferenced entity
     /// That is, it is on the LHS of a `let` binding or it is supplied as a dereferenced entity
     EntityDeref(SmolStr),
     /// This is the type of unknown that refers to some other value (essentially an escape hatch)
-    Other(ColumnRef),
+    Other(OtherUnknown),
 }
 
 impl<U> QueryExpr<U> {
@@ -325,25 +338,57 @@ impl From<QueryExpr<SmolStr>> for QueryExpr {
     }
 }
 
-/// This describes a statement like `let name: ty = expr`.
 #[derive(Debug, Clone)]
-pub struct Binding {
+pub struct BindingValue {
+    insertion_order: usize,
     pub(crate) name: SmolStr,
-    pub(crate) expr: Box<QueryExpr>,
     pub(crate) ty: EntityTypeName
+}
+
+impl From<BindingValue> for QueryExpr {
+    fn from(bv: BindingValue) -> Self {
+        QueryExpr::Unknown {
+            name: UnknownType::EntityDeref(bv.name),
+            type_annotation: bv.ty.into()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Bindings(HashMap<Box<QueryExpr>, BindingValue>);
+
+impl Bindings {
+    /// Note that this does a sort on the (a priori unordered) bindings
+    /// This is optimized for an insert-many iterate-once (but keep track of insertion order) workload
+    pub fn iter(&self) -> impl Iterator<Item = (&BindingValue, &QueryExpr)> {
+        let mut result: Vec<_> = self.0.iter().collect();
+        result.sort_by(|(_, a), (_, b)| a.insertion_order.cmp(&b.insertion_order));
+        result.into_iter().map(|(k, v)| (v, k.as_ref()))
+    }
+
+    pub fn insert(&mut self, q: Box<QueryExpr>, ty: EntityTypeName, id_gen: &mut IdGen) -> BindingValue {
+        let size = self.0.len();
+        self.0.entry(q).or_insert_with(|| {
+            BindingValue {
+                name: id_gen.next(),
+                ty,
+                insertion_order: size
+            }
+        }).clone()
+    }
 }
 
 /// A sequence of let bindings followed by an expression.
 #[derive(Debug, Clone)]
 pub struct ExprWithBindings {
-    pub(crate) bindings: Vec<Binding>,
+    pub(crate) bindings: Bindings,
     pub(crate) expr: Box<QueryExpr>
 }
 
 impl From<QueryExpr> for ExprWithBindings {
     fn from(expr: QueryExpr) -> Self {
         ExprWithBindings {
-            bindings: Vec::new(),
+            bindings: Bindings::default(),
             expr: Box::new(expr)
         }
     }
@@ -370,7 +415,7 @@ impl QueryExpr {
     /// An expression is said to be attr-reduced when the only
     /// expressions that appear on the left argument of a `GetAttrEntity` are of the form `Unknown(EntityDeref(_))`
     /// This function turns the expression into an attr-reduced form.
-    pub fn reduce_attrs(&mut self, bindings: &mut Vec<Binding>, id_gen: &mut IdGen) {
+    pub fn reduce_attrs(&mut self, bindings: &mut Bindings, id_gen: &mut IdGen) {
         match self {
             QueryExpr::Lit(_) => (),
             QueryExpr::Unknown { .. } => (),
@@ -403,16 +448,16 @@ impl QueryExpr {
             QueryExpr::GetAttrEntity { expr, expr_type, .. } => {
                 if expr.is_unknown_entity_deref() { return };
                 expr.reduce_attrs(bindings, id_gen);
-                let new_name = id_gen.next();
-                let new_expr = QueryExpr::Unknown {
-                    name: UnknownType::EntityDeref(new_name.clone()),
-                    type_annotation: expr_type.clone().into()
-                };
-                bindings.push(Binding {
-                    name: new_name,
-                    expr: std::mem::replace(expr, Box::new(new_expr)),
-                    ty: expr_type.clone()
-                });
+
+                let expr_owned = std::mem::take(expr);
+                let bv = bindings.insert(expr_owned, expr_type.clone(), id_gen);
+                *expr = Box::new(bv.into());
+
+                // bindings.push(Binding {
+                //     name: new_name,
+                //     expr: std::mem::replace(expr, Box::new(new_expr)),
+                //     ty: expr_type.clone()
+                // });
             },
             QueryExpr::InEntity { left, right, .. } => {
                 left.reduce_attrs(bindings, id_gen);
