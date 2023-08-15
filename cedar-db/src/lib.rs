@@ -153,11 +153,12 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError};
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, Schema, Decision, PartialResponse};
 
     use rusqlite::Connection;
+    use sea_query::{Alias, SqliteQueryBuilder};
 
-    use crate::sqlite::*;
+    use crate::{sqlite::*, expr_to_query::{translate_response, InByTable}};
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/example_sqlite.db";
@@ -193,74 +194,102 @@ mod test_sqlite {
         Table { conn }
     }
 
-    /*
+    fn get_schema() -> Schema {
+        r#"
+        {
+            "": {
+                "entityTypes": {
+                    "Users": {
+                        "shape": {
+                            "type": "Record",
+                            "attributes": {
+                                "name": {
+                                    "type": "String"
+                                },
+                                "age": {
+                                    "type": "Long"
+                                },
+                                "location": {
+                                    "type": "String",
+                                    "required": false
+                                }
+                            }
+                        }
+                    },
+                    "Photos": {
+                        "shape": {
+                            "type": "Record",
+                            "attributes": {
+                                "title": {
+                                    "type": "String"
+                                },
+                                "user_id": {
+                                    "type": "Entity",
+                                    "name": "Users"
+                                }
+                            }
+                        }
+                    }
+                },
+                "actions": {
+                    "view": {
+                        "appliesTo": {
+                            "principalTypes": ["Users"],
+                            "resourceTypes": ["Photos"]
+                        }
+                    }
+                }
+            }
+        }
+        "#.parse().expect("Schema should not fail to parse")
+    }
+
     #[test]
-    fn test_partial_eval_policies() {
+    fn test_partial_eval_nested_attr() {
+        let schema = get_schema();
+
         let auth = Authorizer::new();
-        let req: Request = Request::builder()
-            .principal(Some("Users::\"0\"".parse().unwrap()))
+        let euid: EntityUid = "Users::\"1\"".parse().unwrap();
+
+        let q = Request::builder()
+            .principal(Some(euid.clone()))
             .action(Some("Actions::\"view\"".parse().unwrap()))
             .resource_type("Photos".parse().unwrap())
             .build();
-        println!("Request: {:?}", req);
-        let result = auth.is_authorized_parsed(&req,
-            &r#"permit(principal, action, resource) when { principal == resource.user_id && principal.name == "Alice" };"#.parse().unwrap(),
+
+        let result = auth.is_authorized_parsed(&q,
+            // Bob can see Alice's photos
+            &"permit(principal, action, resource) when { principal.name == \"Bob\" && resource.user_id.name == \"Alice\" };".parse().unwrap(),
             &get_sqlite_table());
-        println!("\n\n\nResult of authorization: {:?}", result);
-        println!("\n\n");
         match result {
-            PartialResponse::Concrete(dec) => println!("Got response {dec:?}"),
-            PartialResponse::Residual(resp) => {
-                println!("Translating residual response into query: {}",
-                    translate_residual_policies(resp, &Schema(get_schema()),
-                    &|_, _| Ok((Alias::new("team_memberships"), Alias::new("user_uid"), Alias::new("team_uid"))))
-                    .into_values()
-                    .map(|q| Query::select()
-                        .column(Asterisk)
-                        .from_as(Alias::new("photos"), Alias::new("resource"))
-                        .and_where(q)
-                        .to_string(SqliteQueryBuilder))
-                    .collect::<Vec<_>>()
-                    .join("\n"));
-            }
-        };
+            PartialResponse::Concrete(_) => panic!("Response should be residual"),
+            PartialResponse::Residual(res) => {
+                let mut query = translate_response(&res, &schema,
+                    &InByTable::<Alias, Alias, _>(|_, _| {
+                        panic!("There should not be any in's in the residual")
+                    }), |tp| {
+                        if *tp == *USERS_TYPE {
+                            Alias::new(USERS_TABLE_INFO.table)
+                        } else if *tp == *PHOTOS_TYPE {
+                            Alias::new(PHOTOS_TABLE_INFO.table)
+                        } else {
+                            panic!("Unknown type")
+                        }
+                    }).expect("Failed to translate response");
+                let query =  query
+                    .column((Alias::new("resource"), Alias::new("title")))
+                    .from_as(Alias::new("photos"), Alias::new("resource"))
+                    .to_string(SqliteQueryBuilder);
+                assert_eq!(query, r#"SELECT "resource"."title" FROM "photos" AS "resource" INNER JOIN "users" AS "v__entity_attr_0" ON "resource"."user_id" = "v__entity_attr_0"."uid" WHERE TRUE AND (TRUE AND ("v__entity_attr_0"."name" = 'Alice')) AND TRUE"#);
+
+                let conn = Connection::open(&*DB_PATH).expect("Connection failed");
+                conn.query_row(&query, [], |row| {
+                    assert_eq!(row.get::<_, String>(0).expect("Row should have title column"), "Beach photo");
+                    Ok(())
+                }).expect("Failed to query");
+            },
+        }
     }
-    */
-
-    /*
-    #[test]
-    fn test_partial_eval_expr() {
-        // let photos_type: Type = Type::Entity { ty: EntityType::Concrete("Photos".parse().unwrap()) };
-        let extensions = Extensions::all_available();
-        let eval = RestrictedEvaluator::new(&extensions);
-        let test_expr: Expr =
-            eval.partial_interpret_unrestricted(
-                &r#"unknown("photos: Photos").owner == Users::"0""#.parse().expect("Failed to parse expression"),
-                &["unknown".parse().unwrap()].into(),
-            ).unwrap();
-        let schema = get_schema();
-        let req_env = RequestEnv {
-            principal: &EntityType::Concrete("Users".parse().unwrap()),
-            action: &r#"Action::"view""#.parse().unwrap(),
-            resource: &EntityType::Concrete("Photos".parse().unwrap()),
-            context: &Attributes::default()
-        };
-        let typechecker = Typechecker::new(&schema, ValidationMode::Strict);
-        let typed_test_expr = typechecker.typecheck_expr_strict(
-            &req_env, &test_expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
-            .expect("Type checking should succeed");
-        println!("{typed_test_expr:?}");
-
-        let translated = expr_to_sql_query_entity_in_table::<Alias, Alias, Alias>(&typed_test_expr, &|_t1, _t2| todo!())
-            .expect("Failed to translate expression");
-        println!("{}", Query::select()
-                        .column(Asterisk)
-                        .from(Alias::new("photos"))
-                        .and_where(translated)
-                        .to_string(SqliteQueryBuilder));
-
-    }
-    */
 
     #[test]
     fn test_ancestors() {
@@ -275,19 +304,15 @@ mod test_sqlite {
 
     #[test]
     fn test_basic() {
-
-
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
-        let result = auth.is_authorized_parsed(
+        let result = auth.is_authorized_full_parsed(
             &Request::new(Some(euid.clone()),
                 Some("Actions::\"view\"".parse().unwrap()),
                 Some("Photos::\"2\"".parse().unwrap()), Context::empty())
             , &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
             &get_sqlite_table());
-
-        println!("Result {:?}", result);
-        // TODO: assert(result.decision == Allow)
+        assert!(result.decision() == Decision::Allow);
     }
 
 }

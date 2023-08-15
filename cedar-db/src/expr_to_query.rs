@@ -1,7 +1,7 @@
 use cedar_policy::{EntityTypeName, Schema, RandomRequestEnv, ResidualResponse, Effect};
 use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp, Expr, ExprBuilder};
 use cedar_policy_validator::{typecheck::Typechecker, ValidationMode};
-use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, SelectStatement};
+use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, SelectStatement, IntoTableRef};
 use smol_str::SmolStr;
 use thiserror::Error;
 
@@ -212,20 +212,20 @@ impl QueryExpr {
 }
 
 impl ExprWithBindings {
-    pub fn to_sql_query(&self, ein: &impl InConfig) -> Result<SelectStatement> {
+    pub fn to_sql_query<T: IntoTableRef>(&self, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> T) -> Result<SelectStatement> {
         let mut query = Query::select();
         query.and_where(self.expr.to_sql_query(ein)?);
         for (bv, e) in self.bindings.iter() {
             query.join_as(sea_query::JoinType::InnerJoin,
-                Alias::new(bv.ty.basename()), Alias::new(bv.name.clone()),
+                table_names(&bv.ty), Alias::new(bv.name.clone()),
                 e.to_sql_query(ein)?.eq((Alias::new(bv.name.clone()), Alias::new("uid")).into_column_ref()));
         }
         Ok(query)
     }
 }
 
-/// Does the translation from Cedar to SQL without any renaming
-pub fn translate_expr(expr: &Expr, schema: &Schema, ein: &impl InConfig) -> Result<SelectStatement> {
+/// Does the translation from Cedar to SQL
+pub fn translate_expr<T: IntoTableRef>(expr: &Expr, schema: &Schema, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> T) -> Result<SelectStatement> {
     let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
     let req_env = RandomRequestEnv::new();
     let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
@@ -238,18 +238,18 @@ pub fn translate_expr(expr: &Expr, schema: &Schema, ein: &impl InConfig) -> Resu
     query_with_bindings.reduce_attrs(&mut IdGen::new());
 
 
-    query_with_bindings.to_sql_query(ein)
+    query_with_bindings.to_sql_query(ein, table_names)
 }
 
 
-pub fn translate_response(resp: &ResidualResponse, schema: &Schema, ein: &impl InConfig) -> Result<SelectStatement> {
+pub fn translate_response<T: IntoTableRef>(resp: &ResidualResponse, schema: &Schema, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> T) -> Result<SelectStatement> {
     let (permits, forbids): (Vec<_>, Vec<_>) =
         resp.residuals().policies()
             .partition(|p| p.effect() == Effect::Permit);
     let expr: Expr = ExprBuilder::new().and(
         ExprBuilder::new().any(permits.into_iter().map(|p| p.non_head_constraints().clone())),
         ExprBuilder::new().not(ExprBuilder::new().any(forbids.into_iter().map(|p| p.non_head_constraints().clone()))));
-    translate_expr(&expr, schema, ein)
+    translate_expr(&expr, schema, ein, table_names)
 }
 
 #[cfg(test)]
@@ -271,7 +271,7 @@ mod test {
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
             Ok((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str)))
-        })).unwrap();
+        }), |tp| Alias::new(tp.basename())).unwrap();
 
         query
             .column(Asterisk)

@@ -307,6 +307,71 @@ pub enum UnknownType {
 }
 
 impl<U> QueryExpr<U> {
+    // In-place mutation of subexpressions; walks from leaves up to root
+    pub fn mut_subexpressions(&mut self, f: &mut impl FnMut(&mut QueryExpr<U>)) {
+        match self {
+            QueryExpr::Lit(_) => (),
+            QueryExpr::Unknown { .. } => (),
+            QueryExpr::If { test_expr, then_expr, else_expr } => {
+                test_expr.mut_subexpressions(f);
+                then_expr.mut_subexpressions(f);
+                else_expr.mut_subexpressions(f);
+            },
+            QueryExpr::And { left, right } => {
+                left.mut_subexpressions(f);
+                right.mut_subexpressions(f);
+            },
+            QueryExpr::Or { left, right } => {
+                left.mut_subexpressions(f);
+                right.mut_subexpressions(f);
+            },
+            QueryExpr::UnaryApp { arg, .. } => {
+                arg.mut_subexpressions(f);
+            },
+            QueryExpr::BinaryApp { left, right, .. } => {
+                left.mut_subexpressions(f);
+                right.mut_subexpressions(f);
+            },
+            QueryExpr::MulByConst { arg, .. } => {
+                arg.mut_subexpressions(f);
+            },
+            QueryExpr::GetAttrRecord { expr, .. } => {
+                expr.mut_subexpressions(f);
+            },
+            QueryExpr::GetAttrEntity { expr, .. } => {
+                expr.mut_subexpressions(f);
+            },
+            QueryExpr::InEntity { left, right, .. } => {
+                left.mut_subexpressions(f);
+                right.mut_subexpressions(f);
+            },
+            QueryExpr::InSet { left, right, .. } => {
+                left.mut_subexpressions(f);
+                right.mut_subexpressions(f);
+            },
+            QueryExpr::HasAttrRecord { expr, .. } => {
+                expr.mut_subexpressions(f);
+            },
+            QueryExpr::IsNotNull(arg) => {
+                arg.mut_subexpressions(f);
+            },
+            QueryExpr::Like { expr, .. } => {
+                expr.mut_subexpressions(f);
+            },
+            QueryExpr::Set(values) => {
+                for v in values {
+                    v.mut_subexpressions(f);
+                }
+            },
+            QueryExpr::Record { pairs } => {
+                for (_, v) in pairs {
+                    v.mut_subexpressions(f);
+                }
+            },
+        }
+        f(self);
+    }
+
     // Functorality for `QueryExpr`. Can this be derived automatically?
     pub fn map_unknowns<V>(self, f: &impl Fn(U) -> V) -> QueryExpr<V> {
         match self {
@@ -464,77 +529,17 @@ impl QueryExpr {
     /// expressions that appear on the left argument of a `GetAttrEntity` are of the form `Unknown(EntityDeref(_))`
     /// This function turns the expression into an attr-reduced form.
     pub fn reduce_attrs(&mut self, bindings: &mut Bindings, id_gen: &mut IdGen) {
-        match self {
-            QueryExpr::Lit(_) => (),
-            QueryExpr::Unknown { .. } => (),
-            QueryExpr::If { test_expr, then_expr, else_expr } => {
-                test_expr.reduce_attrs(bindings, id_gen);
-                then_expr.reduce_attrs(bindings, id_gen);
-                else_expr.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::And { left, right } => {
-                left.reduce_attrs(bindings, id_gen);
-                right.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::Or { left, right } => {
-                left.reduce_attrs(bindings, id_gen);
-                right.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::UnaryApp { arg, .. } => {
-                arg.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::BinaryApp { left, right, .. } => {
-                left.reduce_attrs(bindings, id_gen);
-                right.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::MulByConst { arg, .. } => {
-                arg.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::GetAttrRecord { expr, .. } => {
-                expr.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::GetAttrEntity { expr, expr_type, .. } => {
-                if expr.is_unknown_entity_deref() { return };
-                expr.reduce_attrs(bindings, id_gen);
+        self.mut_subexpressions(&mut |expr| {
+            if let QueryExpr::GetAttrEntity { expr, expr_type, .. } = expr {
+                if expr.is_unknown_entity_deref() { // if it is already attr-reduced, skip
+                    return;
+                }
 
                 let expr_owned = std::mem::take(expr);
                 let bv = bindings.insert(expr_owned, expr_type.clone(), id_gen);
                 *expr = Box::new(bv.into());
-
-                // bindings.push(Binding {
-                //     name: new_name,
-                //     expr: std::mem::replace(expr, Box::new(new_expr)),
-                //     ty: expr_type.clone()
-                // });
-            },
-            QueryExpr::InEntity { left, right, .. } => {
-                left.reduce_attrs(bindings, id_gen);
-                right.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::InSet { left, right, .. } => {
-                left.reduce_attrs(bindings, id_gen);
-                right.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::HasAttrRecord { expr, .. } => {
-                expr.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::IsNotNull(arg) => {
-                arg.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::Like { expr, .. } => {
-                expr.reduce_attrs(bindings, id_gen);
-            },
-            QueryExpr::Set(values) => {
-                for v in values {
-                    v.reduce_attrs(bindings, id_gen);
-                }
-            },
-            QueryExpr::Record { pairs } => {
-                for (_, v) in pairs {
-                    v.reduce_attrs(bindings, id_gen);
-                }
-            },
-        }
+            }
+        });
     }
 
     /// If this expression is of the form `Unknown(EntityDeref(s))`, return `Some(s)`.
