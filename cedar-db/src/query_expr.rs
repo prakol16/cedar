@@ -127,6 +127,29 @@ impl<U> Default for QueryExpr<U> {
 }
 
 impl<T: Clone> QueryExpr<T> {
+    pub fn eq_or_in_entity(left: QueryExpr<T>, right: QueryExpr<T>, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
+        let eq_expr = if left_type == right_type {
+            Some(QueryExpr::BinaryApp {
+                op: BinaryOp::Eq,
+                left: Box::new(left.clone()),
+                right: Box::new(right.clone())
+            })
+        } else { None };
+        let in_entity_expr = QueryExpr::InEntity {
+            left: Box::new(left),
+            right: Box::new(right),
+            left_type,
+            right_type,
+        };
+        match eq_expr {
+            Some(eq_expr) => QueryExpr::Or {
+                left: Box::new(eq_expr),
+                right: Box::new(in_entity_expr)
+            },
+            None => in_entity_expr
+        }
+    }
+
     pub fn contains_or_in_set(left: QueryExpr<T>, right: QueryExpr<T>, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
         let contains_expr = if left_type == right_type {
             Some(QueryExpr::BinaryApp {
@@ -185,12 +208,12 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
                     let arg1_tp_entity = type_to_entity_typename(arg1.data().as_ref())?;
 
                     match arg2.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)? {
-                        Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => Ok(QueryExpr::InEntity {
-                            left: Box::new(QueryExpr::try_from(arg1.as_ref())?),
-                            right: Box::new(QueryExpr::try_from(arg2.as_ref())?),
-                            left_type: arg1_tp_entity.to_owned(),
-                            right_type: entity_lub_to_typename(lub)?.to_owned(),
-                        }),
+                        Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => Ok(QueryExpr::eq_or_in_entity(
+                            QueryExpr::try_from(arg1.as_ref())?,
+                            QueryExpr::try_from(arg2.as_ref())?,
+                            arg1_tp_entity.to_owned(),
+                            entity_lub_to_typename(lub)?.to_owned(),
+                        )),
                         Type::Set { element_type } => Ok(QueryExpr::contains_or_in_set(
                             QueryExpr::try_from(arg1.as_ref())?,
                             QueryExpr::try_from(arg2.as_ref())?,
