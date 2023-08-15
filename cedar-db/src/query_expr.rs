@@ -128,18 +128,25 @@ impl<U> Default for QueryExpr<U> {
 
 impl<T: Clone> QueryExpr<T> {
     pub fn contains_or_in_set(left: QueryExpr<T>, right: QueryExpr<T>, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
-        QueryExpr::Or {
-            left: Box::new(QueryExpr::BinaryApp {
+        let contains_expr = if left_type == right_type {
+            Some(QueryExpr::BinaryApp {
                 op: BinaryOp::Contains,
                 left: Box::new(right.clone()),
                 right: Box::new(left.clone())
-            }),
-            right: Box::new(QueryExpr::InSet {
-                left: Box::new(left),
-                right: Box::new(right),
-                left_type,
-                right_type,
             })
+        } else { None };
+        let inset_expr = QueryExpr::InSet {
+            left: Box::new(left),
+            right: Box::new(right),
+            left_type,
+            right_type,
+        };
+        match contains_expr {
+            Some(contains_expr) => QueryExpr::Or {
+                left: Box::new(contains_expr),
+                right: Box::new(inset_expr)
+            },
+            None => inset_expr
         }
     }
 }
