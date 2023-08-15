@@ -126,6 +126,24 @@ impl<U> Default for QueryExpr<U> {
     }
 }
 
+impl<T: Clone> QueryExpr<T> {
+    pub fn contains_or_in_set(left: QueryExpr<T>, right: QueryExpr<T>, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
+        QueryExpr::Or {
+            left: Box::new(QueryExpr::BinaryApp {
+                op: BinaryOp::Contains,
+                left: Box::new(right.clone()),
+                right: Box::new(left.clone())
+            }),
+            right: Box::new(QueryExpr::InSet {
+                left: Box::new(left),
+                right: Box::new(right),
+                left_type,
+                right_type,
+            })
+        }
+    }
+}
+
 impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
     type Error = QueryExprError;
 
@@ -166,12 +184,12 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
                             left_type: arg1_tp_entity.to_owned(),
                             right_type: entity_lub_to_typename(lub)?.to_owned(),
                         }),
-                        Type::Set { element_type } => Ok(QueryExpr::InSet {
-                            left: Box::new(QueryExpr::try_from(arg1.as_ref())?),
-                            right: Box::new(QueryExpr::try_from(arg2.as_ref())?),
-                            left_type: arg1_tp_entity.to_owned(),
-                            right_type: type_to_entity_typename(element_type.as_deref())?.to_owned(),
-                        }),
+                        Type::Set { element_type } => Ok(QueryExpr::contains_or_in_set(
+                            QueryExpr::try_from(arg1.as_ref())?,
+                            QueryExpr::try_from(arg2.as_ref())?,
+                            arg1_tp_entity.to_owned(),
+                            type_to_entity_typename(element_type.as_deref())?.to_owned(),
+                        )),
                         _ => Err(QueryExprError::TypecheckError)
                     }
                 } else {

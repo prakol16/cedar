@@ -15,6 +15,70 @@ pub enum ExprToSqlError {
 
 type Result<T> = std::result::Result<T, QueryExprError>;
 
+pub trait InConfig {
+    fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr>;
+
+    fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr>;
+}
+
+pub struct InByLambda<S, T>
+    where S: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
+          T: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
+{
+    pub ein: S,
+    pub ein_set: T,
+}
+
+pub struct InByTable<A, B, T>(pub T)
+    where A: IntoIden, B: IntoIden,
+          T: Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, B)>;
+
+impl<A, B, T> InConfig for InByTable<A, B, T>
+    where A: IntoIden, B: IntoIden,
+          T: Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, B)> {
+    fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+        let (tbl, col1, col2) = self.0(tp1, tp2)?;
+        let tbl = tbl.into_iden();
+        let col1 = col1.into_iden();
+        let col2 = col2.into_iden();
+        let col1 = (tbl.clone(), col1).into_column_ref();
+        let col2 = (tbl.clone(), col2).into_column_ref();
+
+        // e2 in (SELECT tbl.col2 FROM tbl WHERE tbl.col1 = e1)
+        let sub_query = Query::select()
+            .column(col2)
+            .from(tbl)
+            .and_where(sea_query::Expr::col(col1).eq(e1))
+            .to_owned();
+        Ok(e2.binary(BinOper::In, SimpleExpr::SubQuery(
+            None,
+            Box::new(sub_query.into_sub_query_statement())
+        )))
+    }
+
+    fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+        let (tbl, col1, col2) = self.0(tp1, tp2)?;
+        let tbl = tbl.into_iden();
+        let col1 = col1.into_iden();
+        let col2 = col2.into_iden();
+        let col1 = (tbl.clone(), col1).into_column_ref();
+        let col2 = (tbl.clone(), col2).into_column_ref();
+
+        // e1 in (SELECT tbl.col1 FROM tbl WHERE tbl.col2 = ANY(e2))
+        let sub_query = Query::select()
+            .column(col1)
+            .from(tbl)
+            .and_where(sea_query::Expr::col(col2).eq(PgFunc::any(e2)))
+            .to_owned();
+        Ok(e1.binary(BinOper::In, SimpleExpr::SubQuery(
+            None,
+            Box::new(sub_query.into_sub_query_statement())
+        )))
+    }
+
+
+}
+
 
 fn cedar_binary_to_sql_binary(op: BinaryOp) -> Option<BinOper> {
     match op {
@@ -85,7 +149,7 @@ impl QueryExpr {
     ///
     /// `ein` should take two expressions `a` and `b` which would evaluate to string ids of the entities of the corresponding types,
     /// and return an expression determining whether `a` is in `b`
-    pub fn to_sql_query(&self, ein: &impl Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>) -> Result<SimpleExpr> {
+    pub fn to_sql_query(&self, ein: &impl InConfig) -> Result<SimpleExpr> {
         match self {
             QueryExpr::Lit(l) => Ok(Self::lit_to_sql(l)),
             QueryExpr::Unknown { name, .. } => match name {
@@ -108,16 +172,16 @@ impl QueryExpr {
                 match op {
                     BinaryOp::In => panic!("Internal invariant violated: binary app operator is `in`, should use `InEntity` or `InSet` instead"),
                     BinaryOp::Contains => {
-                        Ok(left.eq(PgFunc::any(right)))
+                        Ok(right.eq(PgFunc::any(left)))
                     },
                     _ => Ok(left.binary(cedar_binary_to_sql_binary(*op).unwrap(), right))
                 }
             },
             QueryExpr::InEntity { left, right, left_type, right_type } => {
-                ein(left_type, right_type, left.to_sql_query(ein)?, right.to_sql_query(ein)?)
+                ein.ein(left_type, right_type, left.to_sql_query(ein)?, right.to_sql_query(ein)?)
             },
-            QueryExpr::InSet { .. } => {
-                unimplemented!("TODO: implement InSet")
+            QueryExpr::InSet { left, right, left_type, right_type } => {
+                ein.ein_set(left_type, right_type, left.to_sql_query(ein)?, right.to_sql_query(ein)?)
             },
             QueryExpr::MulByConst { arg, constant } => {
                 Ok(arg.to_sql_query(ein)?.mul(*constant))
@@ -145,44 +209,23 @@ impl QueryExpr {
             QueryExpr::Record { .. } => unimplemented!("TODO: implement Record"),
         }
     }
-
-
-    /// Wrapper around `to_sql_query` where `ein_table` should return the ordered pair (table, col1, col2)
-    pub fn to_sql_query_ein_table<A, B, C>(&self, ein_table: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> Result<SimpleExpr>
-            where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
-        self.to_sql_query(&|tp1, tp2, e1, e2| {
-            let (tbl, col1, col2) = ein_table(tp1, tp2)?;
-            let sub_query = Query::select()
-                .column((tbl.clone(), col2.clone()).into_column_ref())
-                .from(tbl.clone())
-                .and_where(sea_query::Expr::col(col1).eq(e1))
-                .to_owned();
-            // e2 in (SELECT tbl.col2 FROM tbl WHERE tbl.col1 = e1)
-            Ok(e2.binary(BinOper::In, SimpleExpr::SubQuery(
-                None,
-                Box::new(sub_query.into_sub_query_statement())
-            )))
-        })
-    }
 }
 
 impl ExprWithBindings {
-    pub fn to_sql_query<A, B, C>(&self, ein: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> Result<SelectStatement>
-            where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
+    pub fn to_sql_query(&self, ein: &impl InConfig) -> Result<SelectStatement> {
         let mut query = Query::select();
-        query.and_where(self.expr.to_sql_query_ein_table(ein)?);
+        query.and_where(self.expr.to_sql_query(ein)?);
         for (bv, e) in self.bindings.iter() {
             query.join_as(sea_query::JoinType::InnerJoin,
                 Alias::new(bv.ty.basename()), Alias::new(bv.name.clone()),
-                e.to_sql_query_ein_table(ein)?.eq((Alias::new(bv.name.clone()), Alias::new("uid")).into_column_ref()));
+                e.to_sql_query(ein)?.eq((Alias::new(bv.name.clone()), Alias::new("uid")).into_column_ref()));
         }
         Ok(query)
     }
 }
 
 /// Does the translation from Cedar to SQL without any renaming
-pub fn translate_expr<A, B, C>(expr: &Expr, schema: &Schema, ein_table: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> Result<SelectStatement>
-        where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
+pub fn translate_expr(expr: &Expr, schema: &Schema, ein: &impl InConfig) -> Result<SelectStatement> {
     let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
     let req_env = RandomRequestEnv::new();
     let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
@@ -195,19 +238,18 @@ pub fn translate_expr<A, B, C>(expr: &Expr, schema: &Schema, ein_table: &impl Fn
     query_with_bindings.reduce_attrs(&mut IdGen::new());
 
 
-    query_with_bindings.to_sql_query(ein_table)
+    query_with_bindings.to_sql_query(ein)
 }
 
 
-pub fn translate_response<A, B, C>(resp: &ResidualResponse, schema: &Schema, ein_table: &impl Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, C)>) -> Result<SelectStatement>
-        where A: IntoIden + Clone + 'static, B: IntoIden + Clone + 'static, C: IntoIden + Clone + 'static {
+pub fn translate_response(resp: &ResidualResponse, schema: &Schema, ein: &impl InConfig) -> Result<SelectStatement> {
     let (permits, forbids): (Vec<_>, Vec<_>) =
         resp.residuals().policies()
             .partition(|p| p.effect() == Effect::Permit);
     let expr: Expr = ExprBuilder::new().and(
         ExprBuilder::new().any(permits.into_iter().map(|p| p.non_head_constraints().clone())),
         ExprBuilder::new().not(ExprBuilder::new().any(forbids.into_iter().map(|p| p.non_head_constraints().clone()))));
-    translate_expr(&expr, schema, ein_table)
+    translate_expr(&expr, schema, ein)
 }
 
 #[cfg(test)]
@@ -216,7 +258,7 @@ mod test {
     use cedar_policy_core::{evaluator::RestrictedEvaluator, extensions::Extensions, ast};
     use sea_query::{Alias, PostgresQueryBuilder, Asterisk};
 
-    use super::translate_expr;
+    use super::{translate_expr, InByTable};
 
     /// Translation function for the purposes of testing; fills in lots of boilerplate
     pub fn translate_expr_test(expr: ast::Expr, schema: &Schema) -> String {
@@ -224,12 +266,12 @@ mod test {
         let eval = RestrictedEvaluator::new(&ext);
         let expr = eval.partial_interpret_unrestricted(&expr, &["unknown".parse().unwrap()].into()).unwrap();
 
-        let mut query = translate_expr(&expr, schema, &|t1, t2| {
+        let mut query = translate_expr(&expr, schema, &InByTable(|t1, t2| {
             let t1_str = t1.to_string();
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
             Ok((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str)))
-        }).unwrap();
+        })).unwrap();
 
         query
             .column(Asterisk)
@@ -259,6 +301,13 @@ mod test {
                                         "age": {
                                             "type": "Long"
                                         }
+                                    }
+                                },
+                                "allowedPhotos": {
+                                    "type": "Set",
+                                    "element": {
+                                        "type": "Entity",
+                                        "name": "Photos"
                                     }
                                 }
                             }
@@ -363,7 +412,7 @@ mod test {
             r#"unknown("resource: Photos") in Users::"0""#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT * FROM "resource" WHERE '0' IN (SELECT "Photos_in_Users"."Users" FROM "Photos_in_Users" WHERE "Photos" = "resource"."uid")"#);
+        assert_eq!(result, r#"SELECT * FROM "resource" WHERE '0' IN (SELECT "Photos_in_Users"."Users" FROM "Photos_in_Users" WHERE "Photos_in_Users"."Photos" = "resource"."uid")"#);
     }
 
     #[test]
@@ -372,16 +421,16 @@ mod test {
             r#"Users::"0" in unknown("resource: Photos")"#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT * FROM "resource" WHERE "resource"."uid" IN (SELECT "Users_in_Photos"."Photos" FROM "Users_in_Photos" WHERE "Users" = '0')"#);
+        assert_eq!(result, r#"SELECT * FROM "resource" WHERE "resource"."uid" IN (SELECT "Users_in_Photos"."Photos" FROM "Users_in_Photos" WHERE "Users_in_Photos"."Users" = '0')"#);
     }
 
     #[test]
-    fn test_in3() {
+    fn test_inset() {
         let result: String = translate_expr_test(
-            r#"unknown("resource: Photos") in unknown("resource: Photos").nextPhoto"#.parse().unwrap(),
+            r#"Photos::"0" in unknown("resource: Users").allowedPhotos"#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT * FROM "resource" WHERE "resource"."nextPhoto" IN (SELECT "Photos_in_Photos"."Photos" FROM "Photos_in_Photos" WHERE "Photos" = "resource"."uid")"#);
+        assert_eq!(result, r#"SELECT * FROM "resource" WHERE ('0' = ANY("resource"."allowedPhotos")) OR ('0' IN (SELECT "Photos_in_Photos"."Photos" FROM "Photos_in_Photos" WHERE "Photos_in_Photos"."Photos" = ANY("resource"."allowedPhotos")))"#)
     }
 
     #[test]
