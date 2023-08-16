@@ -5,7 +5,7 @@ use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinO
 use smol_str::SmolStr;
 use thiserror::Error;
 
-use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, ExprWithBindings, OtherUnknown, IdGen};
+use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, ExprWithBindings, OtherUnknown, IdGen, AttrOrId};
 
 #[derive(Debug, Error)]
 pub enum ExprToSqlError {
@@ -103,6 +103,15 @@ impl IntoColumnRef for OtherUnknown {
     }
 }
 
+impl IntoIden for AttrOrId {
+    fn into_iden(self) -> sea_query::DynIden {
+        match self {
+            AttrOrId::Attr(s) => Alias::new(s.as_str()).into_iden(),
+            AttrOrId::Id(s) => Alias::new(s.as_str()).into_iden(),
+        }
+    }
+}
+
 impl QueryExpr {
     fn lit_to_sql(l: &Literal) -> SimpleExpr {
         match l {
@@ -153,7 +162,7 @@ impl QueryExpr {
         match self {
             QueryExpr::Lit(l) => Ok(Self::lit_to_sql(l)),
             QueryExpr::Unknown { name, .. } => match name {
-                UnknownType::EntityDeref(e) => Ok((Alias::new(e.clone()), Alias::new("uid")).into_column_ref().into()),
+                UnknownType::EntityDeref(e) => Err(QueryExprError::NotAttrReduced(e.clone())),//Ok((Alias::new(e.clone()), Alias::new("uid")).into_column_ref().into()),
                 UnknownType::Other(c) => Ok(c.clone().into_column_ref().into()),
             },
             QueryExpr::If { test_expr, then_expr, else_expr } => Ok(
@@ -188,7 +197,7 @@ impl QueryExpr {
             },
             QueryExpr::GetAttrEntity { expr, attr, .. } => {
                 Ok((Alias::new(expr.get_unknown_entity_deref_name().ok_or(QueryExprError::NotAttrReducedGetAttrEntity)?),
-                    Alias::new(attr.as_str())).into_column_ref().into())
+                    attr.clone()).into_column_ref().into())
             },
             QueryExpr::GetAttrRecord { expr, attr, result_type } => {
                 let left = expr.to_sql_query(ein)?;
@@ -212,20 +221,22 @@ impl QueryExpr {
 }
 
 impl ExprWithBindings {
-    pub fn to_sql_query<T: IntoTableRef>(&self, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> T) -> Result<SelectStatement> {
+    pub fn to_sql_query<T: IntoTableRef, U: IntoIden>(&self, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<SelectStatement> {
         let mut query = Query::select();
         query.and_where(self.expr.to_sql_query(ein)?);
         for (bv, e) in self.bindings.iter() {
+            let (tbl_ref, id_name) = table_names(&bv.ty);
+            let id_name = id_name.into_iden();
             query.join_as(sea_query::JoinType::InnerJoin,
-                table_names(&bv.ty), Alias::new(bv.name.clone()),
-                e.to_sql_query(ein)?.eq((Alias::new(bv.name.clone()), Alias::new("uid")).into_column_ref()));
+                tbl_ref, Alias::new(bv.name.clone()),
+                e.to_sql_query(ein)?.eq((Alias::new(bv.name.clone()), id_name).into_column_ref()));
         }
         Ok(query)
     }
 }
 
 /// Does the translation from Cedar to SQL
-pub fn translate_expr<T: IntoTableRef>(expr: &Expr, schema: &Schema, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> T) -> Result<SelectStatement> {
+pub fn translate_expr<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<SelectStatement> {
     let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
     let req_env = RandomRequestEnv::new();
     let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
@@ -236,13 +247,14 @@ pub fn translate_expr<T: IntoTableRef>(expr: &Expr, schema: &Schema, ein: &impl 
 
     let mut query_with_bindings: ExprWithBindings = query_expr_mapped.into();
     query_with_bindings.reduce_attrs(&mut IdGen::new());
+    // println!("query_with_bindings: {:?}", query_with_bindings);
 
 
     query_with_bindings.to_sql_query(ein, table_names)
 }
 
 
-pub fn translate_response<T: IntoTableRef>(resp: &ResidualResponse, schema: &Schema, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> T) -> Result<SelectStatement> {
+pub fn translate_response<T: IntoTableRef, U: IntoIden>(resp: &ResidualResponse, schema: &Schema, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<SelectStatement> {
     let (permits, forbids): (Vec<_>, Vec<_>) =
         resp.residuals().policies()
             .partition(|p| p.effect() == Effect::Permit);
@@ -271,7 +283,7 @@ mod test {
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
             Ok((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str)))
-        }), |tp| Alias::new(tp.basename())).unwrap();
+        }), |tp| (Alias::new(tp.basename()), Alias::new("uid"))).unwrap();
 
         query
             .column(Asterisk)

@@ -268,13 +268,13 @@ mod test_sqlite {
                     &InByTable::<Alias, Alias, _>(|_, _| {
                         panic!("There should not be any in's in the residual")
                     }), |tp| {
-                        if *tp == *USERS_TYPE {
+                        (if *tp == *USERS_TYPE {
                             Alias::new(USERS_TABLE_INFO.table)
                         } else if *tp == *PHOTOS_TYPE {
                             Alias::new(PHOTOS_TABLE_INFO.table)
                         } else {
                             panic!("Unknown type")
-                        }
+                        }, Alias::new("uid"))
                     }).expect("Failed to translate response");
                 let query =  query
                     .column((Alias::new("resource"), Alias::new("title")))

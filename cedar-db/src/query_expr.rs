@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use cedar_policy::EntityTypeName;
-use cedar_policy_core::ast::{Expr, Literal, UnaryOp, BinaryOp, Pattern, ExprKind, SlotId, Var, Name};
+use cedar_policy_core::ast::{Expr, Literal, UnaryOp, BinaryOp, Pattern, ExprKind, SlotId, Var, Name, EntityType};
 use cedar_policy_validator::types::{Type, Primitive, EntityRecordKind, EntityLUB};
 use ref_cast::RefCast;
 use smol_str::SmolStr;
@@ -72,6 +72,13 @@ fn type_to_entity_typename(tp: Option<&Type>) -> Result<&EntityTypeName> {
 }
 
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum AttrOrId {
+    Attr(SmolStr),
+    /// This attribute is the ID of the entity
+    Id(SmolStr)
+}
+
 /// This is a Cedar expression intended to be more easily converted into a SQL query.
 /// It refines the Cedar expression language by specifying the types of
 /// `GetAttr` and `HasAttr`. Here, `U` is the type of unknowns
@@ -102,7 +109,7 @@ pub enum QueryExpr<U = UnknownType> {
     GetAttrEntity {
         expr: Box<QueryExpr<U>>,
         expr_type: EntityTypeName,
-        attr: SmolStr
+        attr: AttrOrId
     },
     GetAttrRecord {
         expr: Box<QueryExpr<U>>,
@@ -249,7 +256,7 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
                         Ok(QueryExpr::GetAttrEntity {
                             expr: Box::new(QueryExpr::try_from(expr.as_ref())?),
                             expr_type: entity_lub_to_typename(lub)?.to_owned(),
-                            attr: attr.to_owned(),
+                            attr: AttrOrId::Attr(attr.to_owned()),
                         })
                     },
                     _ => Err(QueryExprError::TypecheckError),
@@ -268,7 +275,7 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
                         Ok(QueryExpr::IsNotNull(Box::new(QueryExpr::GetAttrEntity {
                             expr: Box::new(QueryExpr::try_from(expr.as_ref())?),
                             expr_type: entity_lub_to_typename(lub)?.to_owned(),
-                            attr: attr.to_owned(),
+                            attr: AttrOrId::Attr(attr.to_owned()),
                         })))
                     },
                     _ => Err(QueryExprError::TypecheckError),
@@ -307,67 +314,70 @@ pub enum UnknownType {
 }
 
 impl<U> QueryExpr<U> {
-    // In-place mutation of subexpressions; walks from leaves up to root
-    pub fn mut_subexpressions(&mut self, f: &mut impl FnMut(&mut QueryExpr<U>)) {
-        match self {
-            QueryExpr::Lit(_) => (),
-            QueryExpr::Unknown { .. } => (),
-            QueryExpr::If { test_expr, then_expr, else_expr } => {
-                test_expr.mut_subexpressions(f);
-                then_expr.mut_subexpressions(f);
-                else_expr.mut_subexpressions(f);
-            },
-            QueryExpr::And { left, right } => {
-                left.mut_subexpressions(f);
-                right.mut_subexpressions(f);
-            },
-            QueryExpr::Or { left, right } => {
-                left.mut_subexpressions(f);
-                right.mut_subexpressions(f);
-            },
-            QueryExpr::UnaryApp { arg, .. } => {
-                arg.mut_subexpressions(f);
-            },
-            QueryExpr::BinaryApp { left, right, .. } => {
-                left.mut_subexpressions(f);
-                right.mut_subexpressions(f);
-            },
-            QueryExpr::MulByConst { arg, .. } => {
-                arg.mut_subexpressions(f);
-            },
-            QueryExpr::GetAttrRecord { expr, .. } => {
-                expr.mut_subexpressions(f);
-            },
-            QueryExpr::GetAttrEntity { expr, .. } => {
-                expr.mut_subexpressions(f);
-            },
-            QueryExpr::InEntity { left, right, .. } => {
-                left.mut_subexpressions(f);
-                right.mut_subexpressions(f);
-            },
-            QueryExpr::InSet { left, right, .. } => {
-                left.mut_subexpressions(f);
-                right.mut_subexpressions(f);
-            },
-            QueryExpr::HasAttrRecord { expr, .. } => {
-                expr.mut_subexpressions(f);
-            },
-            QueryExpr::IsNotNull(arg) => {
-                arg.mut_subexpressions(f);
-            },
-            QueryExpr::Like { expr, .. } => {
-                expr.mut_subexpressions(f);
-            },
-            QueryExpr::Set(values) => {
-                for v in values {
-                    v.mut_subexpressions(f);
-                }
-            },
-            QueryExpr::Record { pairs } => {
-                for (_, v) in pairs {
-                    v.mut_subexpressions(f);
-                }
-            },
+    // In-place mutation of subexpressions; walks from root to leaves and back up to root
+    // `g` should return a value indicating whether to continue recursing down this node
+    pub fn mut_subexpressions(&mut self, f: &mut impl FnMut(&mut QueryExpr<U>), g: &mut impl FnMut(&mut QueryExpr<U>) -> bool) {
+        if g(self) {
+            match self {
+                QueryExpr::Lit(_) => (),
+                QueryExpr::Unknown { .. } => (),
+                QueryExpr::If { test_expr, then_expr, else_expr } => {
+                    test_expr.mut_subexpressions(f, g);
+                    then_expr.mut_subexpressions(f, g);
+                    else_expr.mut_subexpressions(f, g);
+                },
+                QueryExpr::And { left, right } => {
+                    left.mut_subexpressions(f, g);
+                    right.mut_subexpressions(f, g);
+                },
+                QueryExpr::Or { left, right } => {
+                    left.mut_subexpressions(f, g);
+                    right.mut_subexpressions(f, g);
+                },
+                QueryExpr::UnaryApp { arg, .. } => {
+                    arg.mut_subexpressions(f, g);
+                },
+                QueryExpr::BinaryApp { left, right, .. } => {
+                    left.mut_subexpressions(f, g);
+                    right.mut_subexpressions(f, g);
+                },
+                QueryExpr::MulByConst { arg, .. } => {
+                    arg.mut_subexpressions(f, g);
+                },
+                QueryExpr::GetAttrRecord { expr, .. } => {
+                    expr.mut_subexpressions(f, g);
+                },
+                QueryExpr::GetAttrEntity { expr, .. } => {
+                    expr.mut_subexpressions(f, g);
+                },
+                QueryExpr::InEntity { left, right, .. } => {
+                    left.mut_subexpressions(f, g);
+                    right.mut_subexpressions(f, g);
+                },
+                QueryExpr::InSet { left, right, .. } => {
+                    left.mut_subexpressions(f, g);
+                    right.mut_subexpressions(f, g);
+                },
+                QueryExpr::HasAttrRecord { expr, .. } => {
+                    expr.mut_subexpressions(f, g);
+                },
+                QueryExpr::IsNotNull(arg) => {
+                    arg.mut_subexpressions(f, g);
+                },
+                QueryExpr::Like { expr, .. } => {
+                    expr.mut_subexpressions(f, g);
+                },
+                QueryExpr::Set(values) => {
+                    for v in values {
+                        v.mut_subexpressions(f, g);
+                    }
+                },
+                QueryExpr::Record { pairs } => {
+                    for (_, v) in pairs {
+                        v.mut_subexpressions(f, g);
+                    }
+                },
+            }
         }
         f(self);
     }
@@ -467,16 +477,28 @@ impl From<BindingValue> for QueryExpr {
     }
 }
 
+/// Used to construct bindings -- we keep the expressions in a hash map but also remember the insertion order
 #[derive(Debug, Clone, Default)]
-pub struct Bindings(HashMap<Box<QueryExpr>, BindingValue>);
+pub struct BindingsBuilder(HashMap<Box<QueryExpr>, BindingValue>);
+
+#[derive(Debug, Clone, Default)]
+pub struct Bindings(Vec<(BindingValue, Box<QueryExpr>)>);
 
 impl Bindings {
-    /// Note that this does a sort on the (a priori unordered) bindings
-    /// This is optimized for an insert-many iterate-once (but keep track of insertion order) workload
     pub fn iter(&self) -> impl Iterator<Item = (&BindingValue, &QueryExpr)> {
-        let mut result: Vec<_> = self.0.iter().collect();
-        result.sort_by(|(_, a), (_, b)| a.insertion_order.cmp(&b.insertion_order));
-        result.into_iter().map(|(k, v)| (v, k.as_ref()))
+        self.0.iter().map(|(bv, qe)| (bv, qe.as_ref()))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&mut BindingValue, &mut QueryExpr)> {
+        self.0.iter_mut().map(|(bv, qe)| (bv, qe.as_mut()))
+    }
+}
+
+impl BindingsBuilder {
+    pub fn build(self) -> Bindings {
+        let mut result: Vec<_> = self.0.into_iter().map(|(k, v)| (v, k)).collect();
+        result.sort_by(|(a, _), (b, _)| a.insertion_order.cmp(&b.insertion_order));
+        Bindings(result)
     }
 
     pub fn insert(&mut self, q: Box<QueryExpr>, ty: EntityTypeName, id_gen: &mut IdGen) -> BindingValue {
@@ -528,7 +550,8 @@ impl QueryExpr {
     /// An expression is said to be attr-reduced when the only
     /// expressions that appear on the left argument of a `GetAttrEntity` are of the form `Unknown(EntityDeref(_))`
     /// This function turns the expression into an attr-reduced form.
-    pub fn reduce_attrs(&mut self, bindings: &mut Bindings, id_gen: &mut IdGen) {
+    pub fn reduce_attrs(&mut self, id_gen: &mut IdGen) -> Bindings {
+        let mut builder = BindingsBuilder::default();
         self.mut_subexpressions(&mut |expr| {
             if let QueryExpr::GetAttrEntity { expr, expr_type, .. } = expr {
                 if expr.is_unknown_entity_deref() { // if it is already attr-reduced, skip
@@ -536,9 +559,33 @@ impl QueryExpr {
                 }
 
                 let expr_owned = std::mem::take(expr);
-                let bv = bindings.insert(expr_owned, expr_type.clone(), id_gen);
+                let bv = builder.insert(expr_owned, expr_type.clone(), id_gen);
                 *expr = Box::new(bv.into());
             }
+        }, &mut |_| true);
+
+        let mut bindings = builder.build();
+
+        for (_, e) in bindings.iter_mut() {
+            e.unreduce_unknowns();
+        }
+        self.unreduce_unknowns();
+
+        bindings
+    }
+
+    /// Add ".uid" to the ends of entities that are being used as strings
+    fn unreduce_unknowns(&mut self) {
+        self.mut_subexpressions(&mut |expr| {
+            if let Some(tp) = expr.get_unknown_entity_type() {
+                *expr = QueryExpr::GetAttrEntity {
+                    expr: Box::new(expr.clone()),
+                    expr_type: tp.clone(),
+                    attr: AttrOrId::Id("uid".into())  // we use a default id value of "uid"
+                };
+            }
+        }, &mut |expr| {
+            !matches!(expr, QueryExpr::GetAttrEntity { .. })  // don't recurse into `getattr`'s
         });
     }
 
@@ -547,6 +594,18 @@ impl QueryExpr {
     pub fn get_unknown_entity_deref_name(&self) -> Option<SmolStr> {
         match self {
             QueryExpr::Unknown { name: UnknownType::EntityDeref(s), .. } => Some(s.clone()),
+            _ => None
+        }
+    }
+
+    pub fn get_unknown_entity_type(&self) -> Option<&EntityTypeName> {
+        match self {
+            QueryExpr::Unknown { type_annotation, .. } => {
+                match type_annotation {
+                    cedar_policy_core::ast::Type::Entity { ty: EntityType::Concrete(n) } => Some(EntityTypeName::ref_cast(n)),
+                    _ => None
+                }
+            },
             _ => None
         }
     }
@@ -561,7 +620,7 @@ impl QueryExpr {
 impl ExprWithBindings {
     /// Turn the expression with bindings into an attr-reduced form.
     pub fn reduce_attrs(&mut self, id_gen: &mut IdGen) {
-        self.expr.reduce_attrs(&mut self.bindings, id_gen);
+        self.bindings = self.expr.reduce_attrs(id_gen);
     }
 }
 
