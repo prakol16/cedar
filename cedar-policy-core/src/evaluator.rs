@@ -23,8 +23,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 mod err;
-pub use err::EvaluationError;
 pub(crate) use err::*;
+pub use err::{EvaluationError, EvaluationErrorKind};
 use itertools::Either;
 use smol_str::SmolStr;
 

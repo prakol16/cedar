@@ -51,13 +51,13 @@ mod test_postgres {
             match uid.type_name() {
                 t if *t == *USERS_TYPE =>
                     conn.query_opt(USERS_TABLE_INFO.get_query_string(), &[&uid.id().as_ref()])
-                    .map_err(EvaluationError::mk_err)?
-                    .map(|row| convert_attr_names(&row, &USERS_TABLE_INFO.attr_names).map_err(EvaluationError::StringMessage))
+                    .map_err(EvaluationError::mk_request)?
+                    .map(|row| convert_attr_names(&row, &USERS_TABLE_INFO.attr_names).map_err(EvaluationError::mk_request_string_error))
                     .transpose(),
                 t if *t == *PHOTOS_TYPE =>
                     conn.query_opt(PHOTOS_TABLE_INFO.get_query_string(), &[&uid.id().as_ref()])
-                    .map_err(EvaluationError::mk_err)?
-                    .map(|row| convert_attr_names(&row, &PHOTOS_TABLE_INFO.attr_names).map_err(EvaluationError::StringMessage))
+                    .map_err(EvaluationError::mk_request)?
+                    .map(|row| convert_attr_names(&row, &PHOTOS_TABLE_INFO.attr_names).map_err(EvaluationError::mk_request_string_error))
                     .transpose(),
                 _ => Ok(None)
             }
@@ -79,7 +79,7 @@ mod test_postgres {
                     (t1, t2) if *t1 == *USERS_TYPE && *t2 == *TEAMS_TYPE => {
                         let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                         USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&mut conn, u1.id(), u2.id())
-                        .map_err(EvaluationError::StringMessage)
+                        .map_err(EvaluationError::mk_request_string_error)
                     },
                     _ => Ok(false)
                 }
@@ -122,8 +122,8 @@ mod test_postgres {
             fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, EvaluationError> {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&mut conn, uid).map_err(EvaluationError::StringMessage)?.map(Cow::Owned)),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&mut conn, uid).map_err(EvaluationError::StringMessage)?.map(Cow::Owned)),
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&mut conn, uid).map_err(EvaluationError::mk_request_string_error)?.map(Cow::Owned)),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&mut conn, uid).map_err(EvaluationError::mk_request_string_error)?.map(Cow::Owned)),
                     _ => Ok(None)
                 }
             }
@@ -180,8 +180,8 @@ mod test_sqlite {
         impl EntityDatabase for Table {
             fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, EvaluationError> {
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_err)?.map(Cow::Owned)),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_err)?.map(Cow::Owned)),
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_request)?.map(Cow::Owned)),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&self.conn, uid).map_err(EvaluationError::mk_request)?.map(Cow::Owned)),
                     _ => Ok(None)
                 }
             }
