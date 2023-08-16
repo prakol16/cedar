@@ -83,58 +83,58 @@ pub enum AttrOrId {
 /// It refines the Cedar expression language by specifying the types of
 /// `GetAttr` and `HasAttr`. Here, `U` is the type of unknowns
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub enum QueryExpr<U = UnknownType> {
+pub enum QueryExpr {
     Lit(Literal),
     // Skipped: Var, Slot; these should be removed by partial evaluation/policy instantiation
-    Unknown { name: U, type_annotation: cedar_policy_core::ast::Type },  // type annotation is mandatory
-    If { test_expr: Box<QueryExpr<U>>, then_expr: Box<QueryExpr<U>>, else_expr: Box<QueryExpr<U>> },
-    And { left: Box<QueryExpr<U>>, right: Box<QueryExpr<U>> },
-    Or { left: Box<QueryExpr<U>>, right: Box<QueryExpr<U>> },
-    UnaryApp { op: UnaryOp, arg: Box<QueryExpr<U>> },
-    BinaryApp { op: BinaryOp, left: Box<QueryExpr<U>>, right: Box<QueryExpr<U>> }, // op should not be `in`
+    Unknown { name: UnknownType, type_annotation: Option<EntityTypeName> },  // type annotation is mandatory
+    If { test_expr: Box<QueryExpr>, then_expr: Box<QueryExpr>, else_expr: Box<QueryExpr> },
+    And { left: Box<QueryExpr>, right: Box<QueryExpr> },
+    Or { left: Box<QueryExpr>, right: Box<QueryExpr> },
+    UnaryApp { op: UnaryOp, arg: Box<QueryExpr> },
+    BinaryApp { op: BinaryOp, left: Box<QueryExpr>, right: Box<QueryExpr> }, // op should not be `in`
     InEntity {
-        left: Box<QueryExpr<U>>,
-        right: Box<QueryExpr<U>>,
+        left: Box<QueryExpr>,
+        right: Box<QueryExpr>,
         left_type: EntityTypeName,
         right_type: EntityTypeName,
     },
     InSet {
-        left: Box<QueryExpr<U>>,
-        right: Box<QueryExpr<U>>,
+        left: Box<QueryExpr>,
+        right: Box<QueryExpr>,
         left_type: EntityTypeName,
         right_type: EntityTypeName,
     },
-    MulByConst { arg: Box<QueryExpr<U>>, constant: i64 },
+    MulByConst { arg: Box<QueryExpr>, constant: i64 },
     // TODO: extension functions
     GetAttrEntity {
-        expr: Box<QueryExpr<U>>,
+        expr: Box<QueryExpr>,
         expr_type: EntityTypeName,
         attr: AttrOrId
     },
     GetAttrRecord {
-        expr: Box<QueryExpr<U>>,
+        expr: Box<QueryExpr>,
         attr: SmolStr,
         result_type: CastableType  // we need to know the result type because sometimes
                                    // the result will be "json" by default and we need to cast it
     },
     HasAttrRecord {
-        expr: Box<QueryExpr<U>>,
+        expr: Box<QueryExpr>,
         attr: SmolStr,
     },
-    IsNotNull(Box<QueryExpr<U>>), // we use this instead of `HasAttr` on entities
-    Like { expr: Box<QueryExpr<U>>, pattern: Pattern },
-    Set(Vec<QueryExpr<U>>),
-    Record { pairs: Vec<(SmolStr, QueryExpr<U>)> }
+    IsNotNull(Box<QueryExpr>), // we use this instead of `HasAttr` on entities
+    Like { expr: Box<QueryExpr>, pattern: Pattern },
+    Set(Vec<QueryExpr>),
+    Record { pairs: Vec<(SmolStr, QueryExpr)> }
 }
 
-impl<U> Default for QueryExpr<U> {
+impl Default for QueryExpr {
     fn default() -> Self {
         QueryExpr::Lit(false.into())
     }
 }
 
-impl<T: Clone> QueryExpr<T> {
-    pub fn eq_or_in_entity(left: QueryExpr<T>, right: QueryExpr<T>, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
+impl QueryExpr {
+    pub fn eq_or_in_entity(left: QueryExpr, right: QueryExpr, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
         let eq_expr = if left_type == right_type {
             Some(QueryExpr::BinaryApp {
                 op: BinaryOp::Eq,
@@ -157,7 +157,7 @@ impl<T: Clone> QueryExpr<T> {
         }
     }
 
-    pub fn contains_or_in_set(left: QueryExpr<T>, right: QueryExpr<T>, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
+    pub fn contains_or_in_set(left: QueryExpr, right: QueryExpr, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
         let contains_expr = if left_type == right_type {
             Some(QueryExpr::BinaryApp {
                 op: BinaryOp::Contains,
@@ -181,7 +181,7 @@ impl<T: Clone> QueryExpr<T> {
     }
 }
 
-impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
+impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
     type Error = QueryExprError;
 
     fn try_from(value: &Expr<Option<Type>>) -> Result<Self> {
@@ -190,8 +190,12 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
             ExprKind::Var(v) => Err(QueryExprError::VariableAppears(v.to_owned())),
             ExprKind::Slot(s) => Err(QueryExprError::SlotAppears(s.to_owned())),
             ExprKind::Unknown { name, type_annotation } => Ok(QueryExpr::Unknown {
-                name: name.to_owned(),
-                type_annotation: type_annotation.to_owned().ok_or_else(|| QueryExprError::UnknownNotAnnotated(name.to_owned()))?
+                name: UnknownType { pfx: None, name: name.to_owned() },
+                type_annotation: match type_annotation {
+                    Some(cedar_policy_core::ast::Type::Entity { ty: EntityType::Concrete(n) }) =>
+                        Some(EntityTypeName::ref_cast(n).to_owned()),
+                    _ => None,
+                }
             }),
             ExprKind::If { test_expr, then_expr, else_expr } => Ok(QueryExpr::If {
                 test_expr: Box::new(QueryExpr::try_from(test_expr.as_ref())?),
@@ -297,26 +301,19 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr<SmolStr> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct OtherUnknown {
-    pub(crate) pfx: Option<SmolStr>,
-    pub(crate) name: SmolStr
-}
-
 /// The default unknown type for a query expression.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum UnknownType {
-    /// This is the type of unknown that refers to a dereferenced entity
-    /// That is, it is on the LHS of a `let` binding or it is supplied as a dereferenced entity
-    EntityDeref(SmolStr),
-    /// This is the type of unknown that refers to some other value (essentially an escape hatch)
-    Other(OtherUnknown),
+pub struct UnknownType {
+    /// Escape hatch -- for entities, will be inferred by the entity type name
+    pub pfx: Option<SmolStr>,
+    /// The name (column) of the unknown
+    pub name: SmolStr
 }
 
-impl<U> QueryExpr<U> {
+impl QueryExpr {
     // In-place mutation of subexpressions; walks from root to leaves and back up to root
     // `g` should return a value indicating whether to continue recursing down this node
-    pub fn mut_subexpressions(&mut self, f: &mut impl FnMut(&mut QueryExpr<U>), g: &mut impl FnMut(&mut QueryExpr<U>) -> bool) {
+    pub fn mut_subexpressions(&mut self, f: &mut impl FnMut(&mut QueryExpr), g: &mut impl FnMut(&mut QueryExpr) -> bool) {
         if g(self) {
             match self {
                 QueryExpr::Lit(_) => (),
@@ -381,84 +378,6 @@ impl<U> QueryExpr<U> {
         }
         f(self);
     }
-
-    // Functorality for `QueryExpr`. Can this be derived automatically?
-    pub fn map_unknowns<V>(self, f: &impl Fn(U) -> V) -> QueryExpr<V> {
-        match self {
-            QueryExpr::Lit(l) => QueryExpr::Lit(l),
-            QueryExpr::Unknown { name, type_annotation } => QueryExpr::Unknown {
-                name: f(name),
-                type_annotation: type_annotation
-            },
-            QueryExpr::If { test_expr, then_expr, else_expr } => QueryExpr::If {
-                test_expr: Box::new(test_expr.map_unknowns(f)),
-                then_expr: Box::new(then_expr.map_unknowns(f)),
-                else_expr: Box::new(else_expr.map_unknowns(f)),
-            },
-            QueryExpr::And { left, right } => QueryExpr::And {
-                left: Box::new(left.map_unknowns(f)),
-                right: Box::new(right.map_unknowns(f)),
-            },
-            QueryExpr::Or { left, right } => QueryExpr::Or {
-                left: Box::new(left.map_unknowns(f)),
-                right: Box::new(right.map_unknowns(f)),
-            },
-            QueryExpr::UnaryApp { op, arg } => QueryExpr::UnaryApp {
-                op,
-                arg: Box::new(arg.map_unknowns(f)),
-            },
-            QueryExpr::BinaryApp { op, left, right } => QueryExpr::BinaryApp {
-                op,
-                left: Box::new(left.map_unknowns(f)),
-                right: Box::new(right.map_unknowns(f)),
-            },
-            QueryExpr::MulByConst { arg, constant } => QueryExpr::MulByConst {
-                arg: Box::new(arg.map_unknowns(f)),
-                constant,
-            },
-            QueryExpr::GetAttrRecord { expr, attr, result_type } => QueryExpr::GetAttrRecord {
-                expr: Box::new(expr.map_unknowns(f)),
-                attr,
-                result_type,
-            },
-            QueryExpr::GetAttrEntity { expr, expr_type, attr } => QueryExpr::GetAttrEntity {
-                expr: Box::new(expr.map_unknowns(f)),
-                expr_type,
-                attr,
-            },
-            QueryExpr::HasAttrRecord { expr, attr } => QueryExpr::HasAttrRecord {
-                expr: Box::new(expr.map_unknowns(f)),
-                attr,
-            },
-            QueryExpr::InEntity { left, right, left_type, right_type } => QueryExpr::InEntity {
-                left: Box::new(left.map_unknowns(f)),
-                right: Box::new(right.map_unknowns(f)),
-                left_type,
-                right_type,
-            },
-            QueryExpr::InSet { left, right, left_type, right_type } => QueryExpr::InSet {
-                left: Box::new(left.map_unknowns(f)),
-                right: Box::new(right.map_unknowns(f)),
-                left_type,
-                right_type,
-            },
-            QueryExpr::IsNotNull(e) => QueryExpr::IsNotNull(Box::new(e.map_unknowns(f))),
-            QueryExpr::Like { expr, pattern } => QueryExpr::Like {
-                expr: Box::new(expr.map_unknowns(f)),
-                pattern,
-            },
-            QueryExpr::Set(values) => QueryExpr::Set(values.into_iter().map(|e| e.map_unknowns(f)).collect()),
-            QueryExpr::Record { pairs } => QueryExpr::Record {
-                pairs: pairs.into_iter().map(|(k, v)| (k, v.map_unknowns(f))).collect(),
-            },
-        }
-    }
-}
-
-impl From<QueryExpr<SmolStr>> for QueryExpr {
-    fn from(qe: QueryExpr<SmolStr>) -> Self {
-        qe.map_unknowns(&|s| UnknownType::EntityDeref(s))
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -471,8 +390,8 @@ pub struct BindingValue {
 impl From<BindingValue> for QueryExpr {
     fn from(bv: BindingValue) -> Self {
         QueryExpr::Unknown {
-            name: UnknownType::EntityDeref(bv.name),
-            type_annotation: bv.ty.into()
+            name: UnknownType { pfx: None, name: bv.name },
+            type_annotation: Some(bv.ty)
         }
     }
 }
@@ -593,26 +512,21 @@ impl QueryExpr {
     /// In reduced-attr form, this should succeed on all arguments of GetAttrEntity.
     pub fn get_unknown_entity_deref_name(&self) -> Option<SmolStr> {
         match self {
-            QueryExpr::Unknown { name: UnknownType::EntityDeref(s), .. } => Some(s.clone()),
+            QueryExpr::Unknown { name: UnknownType { name, .. }, .. } => Some(name.clone()),
             _ => None
         }
     }
 
     pub fn get_unknown_entity_type(&self) -> Option<&EntityTypeName> {
         match self {
-            QueryExpr::Unknown { type_annotation, .. } => {
-                match type_annotation {
-                    cedar_policy_core::ast::Type::Entity { ty: EntityType::Concrete(n) } => Some(EntityTypeName::ref_cast(n)),
-                    _ => None
-                }
-            },
+            QueryExpr::Unknown { type_annotation, .. } => type_annotation.as_ref(),
             _ => None
         }
     }
 
     /// Equivalent to `self.get_unknown_entity_deref_name().is_some()`
     pub fn is_unknown_entity_deref(&self) -> bool {
-        matches!(self, QueryExpr::Unknown { name: UnknownType::EntityDeref(_), .. })
+        matches!(self, QueryExpr::Unknown { .. })
     }
 }
 

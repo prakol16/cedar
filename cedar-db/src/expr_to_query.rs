@@ -2,10 +2,9 @@ use cedar_policy::{EntityTypeName, Schema, RandomRequestEnv, ResidualResponse, E
 use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp, Expr, ExprBuilder};
 use cedar_policy_validator::{typecheck::Typechecker, ValidationMode};
 use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, SelectStatement, IntoTableRef};
-use smol_str::SmolStr;
 use thiserror::Error;
 
-use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, ExprWithBindings, OtherUnknown, IdGen, AttrOrId};
+use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, ExprWithBindings, IdGen, AttrOrId};
 
 #[derive(Debug, Error)]
 pub enum ExprToSqlError {
@@ -94,7 +93,7 @@ fn cedar_binary_to_sql_binary(op: BinaryOp) -> Option<BinOper> {
     }
 }
 
-impl IntoColumnRef for OtherUnknown {
+impl IntoColumnRef for UnknownType {
     fn into_column_ref(self) -> sea_query::ColumnRef {
         match self.pfx {
             Some(pfx) => (Alias::new(pfx), Alias::new(self.name)).into_column_ref(),
@@ -161,9 +160,10 @@ impl QueryExpr {
     pub fn to_sql_query(&self, ein: &impl InConfig) -> Result<SimpleExpr> {
         match self {
             QueryExpr::Lit(l) => Ok(Self::lit_to_sql(l)),
-            QueryExpr::Unknown { name, .. } => match name {
-                UnknownType::EntityDeref(e) => Err(QueryExprError::NotAttrReduced(e.clone())),//Ok((Alias::new(e.clone()), Alias::new("uid")).into_column_ref().into()),
-                UnknownType::Other(c) => Ok(c.clone().into_column_ref().into()),
+            QueryExpr::Unknown { name, type_annotation } => {
+                if type_annotation.is_none() {
+                    Ok(name.clone().into_column_ref().into())
+                } else { Err(QueryExprError::NotAttrReduced(name.name.clone())) }
             },
             QueryExpr::If { test_expr, then_expr, else_expr } => Ok(
                 sea_query::Expr::case(test_expr.to_sql_query(ein)?,
@@ -242,10 +242,9 @@ pub fn translate_expr<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema
     let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
         .ok_or(QueryExprError::TypecheckError)?;
 
-    let query_expr: QueryExpr<SmolStr> = (&typed_expr).try_into()?;
-    let query_expr_mapped: QueryExpr = query_expr.into();
+    let query_expr: QueryExpr = (&typed_expr).try_into()?;
 
-    let mut query_with_bindings: ExprWithBindings = query_expr_mapped.into();
+    let mut query_with_bindings: ExprWithBindings = query_expr.into();
     query_with_bindings.reduce_attrs(&mut IdGen::new());
     // println!("query_with_bindings: {:?}", query_with_bindings);
 
