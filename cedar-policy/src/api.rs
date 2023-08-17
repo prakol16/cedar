@@ -51,6 +51,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::convert::Infallible;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -217,8 +218,11 @@ pub use entities::EntitiesError;
 
 /// Something that can return entities
 pub trait EntityDatabase {
+    /// The type of error that can occur when accessing entities
+    type Error: std::error::Error;
+
     /// Get the `Entity` with the given Uid, if any
-    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, EvaluationError>;
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, Self::Error>;
 
     /// Whether the database is partial
     fn partial_mode(&self) -> Mode;
@@ -226,25 +230,28 @@ pub trait EntityDatabase {
 
 /// Something that can return entity attributes and determine entity ancestry
 pub trait EntityAttrDatabase {
+    /// The type of error that can occur when accessing entities
+    type Error: std::error::Error;
+
     /// Decide if an entity exists or not
-    fn exists_entity(&self, uid: &EntityUid) -> Result<bool, EvaluationError>;
+    fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error>;
 
     /// Get the attribute of an entity given the attribute string
     /// Should return None if the attr is not present on the entity; the entity is guaranteed to exist
-    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<EvaluationError>>;
+    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>>;
 
     /// Decide if an entity exists and has a given attribute.
     /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
-    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> Result<bool, EntityAccessError<EvaluationError>> {
+    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> Result<bool, EntityAccessError<Self::Error>> {
         self.entity_attr(uid, attr)
             .map_or_else(|e| e.handle_attr(false), |_| Ok(true))
     }
 
     /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
     /// Should return false if `u2` does not exist; `u1` is guaranteed to exist
-    fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, EvaluationError>;
+    fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, Self::Error>;
 
     /// Determine if this is a partial store
     fn partial_mode(&self) -> Mode;
@@ -252,19 +259,21 @@ pub trait EntityAttrDatabase {
 }
 
 impl<T: EntityDatabase> EntityAttrDatabase for T {
-    fn exists_entity(&self, uid: &EntityUid) -> Result<bool, EvaluationError> {
+    type Error = T::Error;
+
+    fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error> {
         Ok(self.get(uid)?.is_some())
     }
 
     fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) ->
-        std::result::Result<PartialValue, EntityAttrAccessError<EvaluationError>> {
+        std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
         match self.get(uid)? {
             Some(e) => e.as_ref().attr(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr),
             None => Err(EntityAttrAccessError::UnknownEntity),
         }
     }
 
-    fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, EvaluationError> {
+    fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, Self::Error> {
         match self.get(u1)? {
             Some(e) => Ok(e.as_ref().is_descendant_of(u2)),
             None => Ok(false),
@@ -496,7 +505,9 @@ impl Entities {
 }
 
 impl EntityDatabase for ParsedEntities {
-    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, EvaluationError> {
+    type Error = Infallible;
+
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, Infallible> {
         // TODO: this will create (and immediately destroy)
         // an unused residual expression in partial mode; rework to avoid this
         Ok(self.get(uid).map(Cow::Borrowed))
@@ -577,7 +588,7 @@ impl ParsedEntities {
 struct EntityDatabaseWrapper<T: EntityAttrDatabase>(T);
 
 impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapper<T> {
-    type Error = EvaluationError;
+    type Error = T::Error;
 
     fn partial_mode(&self) -> Mode {
         self.0.partial_mode()
@@ -587,7 +598,7 @@ impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapp
         self.0.exists_entity(EntityUid::ref_cast(uid))
     }
 
-    fn entity_attr<'e>(&'e self, uid: &ast::EntityUID, attr: &str) -> Result<PartialValue, EntityAttrAccessError<EvaluationError>> {
+    fn entity_attr<'e>(&'e self, uid: &ast::EntityUID, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
         self.0.entity_attr(EntityUid::ref_cast(uid), attr)
     }
 
@@ -643,7 +654,9 @@ impl<'e, T: EntityDatabase> CachedEntities<'e, T> {
 }
 
 impl<'a, T: EntityDatabase> EntityDatabase for CachedEntities<'a, T> {
-    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, EvaluationError> {
+    type Error = T::Error;
+
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, Self::Error> {
         if let Some(entity) = self.cache.get(uid) {
             Ok(Some(Cow::Borrowed(entity)))
         } else {
@@ -1559,7 +1572,7 @@ impl EntityUid {
     /// Examples:
     /// * `{ "__entity": { "type": "User", "id": "123abc" } }`
     /// * `{ "type": "User", "id": "123abc" }`
-    pub fn from_json(json: serde_json::Value) -> Result<Self, impl std::error::Error> {
+    pub fn from_json(json: serde_json::Value) -> Result<Self, entities::JsonDeserializationError> {
         let parsed: entities::EntityUidJSON = serde_json::from_value(json)?;
         Ok::<Self, entities::JsonDeserializationError>(Self(
             parsed.into_euid(|| JsonDeserializationErrorContext::EntityUid)?,

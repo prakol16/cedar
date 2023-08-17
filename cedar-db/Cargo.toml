@@ -12,6 +12,7 @@ repository = "https://github.com/cedar-policy/cedar"
 
 [dependencies]
 cedar-policy = { version = "=2.3.0", path = "../cedar-policy", features = ["partial-eval"] }
+cedar-policy-core = { version = "=2.3.0", path = "../cedar-policy-core", features = ["partial-eval"] }
 cedar-policy-validator = { version = "=2.3.0", path = "../cedar-policy-validator" }
 ref-cast = "1.0"
 lazy_static = "1.4"
