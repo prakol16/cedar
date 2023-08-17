@@ -7,6 +7,8 @@ use ref_cast::RefCast;
 use smol_str::SmolStr;
 use thiserror::Error;
 
+use crate::query_expr_iterator::QueryExprParentType;
+
 
 #[derive(Debug, Error)]
 pub enum QueryExprError {
@@ -304,79 +306,16 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
 /// The default unknown type for a query expression.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UnknownType {
-    /// Escape hatch -- for entities, will be inferred by the entity type name
+    /// Escape hatch for non-entity variables -- for entities, will be ignored
     pub pfx: Option<SmolStr>,
     /// The name (column) of the unknown
     pub name: SmolStr
 }
 
 impl QueryExpr {
-    // In-place mutation of subexpressions; walks from root to leaves and back up to root
-    // `g` should return a value indicating whether to continue recursing down this node
-    pub fn mut_subexpressions(&mut self, f: &mut impl FnMut(&mut QueryExpr), g: &mut impl FnMut(&mut QueryExpr) -> bool) {
-        if g(self) {
-            match self {
-                QueryExpr::Lit(_) => (),
-                QueryExpr::Unknown { .. } => (),
-                QueryExpr::If { test_expr, then_expr, else_expr } => {
-                    test_expr.mut_subexpressions(f, g);
-                    then_expr.mut_subexpressions(f, g);
-                    else_expr.mut_subexpressions(f, g);
-                },
-                QueryExpr::And { left, right } => {
-                    left.mut_subexpressions(f, g);
-                    right.mut_subexpressions(f, g);
-                },
-                QueryExpr::Or { left, right } => {
-                    left.mut_subexpressions(f, g);
-                    right.mut_subexpressions(f, g);
-                },
-                QueryExpr::UnaryApp { arg, .. } => {
-                    arg.mut_subexpressions(f, g);
-                },
-                QueryExpr::BinaryApp { left, right, .. } => {
-                    left.mut_subexpressions(f, g);
-                    right.mut_subexpressions(f, g);
-                },
-                QueryExpr::MulByConst { arg, .. } => {
-                    arg.mut_subexpressions(f, g);
-                },
-                QueryExpr::GetAttrRecord { expr, .. } => {
-                    expr.mut_subexpressions(f, g);
-                },
-                QueryExpr::GetAttrEntity { expr, .. } => {
-                    expr.mut_subexpressions(f, g);
-                },
-                QueryExpr::InEntity { left, right, .. } => {
-                    left.mut_subexpressions(f, g);
-                    right.mut_subexpressions(f, g);
-                },
-                QueryExpr::InSet { left, right, .. } => {
-                    left.mut_subexpressions(f, g);
-                    right.mut_subexpressions(f, g);
-                },
-                QueryExpr::HasAttrRecord { expr, .. } => {
-                    expr.mut_subexpressions(f, g);
-                },
-                QueryExpr::IsNotNull(arg) => {
-                    arg.mut_subexpressions(f, g);
-                },
-                QueryExpr::Like { expr, .. } => {
-                    expr.mut_subexpressions(f, g);
-                },
-                QueryExpr::Set(values) => {
-                    for v in values {
-                        v.mut_subexpressions(f, g);
-                    }
-                },
-                QueryExpr::Record { pairs } => {
-                    for (_, v) in pairs {
-                        v.mut_subexpressions(f, g);
-                    }
-                },
-            }
-        }
-        f(self);
+    /// TODO: make not mutable
+    pub fn get_unknowns(&mut self) -> HashMap<UnknownType, Option<EntityTypeName>> {
+        todo!()
     }
 }
 
@@ -471,7 +410,7 @@ impl QueryExpr {
     /// This function turns the expression into an attr-reduced form.
     pub fn reduce_attrs(&mut self, id_gen: &mut IdGen) -> Bindings {
         let mut builder = BindingsBuilder::default();
-        self.mut_subexpressions(&mut |expr| {
+        self.mut_subexpressions(&mut |expr, _| {
             if let QueryExpr::GetAttrEntity { expr, expr_type, .. } = expr {
                 if expr.is_unknown_entity_deref() { // if it is already attr-reduced, skip
                     return;
@@ -481,7 +420,7 @@ impl QueryExpr {
                 let bv = builder.insert(expr_owned, expr_type.clone(), id_gen);
                 *expr = Box::new(bv.into());
             }
-        }, &mut |_| true);
+        });
 
         let mut bindings = builder.build();
 
@@ -495,16 +434,16 @@ impl QueryExpr {
 
     /// Add ".uid" to the ends of entities that are being used as strings
     fn unreduce_unknowns(&mut self) {
-        self.mut_subexpressions(&mut |expr| {
-            if let Some(tp) = expr.get_unknown_entity_type() {
-                *expr = QueryExpr::GetAttrEntity {
-                    expr: Box::new(expr.clone()),
-                    expr_type: tp.clone(),
-                    attr: AttrOrId::Id("uid".into())  // we use a default id value of "uid"
-                };
+        self.mut_subexpressions(&mut |expr, parent| {
+            if parent != Some(QueryExprParentType::GetAttrEntity) {
+                if let Some(tp) = expr.get_unknown_entity_type() {
+                    *expr = QueryExpr::GetAttrEntity {
+                        expr: Box::new(expr.clone()),
+                        expr_type: tp.clone(),
+                        attr: AttrOrId::Id("uid".into())  // we use a default id value of "uid"
+                    };
+                }
             }
-        }, &mut |expr| {
-            !matches!(expr, QueryExpr::GetAttrEntity { .. })  // don't recurse into `getattr`'s
         });
     }
 

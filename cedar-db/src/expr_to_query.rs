@@ -246,8 +246,6 @@ pub fn translate_expr<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema
 
     let mut query_with_bindings: ExprWithBindings = query_expr.into();
     query_with_bindings.reduce_attrs(&mut IdGen::new());
-    // println!("query_with_bindings: {:?}", query_with_bindings);
-
 
     query_with_bindings.to_sql_query(ein, table_names)
 }

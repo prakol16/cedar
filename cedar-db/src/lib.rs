@@ -5,6 +5,7 @@ pub mod sqlite;
 pub mod postgres;
 
 pub mod query_expr;
+pub mod query_expr_iterator;
 pub mod expr_to_query;
 
 #[cfg(feature = "postgres")]
