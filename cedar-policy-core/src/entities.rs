@@ -20,6 +20,7 @@ use crate::ast::*;
 use crate::transitive_closure::{compute_tc, enforce_tc_and_dag};
 use std::borrow::Cow;
 use std::collections::{hash_map, HashMap};
+use std::convert::Infallible;
 use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
@@ -336,41 +337,11 @@ trait EntityDatabase {
     fn partial_mode(&self) -> Mode;
 }
 
-/// Bottom type (why does this not already exist? Can't use ! because it's "experimental" !?)
-#[derive(Debug)]
-pub enum NeverError {}
-
-impl NeverError {
-    fn exfalso<T>(&self) -> T {
-        match *self {}
-    }
-}
-
-impl std::fmt::Display for NeverError {
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.exfalso()
-    }
-}
-
-impl std::error::Error for NeverError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.exfalso()
-    }
-
-    fn description(&self) -> &str {
-        self.exfalso()
-    }
-
-    fn cause(&self) -> Option<&dyn std::error::Error> {
-        self.source()
-    }
-}
-
 /// Any `EntityDatabase` is an `EntityAttrDatabase` in the obvious way
 /// Note: this implementation is rather inefficient if the underlying store is
 /// creating objects (i.e. Cow::Owned) on each invocation of `get`.
 impl<T: EntityDatabase> EntityAttrDatabase for T {
-    type Error = NeverError;
+    type Error = Infallible;
 
     fn exists_entity(&self, uid: &EntityUID) -> std::result::Result<bool, Self::Error> {
         Ok(self.get(uid).is_some())

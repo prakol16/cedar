@@ -3,14 +3,21 @@ use std::collections::{HashMap, HashSet};
 use cedar_policy::{Value, ParsedEntity, EntityUid, PartialValue, EntityId, EntityTypeName};
 use postgres::{Client, types::{FromSql, Type, Kind}, Row};
 use ref_cast::RefCast;
+use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, RefCast)]
 #[repr(transparent)]
 struct SQLValue(Option<Value>);
 
-type StringError = String;
-
-
+#[derive(Debug, Error)]
+pub enum PostgresToCedarError {
+    #[error("Ancestor field of {0} is not a json array")]
+    AncestorNotJsonArray(EntityUid),
+    #[error("Database had error: {0}")]
+    PostgresError(#[from] postgres::Error),
+    #[error("Unable to deserialize entity uid")]
+    EntityUidDeserializationError(#[from] cedar_policy_core::entities::JsonDeserializationError),
+}
 
 impl<T: Into<Value>> From<T> for SQLValue {
     fn from(v: T) -> Self {
@@ -118,15 +125,15 @@ impl<'e> EntitySQLInfo<'e> {
         Self::new(table, "uid", sql_attr_names, attr_names, ancestor_attr.map(|_| len))
     }
 
-    pub fn make_entity_ancestors(&self, conn: &mut Client, uid: &EntityUid) -> Result<Option<ParsedEntity>, StringError> {
+    pub fn make_entity_ancestors(&self, conn: &mut Client, uid: &EntityUid) -> Result<Option<ParsedEntity>, PostgresToCedarError> {
         self.make_entity(conn, uid, |row| {
             match self.ancestor_attr_ind {
                 Some(ancestors_attr_ind) => {
                     row.get::<_, serde_json::Value>(ancestors_attr_ind)
-                    .as_array().ok_or(StringError::from("json ancestor value not array"))? // TODO: make an error type
+                    .as_array().ok_or_else(|| PostgresToCedarError::AncestorNotJsonArray(uid.clone()))? // TODO: make an error type
                     .iter()
                     .map(|x| {
-                        EntityUid::from_json(x.clone()).map_err(|e| e.to_string())
+                        Ok(EntityUid::from_json(x.clone())?)
                     })
                     .collect()
                 },
@@ -139,16 +146,16 @@ impl<'e> EntitySQLInfo<'e> {
         return &self.query_string;
     }
 
-    pub fn make_entity(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, StringError>)
-        -> Result<Option<ParsedEntity>, StringError> {
+    pub fn make_entity(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, PostgresToCedarError>)
+        -> Result<Option<ParsedEntity>, PostgresToCedarError> {
         make_entity_from_table(conn, uid, &self.query_string,
             |row| convert_attr_names(&row, &self.attr_names),
             ancestors)
     }
 
-    pub fn make_entity_extra_attrs(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, StringError>,
-        extra_attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, StringError>)
-        -> Result<Option<ParsedEntity>, StringError> {
+    pub fn make_entity_extra_attrs(&self, conn: &mut Client, uid: &EntityUid, ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, PostgresToCedarError>,
+        extra_attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, PostgresToCedarError>)
+        -> Result<Option<ParsedEntity>, PostgresToCedarError> {
         make_entity_from_table(conn, uid, &self.query_string,
             |row| {
                 let mut attrs = convert_attr_names(&row, &self.attr_names)?;
@@ -177,10 +184,9 @@ impl<'e> AncestorSQLInfo<'e> {
         }
     }
 
-    pub fn get_ancestors(&self, conn: &mut Client, id: &EntityId, tp: &EntityTypeName) -> Result<HashSet<EntityUid>, StringError> {
+    pub fn get_ancestors(&self, conn: &mut Client, id: &EntityId, tp: &EntityTypeName) -> Result<HashSet<EntityUid>, PostgresToCedarError> {
         // TODO: prepare query_string for better performance
-        Ok(conn.query(&self.query_all_string, &[&id.as_ref()])
-            .map_err(|e| e.to_string())?
+        Ok(conn.query(&self.query_all_string, &[&id.as_ref()])?
             .into_iter()
             .map(|row| {
                 let parent_id: EntitySQLId = row.get(0);
@@ -189,14 +195,12 @@ impl<'e> AncestorSQLInfo<'e> {
             .collect())
     }
 
-    pub fn is_ancestor(&self, conn: &mut Client, child_id: &EntityId, parent_id: &EntityId) -> Result<bool, StringError> {
-        conn.query_opt(&self.query_one_string, &[&child_id.as_ref(), &parent_id.as_ref()])
-            .map(|x| x.is_some())
-            .map_err(|e| e.to_string())
+    pub fn is_ancestor(&self, conn: &mut Client, child_id: &EntityId, parent_id: &EntityId) -> Result<bool, PostgresToCedarError> {
+        Ok(conn.query_opt(&self.query_one_string, &[&child_id.as_ref(), &parent_id.as_ref()])?.is_some())
     }
 }
 
-pub fn convert_attr_names(query_result: &Row, attr_names: &[(usize, &str)]) -> Result<HashMap<String, PartialValue>, StringError> {
+pub fn convert_attr_names(query_result: &Row, attr_names: &[(usize, &str)]) -> Result<HashMap<String, PartialValue>, PostgresToCedarError> {
     attr_names.iter()
         .filter_map(|(ind, nm)| {
             match query_result.get::<_, SQLValue>(*ind) {
@@ -209,10 +213,9 @@ pub fn convert_attr_names(query_result: &Row, attr_names: &[(usize, &str)]) -> R
 
 pub fn make_entity_from_table(conn: &mut Client, uid: &EntityUid,
     query_string: &str,
-    attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, StringError>,
-    ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, StringError>) -> Result<Option<ParsedEntity>, StringError> {
-    conn.query_opt(query_string, &[&uid.id().as_ref()])
-        .map_err(|e| e.to_string())?
+    attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, PostgresToCedarError>,
+    ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, PostgresToCedarError>) -> Result<Option<ParsedEntity>, PostgresToCedarError> {
+    conn.query_opt(query_string, &[&uid.id().as_ref()])?
         .map(|row| {
             Ok(ParsedEntity::new(uid.clone(), attrs(&row)?, ancestors(&row)?))
         })
