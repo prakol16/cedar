@@ -114,7 +114,7 @@ impl<T> Entities<T> {
     /// responsible for ensuring that TC and DAG hold before calling this method.
     pub fn add_entities(
         mut self,
-        collection: impl IntoIterator<Item = Entity>,
+        collection: impl IntoIterator<Item = Entity<T>>,
         mode: TCComputation,
     ) -> Result<Self> {
         for entity in collection.into_iter() {
@@ -132,7 +132,6 @@ impl<T> Entities<T> {
             }
             TCComputation::ComputeNow => compute_tc(&mut self.entities, true).map_err(Box::new)?,
         };
-        self.evaluated_entities = None;
         Ok(self)
     }
 
