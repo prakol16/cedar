@@ -158,7 +158,7 @@ mod test_sqlite {
 
     use cedar_policy_core::ast::Type;
     use rusqlite::Connection;
-    use sea_query::{Alias, SqliteQueryBuilder, SimpleExpr, Query};
+    use sea_query::{Alias, SqliteQueryBuilder};
 
     use crate::{sqlite::*, expr_to_query::{translate_response, InByTable}};
 
@@ -248,17 +248,18 @@ mod test_sqlite {
         "#.parse().expect("Schema should not fail to parse")
     }
 
-    #[test]
-    fn test_sea_query() {
-        let e = SimpleExpr::from(true).and(SimpleExpr::from(true).and(SimpleExpr::from(20).eq(20)).and(SimpleExpr::from(30).eq(30)));
-        println!("Expr: {}",  Query::select().and_where(e).to_string(SqliteQueryBuilder));
-    }
+    // See https://github.com/SeaQL/sea-query/issues/674
+    // #[test]
+    // fn test_sea_query() {
+    //     let e = SimpleExpr::from(true).and(SimpleExpr::from(true).and(SimpleExpr::from(20).eq(20)).and(SimpleExpr::from(30).eq(30)));
+    //     println!("Expr: {}",  Query::select().and_where(e).to_string(SqliteQueryBuilder));
+    // }
 
-    #[test]
-    fn test_sea_query2() {
-        let e = SimpleExpr::from(true).and(SimpleExpr::from(true).and(true.into()).and(true.into()));
-        println!("Expr: {}",  Query::select().and_where(e).to_string(SqliteQueryBuilder));
-    }
+    // #[test]
+    // fn test_sea_query2() {
+    //     let e = SimpleExpr::from(true).and(SimpleExpr::from(true).and(true.into()).and(true.into()));
+    //     println!("Expr: {}",  Query::select().and_where(e).to_string(SqliteQueryBuilder));
+    // }
 
     #[test]
     fn test_partial_eval_row_filter() {
