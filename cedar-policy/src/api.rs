@@ -2628,6 +2628,11 @@ impl RestrictedExpression {
     pub fn new_set(values: impl IntoIterator<Item = Self>) -> Self {
         Self(ast::RestrictedExpr::set(values.into_iter().map(|v| v.0)))
     }
+
+    /// Create an expression representing an unknown
+    pub fn new_unknown(name: impl Into<String>, t: Option<Type>) -> Self {
+        Self(ast::RestrictedExpr::new_unchecked(ast::Expr::unknown_with_type(name.into(), t)))
+    }
 }
 
 impl FromStr for RestrictedExpression {

@@ -153,10 +153,11 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, Schema, Decision, PartialResponse};
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, EvaluationError, Schema, Decision, PartialResponse, RestrictedExpression};
 
+    use cedar_policy_core::ast::Type;
     use rusqlite::Connection;
-    use sea_query::{Alias, SqliteQueryBuilder};
+    use sea_query::{Alias, SqliteQueryBuilder, SimpleExpr, Query, PostgresQueryBuilder};
 
     use crate::{sqlite::*, expr_to_query::{translate_response, InByTable}};
 
@@ -242,6 +243,59 @@ mod test_sqlite {
             }
         }
         "#.parse().expect("Schema should not fail to parse")
+    }
+
+    #[test]
+    fn test_sea_query() {
+        let e = SimpleExpr::from(true).and(SimpleExpr::from(true).and(SimpleExpr::from(20).eq(20)).and(SimpleExpr::from(30).eq(30)));
+        println!("Expr: {}",  Query::select().and_where(e).to_string(SqliteQueryBuilder));
+    }
+
+    #[test]
+    fn test_sea_query2() {
+        let e = SimpleExpr::from(true).and(SimpleExpr::from(true).and(true.into()).and(true.into()));
+        println!("Expr: {}",  Query::select().and_where(e).to_string(SqliteQueryBuilder));
+    }
+
+    #[test]
+    fn test_partial_eval_row_filter() {
+        let auth = Authorizer::new();
+
+        let q = Request::builder()
+            .principal(Some("Users::\"1\"".parse().unwrap()))
+            .action(Some("Actions::\"view\"".parse().unwrap()))
+            .resource(Some("Photos::\"2\"".parse().unwrap()))
+            .context(Context::from_pairs([
+                ("age".into(), RestrictedExpression::new_unknown("age", Some(Type::Long)))
+            ]))
+            .build();
+
+
+        let result = auth.is_authorized_parsed(&q,
+            // Only 20-30 year olds can see photo 2
+            &"permit(principal, action, resource) when { resource == Photos::\"2\" && 20 <= context.age && context.age <= 30 };".parse().unwrap(),
+            &get_sqlite_table());
+
+            match result {
+                PartialResponse::Concrete(_) => panic!("Response should be residual"),
+                PartialResponse::Residual(res) => {
+                    #[allow(unused_mut)]
+                    let mut query = translate_response::<Alias, Alias>(&res, &get_schema(),
+                        &InByTable::<Alias, Alias, _>(|_, _| {
+                            panic!("There should not be any in's in the residual")
+                        }), |_| {
+                            panic!("There should not be any tables in the residual")
+                        }).expect("Failed to translate response");
+                    println!("Query: {:?}", query);
+                    // This actually illustrates a bug in sea-query
+                    // let query =  query
+                    //     .column(Asterisk)
+                    //     .from(Alias::new("people"))
+                    //     .to_string(SqliteQueryBuilder);
+                    // println!("Query: {}", query);
+                }
+            }
+
     }
 
     #[test]

@@ -1105,7 +1105,21 @@ impl<'a> Typechecker<'a> {
                         .unknown(name.clone(), type_annotation.clone())
                 }).into_fail_if_none(),
                 // these types can be converted, I just haven't done it yet.
-                Some(ast::Type::Bool) | Some(ast::Type::Long) | Some(ast::Type::String) => todo!(),
+                Some(ast::Type::Long) => TypecheckAnswer::success(
+                    ExprBuilder::with_data(Some(Type::primitive_long()))
+                        .with_same_source_info(e)
+                        .unknown(name.clone(), type_annotation.clone()),
+                ),
+                Some(ast::Type::Bool) => TypecheckAnswer::success(
+                    ExprBuilder::with_data(Some(Type::primitive_boolean()))
+                        .with_same_source_info(e)
+                        .unknown(name.clone(), type_annotation.clone()),
+                ),
+                Some(ast::Type::String) => TypecheckAnswer::success(
+                    ExprBuilder::with_data(Some(Type::primitive_string()))
+                        .with_same_source_info(e)
+                        .unknown(name.clone(), type_annotation.clone()),
+                ),
                 _ => TypecheckAnswer::fail(
                     ExprBuilder::with_data(None).unknown(name.clone(), type_annotation.clone()),
                 ),
