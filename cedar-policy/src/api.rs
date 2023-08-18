@@ -2792,6 +2792,8 @@ impl<'a> From<&'a RandomRequestEnv> for RequestEnv<'a> {
             action: &value.id,
             resource: &value.id.entity_type(),
             context: &value.attrs,
+            principal_slot: None,
+            resource_slot: None,
         }
     }
 }
@@ -3208,24 +3210,24 @@ pub fn eval_expression(
     ))
 }
 
-// #[cfg(test)]
-// #[cfg(feature = "partial-eval")]
-// mod partial_eval_test {
-//     use std::collections::HashSet;
+#[cfg(test)]
+#[cfg(feature = "partial-eval")]
+mod partial_eval_test {
+    use std::collections::HashSet;
 
-//     use crate::{PolicyId, PolicySet, ResidualResponse};
+    use crate::{AuthorizationError, PolicyId, PolicySet, ResidualResponse};
 
-//     #[test]
-//     fn test_pe_response_constructor() {
-//         let p: PolicySet = "permit(principal, action, resource);".parse().unwrap();
-//         let reason: HashSet<PolicyId> = std::iter::once("id1".parse().unwrap()).collect();
-//         let errors: HashSet<String> = std::iter::once("error".to_string()).collect();
-//         let a = ResidualResponse::new(p.clone(), reason.clone(), errors.clone());
-//         assert_eq!(a.diagnostics().errors, errors);
-//         assert_eq!(a.diagnostics().reason, reason);
-//         assert_eq!(a.residuals(), &p);
-//     }
-// }
+    #[test]
+    fn test_pe_response_constructor() {
+        let p: PolicySet = "permit(principal, action, resource);".parse().unwrap();
+        let reason: HashSet<PolicyId> = std::iter::once("id1".parse().unwrap()).collect();
+        let errors: Vec<AuthorizationError> = std::iter::empty().collect();
+        let a = ResidualResponse::new(p.clone(), reason.clone(), errors.clone());
+        assert_eq!(a.diagnostics().errors, errors);
+        assert_eq!(a.diagnostics().reason, reason);
+        assert_eq!(a.residuals(), &p);
+    }
+}
 
 #[cfg(test)]
 mod entity_uid_tests {
