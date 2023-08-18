@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cedar_policy::{Value, ParsedEntity, EntityUid, PartialValue, EntityId, EntityTypeName};
+use cedar_policy_core::{entities::{JsonDeserializationError, JSONValue}, evaluator::RestrictedEvaluator, extensions::Extensions, ast::NotValue};
 use postgres::{Client, types::{FromSql, Type, Kind}, Row};
 use ref_cast::RefCast;
 use thiserror::Error;
@@ -15,13 +16,38 @@ pub enum PostgresToCedarError {
     AncestorNotJsonArray(EntityUid),
     #[error("Database had error: {0}")]
     PostgresError(#[from] postgres::Error),
-    #[error("Unable to deserialize entity uid")]
-    EntityUidDeserializationError(#[from] cedar_policy_core::entities::JsonDeserializationError),
+    #[error("Json deserialization error: {0}")]
+    JsonDeserializationError(#[from] JsonDeserializationError),
+    #[error("Error when evaluating expression attributes in JSON: {0}")]
+    ExpressionEvaluationError(#[from] cedar_policy_core::evaluator::EvaluationError),
+    #[error("Attribute evaluation resulted in residual")]
+    NotValue(#[from] NotValue)
+}
+
+impl From<serde_json::Error> for PostgresToCedarError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::JsonDeserializationError(value.into())
+    }
 }
 
 impl<T: Into<Value>> From<T> for SQLValue {
     fn from(v: T) -> Self {
         SQLValue(Some(v.into()))
+    }
+}
+
+impl SQLValue {
+    fn from_json(v: serde_json::Value) -> Result<Self, PostgresToCedarError> {
+        if v.is_null() {
+            Ok(SQLValue(None))
+        } else {
+            let jvalue: JSONValue = serde_json::from_value(v)?;
+            let rexpr = jvalue.into_expr()?;
+            let all_exts = Extensions::all_available();
+            let reval = RestrictedEvaluator::new(&all_exts);
+            let val = reval.partial_interpret(rexpr.as_borrowed())?;
+            Ok(SQLValue(Some(val.try_into()?)))
+        }
     }
 }
 
@@ -49,8 +75,10 @@ impl<'a> FromSql<'a> for SQLValue {
                 .filter_map(|v| v.0)
                 .collect::<Vec<Value>>()
                 .into())
-        } // TODO: support json/jsonb formats using serde_json
-        else {
+        } else if <serde_json::Value as FromSql>::accepts(ty) {
+            let json = <serde_json::Value as FromSql>::from_sql(ty, raw)?;
+            Ok(SQLValue::from_json(json)?)
+        } else {
             Err(format!("unsupported type: {:?}", ty).into())
         }
     }
@@ -69,7 +97,8 @@ impl<'a> FromSql<'a> for SQLValue {
         (match ty.kind() {
             Kind::Array(inner) => <SQLValue as FromSql>::accepts(inner),
             _ => false
-        })
+        }) ||
+        <serde_json::Value as FromSql>::accepts(ty)
     }
 }
 
