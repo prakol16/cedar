@@ -233,6 +233,26 @@ impl ExprWithBindings {
         }
         Ok(query)
     }
+
+    pub fn add_froms<T: IntoTableRef, U: IntoIden>(&self, query: &mut SelectStatement, table_names: impl Fn(&EntityTypeName) -> (T, U)) {
+        let unks = self.get_free_vars();
+        for (unk, tp) in unks {
+            if let Some(ty) = tp {
+                let (tbl_ref, _) = table_names(ty);
+                query.from_as(tbl_ref, Alias::new(unk.name.as_str()));  // todo: cross join any further tables
+            }
+        }
+    }
+
+    pub fn add_ids<T: IntoTableRef, U: IntoIden>(&self, query: &mut SelectStatement, table_names: impl Fn(&EntityTypeName) -> (T, U)) {
+        let unks = self.get_free_vars();
+        for (unk, tp) in unks {
+            if let Some(ty) = tp {
+                let (_, id_name) = table_names(ty);
+                query.column((Alias::new(unk.name.as_str()), id_name.into_iden()));
+            }
+        }
+    }
 }
 
 /// Does the translation from Cedar to SQL

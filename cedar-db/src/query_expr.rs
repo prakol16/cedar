@@ -7,7 +7,7 @@ use ref_cast::RefCast;
 use smol_str::SmolStr;
 use thiserror::Error;
 
-use crate::query_expr_iterator::QueryExprParentType;
+use crate::query_expr_iterator::{QueryExprParentType, QueryExprIterator};
 
 
 #[derive(Debug, Error)]
@@ -313,9 +313,22 @@ pub struct UnknownType {
 }
 
 impl QueryExpr {
-    /// TODO: make not mutable
-    pub fn get_unknowns(&mut self) -> HashMap<UnknownType, Option<EntityTypeName>> {
-        todo!()
+    pub fn subexpressions_with_parents(&self) -> impl Iterator<Item = (&QueryExpr, Option<QueryExprParentType>)> {
+        QueryExprIterator::new(self).into_iter()
+    }
+
+    pub fn subexpressions(&self) -> impl Iterator<Item = &QueryExpr> {
+        self.subexpressions_with_parents().map(|(e, _)| e)
+    }
+
+    /// Retrieve all the unknowns as well as their types.
+    pub fn get_unknowns(&self) -> HashMap<UnknownType, Option<EntityTypeName>> {
+        self.subexpressions()
+            .filter_map(|e| match e {
+                QueryExpr::Unknown { name, type_annotation } => Some((name.clone(), type_annotation.clone())),
+                _ => None
+            })
+            .collect()
     }
 }
 
@@ -375,14 +388,17 @@ impl BindingsBuilder {
 #[derive(Debug, Clone)]
 pub struct ExprWithBindings {
     pub(crate) bindings: Bindings,
-    pub(crate) expr: Box<QueryExpr>
+    pub(crate) expr: Box<QueryExpr>,
+    /// invariant: expr.get_unknowns() U U b in Bindings, b.expr.get_unknowns() - U b in Bindings, b.name = bindings.get_unknowns()
+    free_vars: HashMap<UnknownType, Option<EntityTypeName>>,
 }
 
 impl From<QueryExpr> for ExprWithBindings {
     fn from(expr: QueryExpr) -> Self {
         ExprWithBindings {
             bindings: Bindings::default(),
-            expr: Box::new(expr)
+            free_vars: expr.get_unknowns(),
+            expr: Box::new(expr),
         }
     }
 }
@@ -474,6 +490,11 @@ impl ExprWithBindings {
     /// Turn the expression with bindings into an attr-reduced form.
     pub fn reduce_attrs(&mut self, id_gen: &mut IdGen) {
         self.bindings = self.expr.reduce_attrs(id_gen);
+    }
+
+    /// Get all the free variables
+    pub fn get_free_vars(&self) -> &HashMap<UnknownType, Option<EntityTypeName>> {
+        &self.free_vars
     }
 }
 
