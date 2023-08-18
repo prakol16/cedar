@@ -2,15 +2,8 @@ use cedar_policy::{EntityTypeName, Schema, RandomRequestEnv, ResidualResponse, E
 use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp, Expr, ExprBuilder};
 use cedar_policy_validator::{typecheck::Typechecker, ValidationMode};
 use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, SelectStatement, IntoTableRef};
-use thiserror::Error;
 
 use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, ExprWithBindings, IdGen, AttrOrId};
-
-#[derive(Debug, Error)]
-pub enum ExprToSqlError {
-    #[error("some error occured: {0}")]
-    StringError(String),
-}
 
 type Result<T> = std::result::Result<T, QueryExprError>;
 
@@ -20,12 +13,35 @@ pub trait InConfig {
     fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr>;
 }
 
+impl<T: InConfig> InConfig for &T {
+    fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+        (*self).ein(tp1, tp2, e1, e2)
+    }
+
+    fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+        (*self).ein_set(tp1, tp2, e1, e2)
+    }
+}
+
 pub struct InByLambda<S, T>
     where S: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
           T: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
 {
     pub ein: S,
     pub ein_set: T,
+}
+
+impl<S, T> InConfig for InByLambda<S, T>
+    where S: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
+    T: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
+{
+    fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+        (self.ein)(tp1, tp2, e1, e2)
+    }
+
+    fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+        (self.ein_set)(tp1, tp2, e1, e2)
+    }
 }
 
 pub struct InByTable<A, B, T>(pub T)
@@ -74,8 +90,6 @@ impl<A, B, T> InConfig for InByTable<A, B, T>
             Box::new(sub_query.into_sub_query_statement())
         )))
     }
-
-
 }
 
 
@@ -221,15 +235,15 @@ impl QueryExpr {
 }
 
 impl ExprWithBindings {
-    pub fn to_sql_query<T: IntoTableRef, U: IntoIden>(&self, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<SelectStatement> {
+    pub fn to_sql_query<T: IntoTableRef, U: IntoIden>(&self, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<SelectStatement> {
         let mut query = Query::select();
-        query.and_where(self.expr.to_sql_query(ein)?);
+        query.and_where(self.expr.to_sql_query(&ein)?);
         for (bv, e) in self.bindings.iter() {
             let (tbl_ref, id_name) = table_names(&bv.ty);
             let id_name = id_name.into_iden();
             query.join_as(sea_query::JoinType::InnerJoin,
                 tbl_ref, Alias::new(bv.name.clone()),
-                e.to_sql_query(ein)?.eq((Alias::new(bv.name.clone()), id_name).into_column_ref()));
+                e.to_sql_query(&ein)?.eq((Alias::new(bv.name.clone()), id_name).into_column_ref()));
         }
         Ok(query)
     }
@@ -256,7 +270,7 @@ impl ExprWithBindings {
 }
 
 /// Does the translation from Cedar to SQL
-pub fn translate_expr<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<SelectStatement> {
+pub fn translate_expr<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<SelectStatement> {
     let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
     let req_env = RandomRequestEnv::new();
     let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
@@ -271,14 +285,15 @@ pub fn translate_expr<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema
 }
 
 
-pub fn translate_response<T: IntoTableRef, U: IntoIden>(resp: &ResidualResponse, schema: &Schema, ein: &impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<SelectStatement> {
+pub fn translate_response<T: IntoTableRef, U: IntoIden>(resp: &ResidualResponse, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<SelectStatement> {
     let (permits, forbids): (Vec<_>, Vec<_>) =
         resp.residuals().policies()
             .partition(|p| p.effect() == Effect::Permit);
     let expr: Expr = ExprBuilder::new().and(
         ExprBuilder::new().any(permits.into_iter().map(|p| p.non_head_constraints().clone())),
         ExprBuilder::new().not(ExprBuilder::new().any(forbids.into_iter().map(|p| p.non_head_constraints().clone()))));
-    translate_expr(&expr, schema, ein, table_names)
+    let query = translate_expr(&expr, schema, ein, table_names)?;
+    Ok(query)
 }
 
 #[cfg(test)]

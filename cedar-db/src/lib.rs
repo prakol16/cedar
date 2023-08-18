@@ -286,7 +286,7 @@ mod test_sqlite {
                 PartialResponse::Residual(res) => {
                     #[allow(unused_mut)]
                     let mut query = translate_response::<Alias, Alias>(&res, &get_schema(),
-                        &InByTable::<Alias, Alias, _>(|_, _| {
+                        InByTable::<Alias, Alias, _>(|_, _| {
                             panic!("There should not be any in's in the residual")
                         }), |_| {
                             panic!("There should not be any tables in the residual")
@@ -324,7 +324,7 @@ mod test_sqlite {
             PartialResponse::Concrete(_) => panic!("Response should be residual"),
             PartialResponse::Residual(res) => {
                 let mut query = translate_response(&res, &schema,
-                    &InByTable::<Alias, Alias, _>(|_, _| {
+                    InByTable::<Alias, Alias, _>(|_, _| {
                         panic!("There should not be any in's in the residual")
                     }), |tp| {
                         (if *tp == *USERS_TYPE {
