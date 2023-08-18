@@ -7,6 +7,7 @@ pub mod postgres;
 pub mod query_expr;
 pub mod query_expr_iterator;
 pub mod expr_to_query;
+pub mod query_builder;
 
 #[cfg(feature = "postgres")]
 #[cfg(test)]
@@ -159,9 +160,9 @@ mod test_sqlite {
 
     use cedar_policy_core::ast::Type;
     use rusqlite::Connection;
-    use sea_query::{Alias, SqliteQueryBuilder};
+    use sea_query::Alias;
 
-    use crate::{sqlite::*, expr_to_query::{translate_response, InByTable}};
+    use crate::{sqlite::*, expr_to_query::InByTable, query_builder::translate_response};
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/example_sqlite.db";
@@ -335,10 +336,8 @@ mod test_sqlite {
                             panic!("Unknown type")
                         }, Alias::new("uid"))
                     }).expect("Failed to translate response");
-                let query =  query
-                    .column((Alias::new("resource"), Alias::new("title")))
-                    .from_as(Alias::new("photos"), Alias::new("resource"))
-                    .to_string(SqliteQueryBuilder);
+                query.query_default_attr("title").expect("Query should have exactly one unknown");
+                let query =  query.to_string_sqlite();
                 assert_eq!(query, r#"SELECT "resource"."title" FROM "photos" AS "resource" INNER JOIN "users" AS "v__entity_attr_0" ON "resource"."user_id" = "v__entity_attr_0"."uid" WHERE TRUE AND (TRUE AND ("v__entity_attr_0"."name" = 'Alice')) AND TRUE"#);
 
                 let conn = Connection::open(&*DB_PATH).expect("Connection failed");
