@@ -9,7 +9,7 @@ pub mod postgres;
 mod test_postgres {
     use std::{borrow::Cow, collections::HashMap};
 
-    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EntityAttrDatabase, PartialValue, EntityAttrAccessError, CachedEntities};
+    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EntityAttrDatabase, PartialValue, EntityAttrAccessError, CachedEntities, Decision};
     use postgres::{Client, NoTls};
 
     use crate::postgres::*;
@@ -20,9 +20,11 @@ mod test_postgres {
         static ref USERS_TYPE: EntityTypeName = "Users".parse().unwrap();
         static ref PHOTOS_TYPE: EntityTypeName = "Photos".parse().unwrap();
         static ref TEAMS_TYPE: EntityTypeName = "Teams".parse().unwrap();
+        static ref ASSIGNMENTS_TYPE: EntityTypeName = "Assignments".parse().unwrap();
 
         static ref USERS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("users", vec!["name", "age"], Some("ancestors"));
         static ref PHOTOS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("photos", vec!["title", "location"], Some("ancestors"));
+        static ref ASSIGNMENTS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("assignments", vec!["tasks", "owner"], None);
 
         static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<'static> = AncestorSQLInfo::new("team_memberships", "user_id", "team_id");
     }
@@ -53,6 +55,10 @@ mod test_postgres {
                 t if *t == *PHOTOS_TYPE =>
                     Ok(conn.query_opt(PHOTOS_TABLE_INFO.get_query_string(), &[&uid.id().as_ref()])?
                         .map(|row| convert_attr_names(&row, &PHOTOS_TABLE_INFO.attr_names))
+                        .transpose()?),
+                t if *t == *ASSIGNMENTS_TYPE =>
+                    Ok(conn.query_opt(ASSIGNMENTS_TABLE_INFO.get_query_string(), &[&uid.id().as_ref()])?
+                        .map(|row| convert_attr_names(&row, &ASSIGNMENTS_TABLE_INFO.attr_names))
                         .transpose()?),
                 _ => Ok(None)
             }
@@ -101,13 +107,13 @@ mod test_postgres {
         let table = make_entity_attr_database();
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"1\"".parse().unwrap();
-        let result = auth.is_authorized_parsed(
+        let result = auth.is_authorized_full_parsed(
             &Request::new(Some(euid.clone()),
                 Some("Actions::\"view\"".parse().unwrap()),
                 Some("Photos::\"2\"".parse().unwrap()), Context::empty())
             , &"permit(principal, action, resource) when { principal.name == \"Bob\" && principal in Teams::\"0\" };".parse().unwrap(),
             &table);
-        println!("Result: {:?}", result);
+        assert!(result.decision() == Decision::Allow);
     }
 
     #[test]
@@ -137,12 +143,34 @@ mod test_postgres {
             Some("Actions::\"view\"".parse().unwrap()),
             Some("Photos::\"2\"".parse().unwrap()), Context::empty());
 
-        let result = auth.is_authorized_parsed(
+        let result = auth.is_authorized_full_parsed(
             &request,
               &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
             &CachedEntities::cache_request(&Table, &request));
 
-        println!("Result {:?}", result);  // should be allow
+        assert!(result.decision() == Decision::Allow);
+    }
+
+    #[test]
+    fn test_json_deserialize() {
+        let table = make_entity_attr_database();
+        let auth = Authorizer::new();
+        let euid: EntityUid = "Users::\"1\"".parse().unwrap();
+        let result1 = auth.is_authorized_full_parsed(
+            &Request::new(Some(euid.clone()),
+                Some("Actions::\"view\"".parse().unwrap()),
+                Some("Assignments::\"0\"".parse().unwrap()), Context::empty())
+            , &r#"permit(principal, action, resource) when { principal == resource.owner };"#.parse().unwrap(),
+            &table);
+        assert!(result1.decision() == Decision::Deny);
+
+        let result2 = auth.is_authorized_full_parsed(
+            &Request::new(Some(euid.clone()),
+                Some("Actions::\"view\"".parse().unwrap()),
+                Some("Assignments::\"0\"".parse().unwrap()), Context::empty())
+            , &r#"permit(principal, action, resource) when { principal == resource.owner || (resource.tasks has "task0" && !resource.tasks.task0.completed) };"#.parse().unwrap(),
+            &table);
+        assert!(result2.decision() == Decision::Allow);
     }
 }
 
