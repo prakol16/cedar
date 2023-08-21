@@ -1,6 +1,6 @@
 use cedar_policy::EntityTypeName;
-use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp};
-use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc};
+use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp, Pattern, PatternElem};
+use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, LikeExpr};
 
 
 use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, AttrOrId};
@@ -138,6 +138,28 @@ impl QueryExpr {
         }
     }
 
+    fn pattern_to_likeexpr(p: &Pattern) -> LikeExpr {
+        fn escape_char(s: &mut String, c: char) {
+            if c == '%' || c == '_' || c == '\\' {
+                s.push('\\');
+            }
+        }
+
+        let mut result: String = String::new();
+        for c in p.iter() {
+            match c {
+                PatternElem::Char(c) => {
+                    escape_char(&mut result, *c);
+                    result.push(*c);
+                },
+                PatternElem::Wildcard => {
+                    result.push('%');
+                },
+            }
+        }
+        LikeExpr::new(result).escape('\\')
+    }
+
     /// Semantics:
     /// Let phi: Value -> SQLValue be a function which interprets Cedar types as SQL types.
     /// We say (e: Value) corresponds to (e' SQLValue) (i.e. e ~ e') if e = phi(e')
@@ -227,7 +249,8 @@ impl QueryExpr {
                 Ok(expr.to_sql_query(ein)?.binary(BinOper::Custom("?"), attr.as_str()))
             },
             QueryExpr::IsNotNull(expr) => Ok(expr.to_sql_query(ein)?.binary(BinOper::IsNot, Keyword::Null)),
-            QueryExpr::Like { .. } => unimplemented!("TODO: implement LIKE"),
+            QueryExpr::Like { expr, pattern  } =>
+                Ok(expr.to_sql_query(ein)?.like(Self::pattern_to_likeexpr(pattern))),
             QueryExpr::Set(_) => unimplemented!("TODO: implement Set"),
             QueryExpr::Record { .. } => unimplemented!("TODO: implement Record"),
         }

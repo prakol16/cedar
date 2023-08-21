@@ -186,11 +186,11 @@ mod test_sqlite {
 
     use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, Schema, Decision, PartialResponse, RestrictedExpression};
 
-    use cedar_policy_core::ast::Type;
+    use cedar_policy_core::ast::{Type, Expr};
     use rusqlite::Connection;
     use sea_query::Alias;
 
-    use crate::{sqlite::*, expr_to_query::InByTable, query_builder::translate_response};
+    use crate::{sqlite::*, expr_to_query::{InByTable, InByLambda}, query_builder::{translate_response, translate_expr}};
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/example_sqlite.db";
@@ -205,8 +205,14 @@ mod test_sqlite {
         static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<'static> = AncestorSQLInfo::new("team_memberships", "user", "team");
     }
 
-    fn get_sqlite_table() -> impl EntityDatabase {
+    fn get_conn() -> Connection {
         let conn = Connection::open(&*DB_PATH).expect("Connection failed");
+        conn.pragma_update(None, "case_sensitive_like", true).expect("Failed to set case_sensitive_like");
+        conn
+    }
+
+    fn get_sqlite_table() -> impl EntityDatabase {
+        let conn = get_conn();
         struct Table { conn: Connection }
 
         impl EntityDatabase for Table {
@@ -290,6 +296,18 @@ mod test_sqlite {
     //     let e = SimpleExpr::from(true).and(SimpleExpr::from(true).and(true.into()).and(true.into()));
     //     println!("Expr: {}",  Query::select().and_where(e).to_string(SqliteQueryBuilder));
     // }
+
+    #[test]
+    fn test_like() {
+        let e: Expr = r#""test _%\\randomstuff*" like "test _%\\*\*""#.parse().unwrap();
+        println!("Expression {:?}", e);
+        let q = translate_expr(&e, &get_schema(),
+         InByLambda {
+            ein: |_, _, _, _| panic!("should not be building 'in' statement"),
+            ein_set: |_, _, _, _| panic!("should not be building 'in' statement")
+         }, |_| (Alias::new(""), Alias::new(""))).expect("Failed to translate expression");
+        println!("Query: {}", q.to_string_sqlite());
+    }
 
     #[test]
     fn test_partial_eval_row_filter() {
