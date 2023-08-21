@@ -188,7 +188,7 @@ mod test_sqlite {
 
     use cedar_policy_core::ast::{Type, Expr};
     use rusqlite::Connection;
-    use sea_query::Alias;
+    use sea_query::{Alias, SqliteQueryBuilder};
 
     use crate::{sqlite::*, expr_to_query::{InByTable, InByLambda}, query_builder::{translate_response, translate_expr}};
 
@@ -300,13 +300,14 @@ mod test_sqlite {
     #[test]
     fn test_like() {
         let e: Expr = r#""test _%\\randomstuff*" like "test _%\\*\*""#.parse().unwrap();
-        println!("Expression {:?}", e);
-        let q = translate_expr(&e, &get_schema(),
-         InByLambda {
+        let mut q = translate_expr(&e, &get_schema(),
+        InByLambda {
             ein: |_, _, _, _| panic!("should not be building 'in' statement"),
             ein_set: |_, _, _, _| panic!("should not be building 'in' statement")
-         }, |_| (Alias::new(""), Alias::new(""))).expect("Failed to translate expression");
-        println!("Query: {}", q.to_string_sqlite());
+        }, |_| (Alias::new(""), Alias::new(""))).expect("Failed to translate expression")
+        .into_select_statement();
+        q.expr(true);
+        assert_eq!(q.to_string(SqliteQueryBuilder), r#"SELECT TRUE WHERE 'test _%\randomstuff*' LIKE 'test \_\%\\%*' ESCAPE '\'"#);
     }
 
     #[test]

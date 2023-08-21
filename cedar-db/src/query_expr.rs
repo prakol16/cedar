@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cedar_policy::EntityTypeName;
 use cedar_policy_core::ast::{Expr, Literal, UnaryOp, BinaryOp, Pattern, ExprKind, SlotId, Var, Name, EntityType};
@@ -88,7 +88,7 @@ pub enum AttrOrId {
 pub enum QueryExpr {
     Lit(Literal),
     // Skipped: Var, Slot; these should be removed by partial evaluation/policy instantiation
-    Unknown { name: UnknownType, type_annotation: Option<EntityTypeName> },  // type annotation is mandatory
+    Unknown(UnknownType),  // type annotation is mandatory
     If { test_expr: Box<QueryExpr>, then_expr: Box<QueryExpr>, else_expr: Box<QueryExpr> },
     And { left: Box<QueryExpr>, right: Box<QueryExpr> },
     Or { left: Box<QueryExpr>, right: Box<QueryExpr> },
@@ -191,14 +191,12 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
             ExprKind::Lit(l) => Ok(QueryExpr::Lit(l.to_owned())),
             ExprKind::Var(v) => Err(QueryExprError::VariableAppears(v.to_owned())),
             ExprKind::Slot(s) => Err(QueryExprError::SlotAppears(s.to_owned())),
-            ExprKind::Unknown { name, type_annotation } => Ok(QueryExpr::Unknown {
-                name: UnknownType { pfx: None, name: name.to_owned() },
-                type_annotation: match type_annotation {
-                    Some(cedar_policy_core::ast::Type::Entity { ty: EntityType::Concrete(n) }) =>
-                        Some(EntityTypeName::ref_cast(n).to_owned()),
+            ExprKind::Unknown { name, type_annotation } =>
+                Ok(UnknownType::of_name_and_type(name.to_owned(),
+                match type_annotation {
+                    Some(cedar_policy_core::ast::Type::Entity { ty: EntityType::Concrete(n) }) => Some(EntityTypeName::ref_cast(n).to_owned()),
                     _ => None,
-                }
-            }),
+                }).into()),
             ExprKind::If { test_expr, then_expr, else_expr } => Ok(QueryExpr::If {
                 test_expr: Box::new(QueryExpr::try_from(test_expr.as_ref())?),
                 then_expr: Box::new(QueryExpr::try_from(then_expr.as_ref())?),
@@ -305,11 +303,45 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
 
 /// The default unknown type for a query expression.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct UnknownType {
-    /// Escape hatch for non-entity variables -- for entities, will be ignored
-    pub pfx: Option<SmolStr>,
-    /// The name (column) of the unknown
-    pub name: SmolStr
+pub enum UnknownType {
+    EntityType {
+        ty: EntityTypeName,
+        name: SmolStr
+    },
+    /// Escape hatch for non-entity variables
+    NonEntityType {
+        pfx: Option<SmolStr>,
+        name: SmolStr
+    }
+}
+
+impl UnknownType {
+    pub fn of_name_and_type(name: SmolStr, ty: Option<EntityTypeName>) -> Self {
+        match ty {
+            Some(ty) => UnknownType::EntityType { ty, name },
+            None => UnknownType::NonEntityType { pfx: None, name }
+        }
+    }
+
+    pub fn get_name(&self) -> &str {
+        match self {
+            UnknownType::EntityType { name, .. } => name,
+            UnknownType::NonEntityType { name, .. } => name,
+        }
+    }
+
+    pub fn get_pfx(&self) -> Option<&str> {
+        match self {
+            UnknownType::NonEntityType { pfx: Some(pfx), .. } => Some(pfx.as_str()),
+            _ => None
+        }
+    }
+}
+
+impl From<UnknownType> for QueryExpr {
+    fn from(u: UnknownType) -> Self {
+        QueryExpr::Unknown(u)
+    }
 }
 
 impl QueryExpr {
@@ -322,10 +354,10 @@ impl QueryExpr {
     }
 
     /// Retrieve all the unknowns as well as their types.
-    pub fn get_unknowns(&self) -> HashMap<UnknownType, Option<EntityTypeName>> {
+    pub fn get_unknowns(&self) -> HashSet<UnknownType> {
         self.subexpressions()
             .filter_map(|e| match e {
-                QueryExpr::Unknown { name, type_annotation } => Some((name.clone(), type_annotation.clone())),
+                QueryExpr::Unknown(u) => Some(u.clone()),
                 _ => None
             })
             .collect()
@@ -339,14 +371,20 @@ pub struct BindingValue {
     pub(crate) ty: EntityTypeName
 }
 
-impl From<BindingValue> for QueryExpr {
-    fn from(bv: BindingValue) -> Self {
-        QueryExpr::Unknown {
-            name: UnknownType { pfx: None, name: bv.name },
-            type_annotation: Some(bv.ty)
-        }
+impl BindingValue {
+    pub fn into_unknown(self) -> UnknownType {
+        UnknownType::EntityType { ty: self.ty, name: self.name }
     }
 }
+
+// impl From<BindingValue> for QueryExpr {
+//     fn from(bv: BindingValue) -> Self {
+//         QueryExpr::Unknown {
+//             name: UnknownType { pfx: None, name: bv.name },
+//             type_annotation: Some(bv.ty)
+//         }
+//     }
+// }
 
 /// Used to construct bindings -- we keep the expressions in a hash map but also remember the insertion order
 #[derive(Debug, Clone, Default)]
@@ -390,7 +428,7 @@ pub struct ExprWithBindings {
     pub(crate) bindings: Bindings,
     pub(crate) expr: Box<QueryExpr>,
     /// invariant: expr.get_unknowns() U U b in Bindings, b.expr.get_unknowns() - U b in Bindings, b.name = bindings.get_unknowns()
-    free_vars: HashMap<UnknownType, Option<EntityTypeName>>,
+    free_vars: HashSet<UnknownType>,
 }
 
 impl From<QueryExpr> for ExprWithBindings {
@@ -434,7 +472,7 @@ impl QueryExpr {
 
                 let expr_owned = std::mem::take(expr);
                 let bv = builder.insert(expr_owned, expr_type.clone(), id_gen);
-                *expr = Box::new(bv.into());
+                *expr = Box::new(bv.into_unknown().into());
             }
         });
 
@@ -467,21 +505,21 @@ impl QueryExpr {
     /// In reduced-attr form, this should succeed on all arguments of GetAttrEntity.
     pub fn get_unknown_entity_deref_name(&self) -> Option<SmolStr> {
         match self {
-            QueryExpr::Unknown { name: UnknownType { name, .. }, .. } => Some(name.clone()),
+            QueryExpr::Unknown(UnknownType::EntityType { name, .. }) => Some(name.clone()),
             _ => None
         }
     }
 
     pub fn get_unknown_entity_type(&self) -> Option<&EntityTypeName> {
         match self {
-            QueryExpr::Unknown { type_annotation, .. } => type_annotation.as_ref(),
+            QueryExpr::Unknown(UnknownType::EntityType { ty, .. }) => Some(ty),
             _ => None
         }
     }
 
     /// Equivalent to `self.get_unknown_entity_deref_name().is_some()`
     pub fn is_unknown_entity_deref(&self) -> bool {
-        matches!(self, QueryExpr::Unknown { .. })
+        matches!(self, QueryExpr::Unknown(UnknownType::EntityType { .. }))
     }
 }
 
@@ -493,7 +531,7 @@ impl ExprWithBindings {
     }
 
     /// Get all the free variables
-    pub fn get_free_vars(&self) -> &HashMap<UnknownType, Option<EntityTypeName>> {
+    pub fn get_free_vars(&self) -> &HashSet<UnknownType> {
         &self.free_vars
     }
 }

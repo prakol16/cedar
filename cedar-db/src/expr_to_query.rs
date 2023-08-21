@@ -109,9 +109,11 @@ fn cedar_binary_to_sql_binary(op: BinaryOp) -> Option<BinOper> {
 
 impl IntoColumnRef for UnknownType {
     fn into_column_ref(self) -> sea_query::ColumnRef {
-        match self.pfx {
-            Some(pfx) => (Alias::new(pfx), Alias::new(self.name)).into_column_ref(),
-            None => Alias::new(self.name).into_column_ref(),
+        let name = self.get_name();
+        if let Some(pfx) = self.get_pfx() {
+            (Alias::new(pfx), Alias::new(name)).into_column_ref()
+        } else {
+            Alias::new(name).into_column_ref()
         }
     }
 }
@@ -196,11 +198,14 @@ impl QueryExpr {
     pub fn to_sql_query(&self, ein: &impl InConfig) -> Result<SimpleExpr> {
         match self {
             QueryExpr::Lit(l) => Ok(Self::lit_to_sql(l)),
-            QueryExpr::Unknown { name, type_annotation } => {
-                if type_annotation.is_none() {
-                    Ok(name.clone().into_column_ref().into())
-                } else { Err(QueryExprError::NotAttrReduced(name.name.clone())) }
+            QueryExpr::Unknown(UnknownType::NonEntityType { pfx, name }) => {
+                if let Some(pfx) = pfx {
+                    Ok((Alias::new(pfx.as_str()), Alias::new(name.as_str())).into_column_ref().into())
+                } else {
+                    Ok(Alias::new(name.as_str()).into_column_ref().into())
+                }
             },
+            QueryExpr::Unknown(UnknownType::EntityType { name, .. }) => Err(QueryExprError::NotAttrReduced(name.clone())),
             QueryExpr::If { test_expr, then_expr, else_expr } => Ok(
                 sea_query::Expr::case(test_expr.to_sql_query(ein)?,
                     then_expr.to_sql_query(ein)?)

@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use sea_query::{IntoColumnRef, Alias, IntoIden, Query, SelectStatement, IntoTableRef, TableRef, SeaRc, Iden, SqliteQueryBuilder, PostgresQueryBuilder};
 
-use crate::{query_expr::{ExprWithBindings, QueryExprError, QueryExpr, IdGen}, expr_to_query::InConfig};
+use crate::{query_expr::{ExprWithBindings, QueryExprError, QueryExpr, IdGen, UnknownType}, expr_to_query::InConfig};
 
 
 /// A wrapper around seaquery's builder with some Cedar-specific additions
@@ -45,7 +45,7 @@ impl QueryBuilder {
 
     /// Add an unknown to the query as a table. Note that this does not add the id column to the query.
     pub fn query_table(&mut self, unknown: &str) -> Result<bool> {
-        let (added, table, _) = self.table_names.get_mut(unknown.into())
+        let (added, table, _) = self.table_names.get_mut(unknown)
             .ok_or_else(|| QueryBuilderError::UnknownVariable(unknown.into()))?;
         if !*added {
             self.query.from_as(table.clone(), Alias::new(unknown));
@@ -55,7 +55,7 @@ impl QueryBuilder {
     }
 
     fn query_for_id_or_alias(&mut self, unknown: &str, iden: Option<&str>) -> Result<()> {
-        let (added, table, id) = self.table_names.get_mut(unknown.into())
+        let (added, table, id) = self.table_names.get_mut(unknown)
             .ok_or_else(|| QueryBuilderError::UnknownVariable(unknown.into()))?;
         if !*added {
             self.query.from_as(table.clone(), Alias::new(unknown));
@@ -127,34 +127,14 @@ impl ExprWithBindings {
 
         let mut unk_table_names = HashMap::new();
         let unks = self.get_free_vars();
-        for (unk, tp) in unks {
-            if let Some(ty) = tp {
+        for unk in unks {
+            if let UnknownType::EntityType { ty, name } = unk {
                 let (tbl_ref, id_name) = table_names(ty);
-                unk_table_names.insert(unk.name.clone(), (false, tbl_ref.into_table_ref(), id_name.into_iden()));
+                unk_table_names.insert(name.clone(), (false, tbl_ref.into_table_ref(), id_name.into_iden()));
             }
         }
 
         Ok(QueryBuilder { query, table_names: unk_table_names })
-    }
-
-    pub fn add_froms<T: IntoTableRef, U: IntoIden>(&self, query: &mut SelectStatement, table_names: impl Fn(&EntityTypeName) -> (T, U)) {
-        let unks = self.get_free_vars();
-        for (unk, tp) in unks {
-            if let Some(ty) = tp {
-                let (tbl_ref, _) = table_names(ty);
-                query.from_as(tbl_ref, Alias::new(unk.name.as_str()));  // todo: cross join any further tables
-            }
-        }
-    }
-
-    pub fn add_ids<T: IntoTableRef, U: IntoIden>(&self, query: &mut SelectStatement, table_names: impl Fn(&EntityTypeName) -> (T, U)) {
-        let unks = self.get_free_vars();
-        for (unk, tp) in unks {
-            if let Some(ty) = tp {
-                let (_, id_name) = table_names(ty);
-                query.column((Alias::new(unk.name.as_str()), id_name.into_iden()));
-            }
-        }
     }
 }
 
