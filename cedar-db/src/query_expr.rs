@@ -354,13 +354,12 @@ impl QueryExpr {
     }
 
     /// Retrieve all the unknowns as well as their types.
-    pub fn get_unknowns(&self) -> HashSet<UnknownType> {
+    pub fn get_unknowns(&self) -> impl Iterator<Item = &UnknownType> {
         self.subexpressions()
             .filter_map(|e| match e {
-                QueryExpr::Unknown(u) => Some(u.clone()),
+                QueryExpr::Unknown(u) => Some(u),
                 _ => None
             })
-            .collect()
     }
 }
 
@@ -377,18 +376,11 @@ impl BindingValue {
     }
 }
 
-// impl From<BindingValue> for QueryExpr {
-//     fn from(bv: BindingValue) -> Self {
-//         QueryExpr::Unknown {
-//             name: UnknownType { pfx: None, name: bv.name },
-//             type_annotation: Some(bv.ty)
-//         }
-//     }
-// }
-
 /// Used to construct bindings -- we keep the expressions in a hash map but also remember the insertion order
 #[derive(Debug, Clone, Default)]
-pub struct BindingsBuilder(HashMap<Box<QueryExpr>, BindingValue>);
+pub struct BindingsBuilder {
+    bindings: HashMap<Box<QueryExpr>, BindingValue>
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Bindings(Vec<(BindingValue, Box<QueryExpr>)>);
@@ -405,14 +397,14 @@ impl Bindings {
 
 impl BindingsBuilder {
     pub fn build(self) -> Bindings {
-        let mut result: Vec<_> = self.0.into_iter().map(|(k, v)| (v, k)).collect();
+        let mut result: Vec<_> = self.bindings.into_iter().map(|(k, v)| (v, k)).collect();
         result.sort_by(|(a, _), (b, _)| a.insertion_order.cmp(&b.insertion_order));
         Bindings(result)
     }
 
     pub fn insert(&mut self, q: Box<QueryExpr>, ty: EntityTypeName, id_gen: &mut IdGen) -> BindingValue {
-        let size = self.0.len();
-        self.0.entry(q).or_insert_with(|| {
+        let size = self.bindings.len();
+        self.bindings.entry(q).or_insert_with(|| {
             BindingValue {
                 name: id_gen.next(),
                 ty,
@@ -435,7 +427,7 @@ impl From<QueryExpr> for ExprWithBindings {
     fn from(expr: QueryExpr) -> Self {
         ExprWithBindings {
             bindings: Bindings::default(),
-            free_vars: expr.get_unknowns(),
+            free_vars: expr.get_unknowns().cloned().collect(),
             expr: Box::new(expr),
         }
     }
@@ -446,15 +438,29 @@ pub struct IdGen {
     next_id: usize
 }
 
+const ID_GEN_PREFIX: &str = "temp__";
+
 impl IdGen {
     pub fn new() -> Self {
         IdGen { next_id: 0 }
     }
 
+    pub fn avoid_unknowns_in(&mut self, e: &QueryExpr) -> &mut Self {
+        for unk in e.get_unknowns() {
+            let name = unk.get_name();
+            if name.starts_with(ID_GEN_PREFIX) {
+                if let Ok(id) = name[ID_GEN_PREFIX.len()..].parse::<usize>() {
+                    self.next_id = self.next_id.max(id + 1);
+                }
+            }
+        }
+        self
+    }
+
     pub fn next(&mut self) -> SmolStr {
         let id = self.next_id;
         self.next_id += 1;
-        SmolStr::new(format!("v__entity_attr_{}", id))
+        SmolStr::new(format!("{}{}", ID_GEN_PREFIX, id))
     }
 }
 
@@ -540,8 +546,10 @@ impl QueryExpr {
 
 impl ExprWithBindings {
     /// Turn the expression with bindings into an attr-reduced form.
-    pub fn reduce_attrs(&mut self, id_gen: &mut IdGen) {
-        self.bindings = self.expr.reduce_attrs(id_gen);
+    pub fn reduce_attrs(&mut self) {
+        let mut id_gen = IdGen::new();
+        id_gen.avoid_unknowns_in(self.expr.as_ref());
+        self.bindings = self.expr.reduce_attrs(&mut id_gen);
     }
 
     /// Get all the free variables

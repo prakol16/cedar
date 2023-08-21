@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use sea_query::{IntoColumnRef, Alias, IntoIden, Query, SelectStatement, IntoTableRef, TableRef, SeaRc, Iden, SqliteQueryBuilder, PostgresQueryBuilder};
 
-use crate::{query_expr::{ExprWithBindings, QueryExprError, QueryExpr, IdGen, UnknownType}, expr_to_query::InConfig};
+use crate::{query_expr::{ExprWithBindings, QueryExprError, QueryExpr, UnknownType}, expr_to_query::InConfig};
 
 
 /// A wrapper around seaquery's builder with some Cedar-specific additions
@@ -150,7 +150,7 @@ pub fn translate_expr_with_renames<T: IntoTableRef, U: IntoIden>(expr: &Expr, sc
     query_expr.rename(unknown_map);
 
     let mut query_with_bindings: ExprWithBindings = query_expr.into();
-    query_with_bindings.reduce_attrs(&mut IdGen::new());
+    query_with_bindings.reduce_attrs();
 
     query_with_bindings.to_sql_query(ein, table_names)
 }
@@ -299,7 +299,7 @@ mod test {
             r#"5 <= unknown("resource: Photos").owner.level"#.parse().unwrap(),
             &get_schema(),
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "v__entity_attr_0" ON "resource"."owner" = "v__entity_attr_0"."uid" WHERE 5 <= "v__entity_attr_0"."level""#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE 5 <= "temp__0"."level""#);
     }
 
     #[test]
@@ -308,7 +308,7 @@ mod test {
             r#"unknown("resource: Photos").nextPhoto.nextPhoto.nextPhoto.owner.level == 3"#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Photos" AS "v__entity_attr_0" ON "resource"."nextPhoto" = "v__entity_attr_0"."uid" INNER JOIN "Photos" AS "v__entity_attr_1" ON "v__entity_attr_0"."nextPhoto" = "v__entity_attr_1"."uid" INNER JOIN "Photos" AS "v__entity_attr_2" ON "v__entity_attr_1"."nextPhoto" = "v__entity_attr_2"."uid" INNER JOIN "Users" AS "v__entity_attr_3" ON "v__entity_attr_2"."owner" = "v__entity_attr_3"."uid" WHERE "v__entity_attr_3"."level" = 3"#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Photos" AS "temp__0" ON "resource"."nextPhoto" = "temp__0"."uid" INNER JOIN "Photos" AS "temp__1" ON "temp__0"."nextPhoto" = "temp__1"."uid" INNER JOIN "Photos" AS "temp__2" ON "temp__1"."nextPhoto" = "temp__2"."uid" INNER JOIN "Users" AS "temp__3" ON "temp__2"."owner" = "temp__3"."uid" WHERE "temp__3"."level" = 3"#);
     }
 
     #[test]
@@ -317,7 +317,7 @@ mod test {
             r#"5 <= unknown("resource: Photos").owner.level && unknown("resource: Photos").owner.level <= 10"#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "v__entity_attr_0" ON "resource"."owner" = "v__entity_attr_0"."uid" WHERE (5 <= "v__entity_attr_0"."level") AND ("v__entity_attr_0"."level" <= 10)"#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE (5 <= "temp__0"."level") AND ("temp__0"."level" <= 10)"#);
     }
 
     #[test]
@@ -326,7 +326,7 @@ mod test {
             r#"(if unknown("resource: Photos") == Photos::"0" || unknown("resource: Photos") == Photos::"1" then unknown("resource: Photos") else unknown("resource: Photos").nextPhoto).owner == Users::"2""#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Photos" AS "v__entity_attr_0" ON (CASE WHEN (("resource"."uid" = '0') OR ("resource"."uid" = '1')) THEN "resource"."uid" ELSE "resource"."nextPhoto" END) = "v__entity_attr_0"."uid" WHERE "v__entity_attr_0"."owner" = '2'"#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Photos" AS "temp__0" ON (CASE WHEN (("resource"."uid" = '0') OR ("resource"."uid" = '1')) THEN "resource"."uid" ELSE "resource"."nextPhoto" END) = "temp__0"."uid" WHERE "temp__0"."owner" = '2'"#);
     }
 
     #[test]
@@ -362,7 +362,7 @@ mod test {
             r#"unknown("resource: Photos").owner.info.name == "Bob""#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "v__entity_attr_0" ON "resource"."owner" = "v__entity_attr_0"."uid" WHERE "v__entity_attr_0"."info" ->> 'name' = 'Bob'"#)
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE "temp__0"."info" ->> 'name' = 'Bob'"#)
     }
 
     #[test]
@@ -386,5 +386,14 @@ mod test {
 
         query.query_default().expect("Querying the only unknown should succeed");
         assert_eq!(query.to_string_postgres(), r#"SELECT "pictures"."uid" FROM "Photos" AS "pictures" WHERE "pictures"."owner" = 'bob'"#);
+    }
+
+    #[test]
+    fn test_name_collision() {
+        let result = translate_expr_test(
+            r#"5 <= unknown("temp__0: Photos").owner.level"#.parse().unwrap(),
+            &get_schema(),
+        );
+        assert_eq!(result, r#"SELECT "temp__0"."uid" FROM "Photos" AS "temp__0" INNER JOIN "Users" AS "temp__1" ON "temp__0"."owner" = "temp__1"."uid" WHERE 5 <= "temp__1"."level""#);
     }
 }
