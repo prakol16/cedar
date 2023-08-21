@@ -138,19 +138,27 @@ impl ExprWithBindings {
     }
 }
 
+
 /// Does the translation from Cedar to SQL
-pub fn translate_expr<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<QueryBuilder> {
+pub fn translate_expr_with_renames<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U), unknown_map: &HashMap<UnknownType, UnknownType>) -> Result<QueryBuilder> {
     let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
     let req_env = RandomRequestEnv::new();
     let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
         .ok_or(QueryExprError::TypecheckError)?;
 
-    let query_expr: QueryExpr = (&typed_expr).try_into()?;
+    let mut query_expr: QueryExpr = (&typed_expr).try_into()?;
+    query_expr.rename(unknown_map);
 
     let mut query_with_bindings: ExprWithBindings = query_expr.into();
     query_with_bindings.reduce_attrs(&mut IdGen::new());
 
     query_with_bindings.to_sql_query(ein, table_names)
+}
+
+
+/// Does the translation from Cedar to SQL
+pub fn translate_expr<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<QueryBuilder> {
+    translate_expr_with_renames(expr, schema, ein, table_names, &HashMap::new())
 }
 
 
@@ -167,13 +175,15 @@ pub fn translate_response<T: IntoTableRef, U: IntoIden>(resp: &ResidualResponse,
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
+
     use cedar_policy::Schema;
     use cedar_policy_core::{evaluator::RestrictedEvaluator, extensions::Extensions, ast};
     use sea_query::Alias;
 
-    use crate::expr_to_query::InByTable;
+    use crate::{expr_to_query::InByTable, query_expr::UnknownType};
 
-    use super::translate_expr;
+    use super::{translate_expr, translate_expr_with_renames};
 
     /// Translation function for the purposes of testing; fills in lots of boilerplate
     pub fn translate_expr_test(expr: ast::Expr, schema: &Schema) -> String {
@@ -181,7 +191,7 @@ mod test {
         let eval = RestrictedEvaluator::new(&ext);
         let expr = eval.partial_interpret_unrestricted(&expr, &["unknown".parse().unwrap()].into()).unwrap();
 
-        let mut query = translate_expr(&expr, schema, &InByTable(|t1, t2| {
+        let mut query = translate_expr(&expr, schema, InByTable(|t1, t2| {
             let t1_str = t1.to_string();
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
@@ -353,5 +363,28 @@ mod test {
             &get_schema()
         );
         assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "v__entity_attr_0" ON "resource"."owner" = "v__entity_attr_0"."uid" WHERE "v__entity_attr_0"."info" ->> 'name' = 'Bob'"#)
+    }
+
+    #[test]
+    fn test_rename() {
+        let expr: ast::Expr = r#"unknown("resource: Photos").owner == Users::"bob""#.parse().unwrap();
+
+        let ext = Extensions::all_available();
+        let eval = RestrictedEvaluator::new(&ext);
+        let expr = eval.partial_interpret_unrestricted(&expr, &["unknown".parse().unwrap()].into()).unwrap();
+
+        let mut query = translate_expr_with_renames(&expr, &get_schema(), InByTable(|t1, t2| {
+            let t1_str = t1.to_string();
+            let t2_str = t2.to_string();
+            let in_table = format!("{}_in_{}", t1_str, t2_str);
+            Ok((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str)))
+        }), |tp| (Alias::new(tp.basename()), Alias::new("uid")),
+    &HashMap::from([
+            (UnknownType::EntityType { ty: "Photos".parse().unwrap(), name: "resource".into() },
+            UnknownType::EntityType { ty: "Photos".parse().unwrap(), name: "pictures".into() }),
+        ])).unwrap();
+
+        query.query_default().expect("Querying the only unknown should succeed");
+        assert_eq!(query.to_string_postgres(), r#"SELECT "pictures"."uid" FROM "Photos" AS "pictures" WHERE "pictures"."owner" = 'bob'"#);
     }
 }

@@ -501,6 +501,20 @@ impl QueryExpr {
         });
     }
 
+    /// Rename all the unknowns in this expression using the given map.
+    /// Any unknowns which are not keys in the map are left alone
+    pub fn rename(&mut self, map: &HashMap<UnknownType, UnknownType>) {
+        if map.is_empty() { return; }
+
+        self.mut_subexpressions(&mut |expr, _| {
+            if let QueryExpr::Unknown(u) = expr {
+                if let Some(new_u) = map.get(u) {
+                    *u = new_u.clone();
+                }
+            }
+        });
+    }
+
     /// If this expression is of the form `Unknown(EntityDeref(s))`, return `Some(s)`.
     /// In reduced-attr form, this should succeed on all arguments of GetAttrEntity.
     pub fn get_unknown_entity_deref_name(&self) -> Option<SmolStr> {
