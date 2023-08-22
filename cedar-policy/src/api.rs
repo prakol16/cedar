@@ -2643,7 +2643,7 @@ impl RestrictedExpression {
     }
 
     /// Create an expression representing an unknown
-    pub fn new_unknown(name: impl Into<String>, t: Option<Type>) -> Self {
+    pub fn new_unknown(name: impl Into<String>, t: Option<entities::SchemaType>) -> Self {
         Self(ast::RestrictedExpr::new_unchecked(ast::Expr::unknown_with_type(name.into(), t)))
     }
 }

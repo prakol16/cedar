@@ -186,7 +186,7 @@ mod test_sqlite {
 
     use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, Schema, Decision, PartialResponse, RestrictedExpression};
 
-    use cedar_policy_core::ast::{Type, Expr};
+    use cedar_policy_core::{ast::Expr, entities::SchemaType};
     use rusqlite::Connection;
     use sea_query::{Alias, SqliteQueryBuilder};
 
@@ -319,7 +319,7 @@ mod test_sqlite {
             .action(Some("Actions::\"view\"".parse().unwrap()))
             .resource(Some("Photos::\"2\"".parse().unwrap()))
             .context(Context::from_pairs([
-                ("age".into(), RestrictedExpression::new_unknown("age", Some(Type::Long)))
+                ("age".into(), RestrictedExpression::new_unknown("age", Some(SchemaType::Long)))
             ]))
             .build();
 

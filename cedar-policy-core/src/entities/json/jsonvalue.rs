@@ -26,7 +26,7 @@ use crate::extensions::{ExtensionFunctionLookupError, Extensions};
 use crate::FromNormalizedStr;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 
 /// The canonical JSON representation of a Cedar value.
 /// Many Cedar values have a natural one-to-one mapping to and from JSON values.
@@ -525,7 +525,7 @@ impl<'e> ValueParser<'e> {
                         // but marking it optional is more flexible -- allows the
                         // attribute type to `is_consistent_with()` more types
                         Ok((k.clone(), AttributeType::optional(attr_type)))
-                    }).collect::<Result<HashMap<_,_>, JsonDeserializationError>>()?
+                    }).collect::<Result<BTreeMap<_,_>, JsonDeserializationError>>()?
                 }})
             }
             ExprKind::ExtensionFunctionApp { fn_name, .. } => {

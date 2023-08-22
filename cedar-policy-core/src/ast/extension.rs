@@ -76,7 +76,7 @@ pub enum ExtensionOutputValue {
     /// A concrete value from an extension call
     Concrete(Value),
     /// An unknown returned from an extension call
-    Unknown(SmolStr, Option<Type>),
+    Unknown(SmolStr, Option<SchemaType>),
 }
 
 impl<T> From<T> for ExtensionOutputValue

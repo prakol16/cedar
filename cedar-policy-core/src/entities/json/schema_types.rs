@@ -15,11 +15,14 @@
  */
 
 use crate::ast::{EntityType, Name, Type};
+use serde::{Serialize, Deserialize};
 use smol_str::SmolStr;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Possible types that schema-based parsing can expect for Cedar values.
-#[derive(Debug, PartialEq, Eq, Clone)]
+/// This is also the type used to annotate unknowns
+/// TODO: move this to `ast`
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum SchemaType {
     /// Boolean
     Bool,
@@ -37,7 +40,7 @@ pub enum SchemaType {
     /// Record, with the specified attributes having the specified types
     Record {
         /// Attributes and their types
-        attrs: HashMap<SmolStr, AttributeType>,
+        attrs: BTreeMap<SmolStr, AttributeType>,
     },
     /// Entity
     Entity {
@@ -55,7 +58,7 @@ pub enum SchemaType {
 }
 
 /// Attribute type structure used in [`SchemaType`]
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct AttributeType {
     /// Type of the attribute
     attr_type: SchemaType,
@@ -159,6 +162,11 @@ impl AttributeType {
     /// Get the `SchemaType` of the attribute
     pub fn schema_type(&self) -> &SchemaType {
         &self.attr_type
+    }
+
+    /// Get the `SchemaType` of the attribute, and whether it is required
+    pub fn into_data(self) -> (SchemaType, bool) {
+        (self.attr_type, self.required)
     }
 }
 

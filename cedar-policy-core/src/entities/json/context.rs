@@ -17,7 +17,7 @@
 use super::{JsonDeserializationError, JsonDeserializationErrorContext, SchemaType, ValueParser};
 use crate::ast::{Context, ExprKind};
 use crate::extensions::Extensions;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Trait for schemas that can inform the parsing of Context data
 pub trait ContextSchema {
@@ -31,7 +31,7 @@ pub struct NullContextSchema;
 impl ContextSchema for NullContextSchema {
     fn context_type(&self) -> SchemaType {
         SchemaType::Record {
-            attrs: HashMap::new(),
+            attrs: BTreeMap::new(),
         }
     }
 }

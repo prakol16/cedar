@@ -17,7 +17,7 @@
 use crate::{
     ast::*,
     extensions::Extensions,
-    parser::{err::ParseErrors, SourceInfo},
+    parser::{err::ParseErrors, SourceInfo}, entities::SchemaType,
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ pub enum ExprKind<T = ()> {
         name: SmolStr,
         /// The type of the values that can be substituted in for the unknown
         /// If `None`, we have no type annotation, and thus a value of any type can be substituted.
-        type_annotation: Option<Type>,
+        type_annotation: Option<SchemaType>,
     },
     /// Ternary expression
     If {
@@ -306,7 +306,7 @@ impl Expr {
     }
 
     /// Create an unknown value, with an optional type annotation
-    pub fn unknown_with_type(name: impl Into<SmolStr>, t: Option<Type>) -> Self {
+    pub fn unknown_with_type(name: impl Into<SmolStr>, t: Option<SchemaType>) -> Self {
         ExprBuilder::new().unknown(name.into(), t)
     }
 
@@ -497,12 +497,13 @@ impl Expr {
                 (None, _) => Ok(self.clone()),
                 (Some(value), None) => Ok(value.clone().into()),
                 (Some(value), Some(t)) => {
-                    if &value.type_of() == t {
+                    // TODO: fix; not precise
+                    if t.matches(&value.type_of()) {
                         Ok(value.clone().into())
                     } else {
                         Err(SubstitutionError::TypeError {
                             expected: t.clone(),
-                            actual: value.type_of(),
+                            actual: value.clone(),
                         })
                     }
                 }
@@ -781,9 +782,9 @@ pub enum SubstitutionError {
     #[error("Expected a value of type {expected}, got a value of type {actual}")]
     TypeError {
         /// The expected type, ie: the type the unknown was annotated with
-        expected: Type,
-        /// The type of the provided value
-        actual: Type,
+        expected: SchemaType,
+        /// The provided value
+        actual: Value,
     },
 }
 
@@ -876,7 +877,7 @@ impl<T> ExprBuilder<T> {
     }
 
     /// Create an `Unknown` `Expr`
-    pub fn unknown(self, name: impl Into<SmolStr>, type_annotation: Option<Type>) -> Expr<T> {
+    pub fn unknown(self, name: impl Into<SmolStr>, type_annotation: Option<SchemaType>) -> Expr<T> {
         self.with_expr_kind(ExprKind::Unknown {
             name: name.into(),
             type_annotation,

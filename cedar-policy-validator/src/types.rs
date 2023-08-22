@@ -622,6 +622,47 @@ impl Display for Type {
     }
 }
 
+impl From<cedar_policy_core::entities::AttributeType> for AttributeType {
+    fn from(value: cedar_policy_core::entities::AttributeType) -> Self {
+        let (attr_type, is_required) = value.into_data();
+        Self { attr_type: attr_type.into(),  is_required: is_required }
+    }
+}
+
+impl From<cedar_policy_core::entities::SchemaType> for Type {
+    fn from(value: cedar_policy_core::entities::SchemaType) -> Self {
+        use cedar_policy_core::entities::SchemaType as CoreSchemaType;
+
+        match value {
+            CoreSchemaType::Bool => Type::Primitive { primitive_type: Primitive::Bool },
+            CoreSchemaType::Long => Type::Primitive { primitive_type: Primitive::Long },
+            CoreSchemaType::String => Type::Primitive { primitive_type: Primitive::String },
+            CoreSchemaType::Set { element_ty } => Type::Set {
+                element_type: Some(Box::new((*element_ty).into())),
+            },
+            CoreSchemaType::EmptySet => Type::Set {
+                element_type: Some(Box::new(Type::Never)),
+            },
+            CoreSchemaType::Record { attrs } => Type::EntityOrRecord(EntityRecordKind::Record {
+                attrs: Attributes {
+                    attrs: attrs
+                        .into_iter()
+                        .map(|(k, v)| { (k, v.into()) })
+                        .collect()
+                },
+                open_attributes: OpenTag::OpenAttributes,
+            }),
+            CoreSchemaType::Entity { ty } => match ty {
+                EntityType::Concrete(name) => Type::EntityOrRecord(EntityRecordKind::Entity(
+                    EntityLUB::single_entity(name),
+                )),
+                EntityType::Unspecified => Type::EntityOrRecord(EntityRecordKind::AnyEntity),
+            },
+            CoreSchemaType::Extension { name } => Type::ExtensionType { name }
+        }
+    }
+}
+
 impl TryFrom<Type> for cedar_policy_core::entities::SchemaType {
     type Error = String;
     fn try_from(ty: Type) -> Result<cedar_policy_core::entities::SchemaType, String> {

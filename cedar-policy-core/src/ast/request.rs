@@ -15,13 +15,13 @@
  */
 
 use crate::ast::{BorrowedRestrictedExpr, EntityUID, ExprKind, RestrictedExpr};
-use crate::entities::{ContextJsonParser, JsonDeserializationError, NullContextSchema};
+use crate::entities::{ContextJsonParser, JsonDeserializationError, NullContextSchema, SchemaType};
 use crate::extensions::Extensions;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::sync::Arc;
 
-use super::{Expr, Literal, PartialValue, Value, Var, Type, Name, EntityType};
+use super::{Expr, Literal, PartialValue, Value, Var, Name, EntityType};
 
 /// Represents the request tuple <P, A, R, C> (see the Cedar design doc).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,7 +63,7 @@ impl EntityUIDEntry {
         match self {
             EntityUIDEntry::Concrete(euid) => Value::Lit(Literal::EntityUID(euid.clone())).into(),
             EntityUIDEntry::Unknown(name) => {
-                Expr::unknown_with_type(var.to_string(), name.clone().map(|n| Type::entity_type(n))).into()
+                Expr::unknown_with_type(var.to_string(), name.clone().map(|n| SchemaType::Entity { ty: EntityType::Concrete(n) })).into()
             }
         }
     }

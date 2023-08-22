@@ -16,7 +16,7 @@
 
 //! This module contains the extension for including unknown values
 use crate::{
-    ast::{CallStyle, Extension, ExtensionFunction, ExtensionOutputValue, Value, Type, EntityType},
+    ast::{CallStyle, Extension, ExtensionFunction, ExtensionOutputValue, Value, EntityType},
     entities::SchemaType,
     evaluator::{self, EvaluationError},
 };
@@ -25,7 +25,7 @@ fn create_new_unknown(v: Value) -> evaluator::Result<ExtensionOutputValue> {
     let s = v.get_as_string()?.to_string();
     // Dirty hack to identify types
     match s.split_once(": ") {
-        Some((s1, s2)) => Ok(ExtensionOutputValue::Unknown(s1.into(), Some(Type::Entity { ty: EntityType::Concrete(s2.parse().unwrap()) }))),
+        Some((s1, s2)) => Ok(ExtensionOutputValue::Unknown(s1.into(), Some(SchemaType::Entity { ty: EntityType::Concrete(s2.parse().unwrap()) }))),
         None => Ok(ExtensionOutputValue::Unknown(s.into(), None))
     }
 }

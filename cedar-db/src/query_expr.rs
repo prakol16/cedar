@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cedar_policy::EntityTypeName;
-use cedar_policy_core::ast::{Expr, Literal, UnaryOp, BinaryOp, Pattern, ExprKind, SlotId, Var, Name, EntityType};
+use cedar_policy_core::{ast::{Expr, Literal, UnaryOp, BinaryOp, Pattern, ExprKind, SlotId, Var, Name, EntityType}, entities::SchemaType};
 use cedar_policy_validator::types::{Type, Primitive, EntityRecordKind, EntityLUB};
 use ref_cast::RefCast;
 use smol_str::SmolStr;
@@ -194,7 +194,7 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
             ExprKind::Unknown { name, type_annotation } =>
                 Ok(UnknownType::of_name_and_type(name.to_owned(),
                 match type_annotation {
-                    Some(cedar_policy_core::ast::Type::Entity { ty: EntityType::Concrete(n) }) => Some(EntityTypeName::ref_cast(n).to_owned()),
+                    Some(SchemaType::Entity { ty: EntityType::Concrete(n) }) => Some(EntityTypeName::ref_cast(n).to_owned()),
                     _ => None,
                 }).into()),
             ExprKind::If { test_expr, then_expr, else_expr } => Ok(QueryExpr::If {
