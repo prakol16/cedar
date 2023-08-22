@@ -179,7 +179,7 @@ mod test {
 
     use cedar_policy::Schema;
     use cedar_policy_core::{evaluator::RestrictedEvaluator, extensions::Extensions, ast};
-    use sea_query::Alias;
+    use sea_query::{Alias, PostgresQueryBuilder};
 
     use crate::{expr_to_query::InByTable, query_expr::UnknownType};
 
@@ -395,5 +395,28 @@ mod test {
             &get_schema(),
         );
         assert_eq!(result, r#"SELECT "temp__0"."uid" FROM "Photos" AS "temp__0" INNER JOIN "Users" AS "temp__1" ON "temp__0"."owner" = "temp__1"."uid" WHERE 5 <= "temp__1"."level""#);
+    }
+
+    #[test]
+    fn test_build() {
+        let expr = r#"10 * unknown("user: Users").level + unknown("user: Users").info.age >= 50"#.parse().unwrap();
+        let schema = &get_schema();
+
+        let ext = Extensions::all_available();
+        let eval = RestrictedEvaluator::new(&ext);
+        let expr = eval.partial_interpret_unrestricted(&expr, &["unknown".parse().unwrap()].into()).unwrap();
+
+        let mut query = translate_expr(&expr, schema, InByTable(|t1, t2| {
+            let t1_str = t1.to_string();
+            let t2_str = t2.to_string();
+            let in_table = format!("{}_in_{}", t1_str, t2_str);
+            Ok((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str)))
+        }), |tp| (Alias::new(tp.basename()), Alias::new("uid"))).unwrap();
+
+        query.query_default().expect("Querying the only unknown should succeed");
+
+        let (result, values) = query.into_select_statement().build(PostgresQueryBuilder);
+        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE $1 <= (("user"."level" * $2) + CAST(("user"."info" -> $3) AS integer))"#);
+        assert_eq!(values.0, vec![50i64.into(), 10i64.into(), "age".into()]);
     }
 }
