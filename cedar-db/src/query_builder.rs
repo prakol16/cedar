@@ -290,7 +290,7 @@ mod test {
             r#"(if unknown("resource: Photos").owner == Users::"0" then Photos::"beach" else Photos::"carnival") == unknown("resource: Photos").nextPhoto"#.parse().unwrap(),
             &get_schema(),
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" WHERE (CASE WHEN ("resource"."owner" = '0') THEN 'beach' ELSE 'carnival' END) = "resource"."nextPhoto""#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" WHERE ((CASE WHEN ("resource"."owner" = '0') THEN 'beach' ELSE 'carnival' END)) = "resource"."nextPhoto""#);
     }
 
     #[test]
@@ -317,7 +317,7 @@ mod test {
             r#"5 <= unknown("resource: Photos").owner.level && unknown("resource: Photos").owner.level <= 10"#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE (5 <= "temp__0"."level") AND ("temp__0"."level" <= 10)"#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE 5 <= "temp__0"."level" AND "temp__0"."level" <= 10"#);
     }
 
     #[test]
@@ -326,7 +326,7 @@ mod test {
             r#"(if unknown("resource: Photos") == Photos::"0" || unknown("resource: Photos") == Photos::"1" then unknown("resource: Photos") else unknown("resource: Photos").nextPhoto).owner == Users::"2""#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Photos" AS "temp__0" ON (CASE WHEN (("resource"."uid" = '0') OR ("resource"."uid" = '1')) THEN "resource"."uid" ELSE "resource"."nextPhoto" END) = "temp__0"."uid" WHERE "temp__0"."owner" = '2'"#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Photos" AS "temp__0" ON ((CASE WHEN ("resource"."uid" = '0' OR "resource"."uid" = '1') THEN "resource"."uid" ELSE "resource"."nextPhoto" END)) = "temp__0"."uid" WHERE "temp__0"."owner" = '2'"#);
     }
 
     #[test]
@@ -353,7 +353,7 @@ mod test {
             r#"Photos::"0" in unknown("principal: Users").allowedPhotos"#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "principal"."uid" FROM "Users" AS "principal" WHERE ('0' = ANY("principal"."allowedPhotos")) OR ('0' IN (SELECT "Photos_in_Photos"."Photos" FROM "Photos_in_Photos" WHERE "Photos_in_Photos"."Photos" = ANY("principal"."allowedPhotos")))"#)
+        assert_eq!(result, r#"SELECT "principal"."uid" FROM "Users" AS "principal" WHERE '0' = ANY("principal"."allowedPhotos") OR '0' IN (SELECT "Photos_in_Photos"."Photos" FROM "Photos_in_Photos" WHERE "Photos_in_Photos"."Photos" = ANY("principal"."allowedPhotos"))"#)
     }
 
     #[test]
@@ -362,7 +362,7 @@ mod test {
             r#"unknown("resource: Photos").owner.info.name == "Bob""#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE "temp__0"."info" ->> 'name' = 'Bob'"#)
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE ("temp__0"."info" ->> 'name') = 'Bob'"#)
     }
 
     #[test]
@@ -416,7 +416,7 @@ mod test {
         query.query_default().expect("Querying the only unknown should succeed");
 
         let (result, values) = query.into_select_statement().build(PostgresQueryBuilder);
-        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE $1 <= (("user"."level" * $2) + CAST(("user"."info" -> $3) AS integer))"#);
+        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE $1 <= ("user"."level" * $2) + CAST(("user"."info" -> $3) AS integer)"#);
         assert_eq!(values.0, vec![50i64.into(), 10i64.into(), "age".into()]);
     }
 }

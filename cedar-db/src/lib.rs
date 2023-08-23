@@ -339,13 +339,11 @@ mod test_sqlite {
                         }), |_| {
                             panic!("There should not be any tables in the residual")
                         }).expect("Failed to translate response");
-                    println!("Query: {:?}", query);
-                    // This actually illustrates a bug in sea-query
-                    // let query =  query
-                    //     .column(Asterisk)
-                    //     .from(Alias::new("people"))
-                    //     .to_string(SqliteQueryBuilder);
-                    // println!("Query: {}", query);
+                    let query =  query.into_select_statement()
+                        .column(sea_query::Asterisk)
+                        .from(Alias::new("people"))
+                        .to_string(SqliteQueryBuilder);
+                    assert_eq!(query, r#"SELECT * FROM "people" WHERE TRUE AND (TRUE AND 20 <= "age" AND "age" <= 30) AND TRUE"#);
                 }
             }
 
@@ -385,7 +383,7 @@ mod test_sqlite {
                     }).expect("Failed to translate response");
                 query.query_default_attr("title").expect("Query should have exactly one unknown");
                 let query =  query.to_string_sqlite();
-                assert_eq!(query, r#"SELECT "resource"."title" FROM "photos" AS "resource" INNER JOIN "users" AS "temp__0" ON "resource"."user_id" = "temp__0"."uid" WHERE TRUE AND (TRUE AND ("temp__0"."name" = 'Alice')) AND TRUE"#);
+                assert_eq!(query, r#"SELECT "resource"."title" FROM "photos" AS "resource" INNER JOIN "users" AS "temp__0" ON "resource"."user_id" = "temp__0"."uid" WHERE TRUE AND (TRUE AND "temp__0"."name" = 'Alice') AND TRUE"#);
 
                 let conn = Connection::open(&*DB_PATH).expect("Connection failed");
                 conn.query_row(&query, [], |row| {
