@@ -1,9 +1,10 @@
 use cedar_policy::EntityTypeName;
 use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp, Pattern, PatternElem};
-use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, LikeExpr};
+use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, LikeExpr, PostgresQueryBuilder, Iden, Func, TableRef};
+use smol_str::SmolStr;
 
 
-use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, AttrOrId};
+use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, CastableType, AttrOrId, CastableTypeWithSet};
 
 type Result<T> = std::result::Result<T, QueryExprError>;
 
@@ -127,6 +128,17 @@ impl IntoIden for AttrOrId {
     }
 }
 
+impl IntoIden for CastableType {
+    fn into_iden(self) -> sea_query::DynIden {
+        match self {
+            CastableType::Bool => Alias::new("boolean").into_iden(),
+            CastableType::Long => Alias::new("integer").into_iden(),  // todo: use bigint?
+            CastableType::StringOrEntity => Alias::new("text").into_iden(),
+            CastableType::Record => Alias::new("jsonb").into_iden(),
+        }
+    }
+}
+
 impl QueryExpr {
     fn lit_to_sql(l: &Literal) -> SimpleExpr {
         match l {
@@ -138,6 +150,42 @@ impl QueryExpr {
                 e_id.into()
             },
         }
+    }
+
+    fn mk_postgres_array(elems: Vec<SimpleExpr>) -> SimpleExpr {
+        let mut result: String = "ARRAY[".into();
+        result.push_str(
+            elems
+                .into_iter()
+                .map(|elem| {
+                    // Words cannot express how ugly of a hack this is
+                    // Waiting on something like https://github.com/SeaQL/sea-query/issues/683
+                    // to fix this
+                    sea_query::Query::select()
+                        .expr(elem)
+                        .to_string(PostgresQueryBuilder)
+                        .replacen("SELECT ", "", 1)
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+                .as_str(),
+        );
+        result.push(']');
+        sea_query::Expr::cust(result).into()
+    }
+
+    fn mk_postgres_record(elems: Vec<(SmolStr, SimpleExpr)>) -> SimpleExpr {
+        #[derive(Iden)]
+        #[iden = "json_build_object"]
+        struct BuildObjectFunc;
+
+        let mut args: Vec<SimpleExpr> = Vec::with_capacity(elems.len() * 2);
+        for (k, v) in elems {
+            args.push(k.as_str().into());
+            args.push(v);
+        }
+
+        Func::cust(BuildObjectFunc).args(args).into()
     }
 
     fn pattern_to_likeexpr(p: &Pattern) -> LikeExpr {
@@ -160,6 +208,56 @@ impl QueryExpr {
             }
         }
         LikeExpr::new(result).escape('\\')
+    }
+
+    /// Given an expression `e` that returns a JSON nested array of type `tp`,
+    /// cast the result to a postgres nested array
+    fn cast_array(e: SimpleExpr, tp: CastableTypeWithSet) -> SimpleExpr {
+        // Aggregate the set into an array
+        #[derive(Iden)]
+        #[iden = "Array"]
+        struct ArrayFunc;
+
+        // Get the array elements as a set
+        #[derive(Iden)]
+        #[iden = "jsonb_array_elements"]
+        struct ArrayElemsFunc;
+
+        // Get the array elements and cast to text
+        #[derive(Iden)]
+        #[iden = "jsonb_array_elements_text"]
+        struct ArrayElemsTextFunc;
+
+        match (tp.get_type(), tp.get_nesting()) {
+            // If the result type is a record, we don't need to do any casting
+            (CastableType::Record, 0) => e,
+            // At 0 depth, we just cast the array
+            (tp, 0) => e.cast_as(tp),
+            _ => {
+                let alias_name: Alias = Alias::new(format!("result_d{}", tp.get_nesting()));
+                let col_ref = (alias_name.clone(), Alias::new("value")).into_column_ref();
+
+                Func::cust(ArrayFunc)
+                    .arg(SimpleExpr::SubQuery(None, Box::new({
+                        // There is a special function for casting json text array to postgres text array
+                        if tp.get_type() == CastableType::StringOrEntity && tp.get_nesting() == 1 {
+                            let mut subquery = Query::select();
+                            subquery.expr(sea_query::Expr::col(col_ref));
+                            subquery.from(TableRef::FunctionCall(Func::cust(ArrayElemsTextFunc).arg(e), alias_name.into_iden()));
+                            subquery.into_sub_query_statement()
+                        } else {
+                            let mut next_tp = tp;
+                            next_tp.decr_nesting();
+
+                            let mut subquery = Query::select();
+                            subquery.expr(Self::cast_array(col_ref.into(), next_tp));
+                            subquery.from(TableRef::FunctionCall(Func::cust(ArrayElemsFunc).arg(e), alias_name.into_iden()));
+                            subquery.into_sub_query_statement()
+                        }
+                    })))
+                    .into()
+            }
+        }
     }
 
     /// Semantics:
@@ -242,12 +340,11 @@ impl QueryExpr {
             },
             QueryExpr::GetAttrRecord { expr, attr, result_type } => {
                 let left = expr.to_sql_query(ein)?;
-                match result_type {
-                    CastableType::Bool => Ok(left.get_json_field(attr.as_str()).cast_as(Alias::new("boolean"))),
-                    CastableType::Long => Ok(left.get_json_field(attr.as_str()).cast_as(Alias::new("integer"))), // TODO: use bigint?
-                    CastableType::StringOrEntity => Ok(left.cast_json_field(attr.as_str())),
-                    CastableType::Set => unimplemented!("Retrieving sets from records unimplemented (would require json-to-array conversion, not sure how to do that"),
-                    CastableType::Record => Ok(left.get_json_field(attr.as_str())),
+                match (result_type.get_type(), result_type.get_nesting()) {
+                    // If the result type is a string, there is a special function in postgres to handle this case
+                    (CastableType::StringOrEntity, 0) => Ok(left.cast_json_field(attr.as_str())),
+                    // `cast_array` correctly handles the base case of 0 nesting (non-array) values as well
+                    _ => Ok(Self::cast_array(left.get_json_field(attr.as_str()), *result_type))
                 }
             },
             QueryExpr::HasAttrRecord { expr, attr } => {
@@ -256,8 +353,16 @@ impl QueryExpr {
             QueryExpr::IsNotNull(expr) => Ok(expr.to_sql_query(ein)?.binary(BinOper::IsNot, Keyword::Null)),
             QueryExpr::Like { expr, pattern  } =>
                 Ok(expr.to_sql_query(ein)?.like(Self::pattern_to_likeexpr(pattern))),
-            QueryExpr::Set(_) => unimplemented!("TODO: implement Set"),
-            QueryExpr::Record { .. } => unimplemented!("TODO: implement Record"),
+            QueryExpr::Set(values) => Ok(Self::mk_postgres_array(values
+                .iter()
+                .map(|v| v.to_sql_query(ein))
+                .collect::<Result<Vec<_>>>()?)
+            ),
+            QueryExpr::Record { pairs  } => Ok(Self::mk_postgres_record(pairs
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), v.to_sql_query(ein)?)))
+                .collect::<Result<Vec<_>>>()?)
+            )
         }
     }
 }

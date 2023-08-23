@@ -223,6 +223,15 @@ mod test {
                                         },
                                         "age": {
                                             "type": "Long"
+                                        },
+                                        "nestedSetAttr": {
+                                            "type": "Set",
+                                            "element": {
+                                                "type": "Set",
+                                                "element": {
+                                                    "type": "Long"
+                                                }
+                                            }
                                         }
                                     }
                                 },
@@ -418,5 +427,14 @@ mod test {
         let (result, values) = query.into_select_statement().build(PostgresQueryBuilder);
         assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE $1 <= ("user"."level" * $2) + CAST(("user"."info" -> $3) AS integer)"#);
         assert_eq!(values.0, vec![50i64.into(), 10i64.into(), "age".into()]);
+    }
+
+    #[test]
+    fn test_nested_array() {
+        let result = translate_expr_test(
+            r#"unknown("user: Users").info.nestedSetAttr.contains([6, 10, 11])"#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE (ARRAY[6, 10, 11]) = ANY(Array((SELECT Array((SELECT CAST("result_d1"."value" AS integer) FROM jsonb_array_elements("result_d2"."value") AS "result_d1")) FROM jsonb_array_elements("user"."info" -> 'nestedSetAttr') AS "result_d2")))"#)
     }
 }

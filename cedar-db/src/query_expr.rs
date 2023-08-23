@@ -35,28 +35,63 @@ pub enum QueryExprError {
 type Result<T> = std::result::Result<T, QueryExprError>;
 
 
-// This is the type information needed to cast a Cedar value to an SQL value
+// This is the type information needed to cast a non-set Cedar value to a non-array SQL value
 // Note that `String` and `EntityId` are unified because both are represented as SQL strings
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CastableType {
     Bool,
     Long,
     StringOrEntity,
-    Set,
     Record,
 }
 
-impl TryFrom<&Type> for CastableType {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CastableTypeWithSet {
+    nesting: usize,
+    tp: CastableType,
+}
+
+impl CastableTypeWithSet {
+    pub fn get_type(&self) -> CastableType {
+        self.tp
+    }
+
+    pub fn get_nesting(&self) -> usize {
+        self.nesting
+    }
+
+    pub fn incr_nesting(&mut self) {
+        self.nesting += 1;
+    }
+
+    pub fn decr_nesting(&mut self) {
+        self.nesting -= 1;
+    }
+}
+
+impl From<CastableType> for CastableTypeWithSet {
+    fn from(tp: CastableType) -> Self {
+        CastableTypeWithSet { tp, nesting: 0 }
+    }
+}
+
+impl TryFrom<&Type> for CastableTypeWithSet {
     type Error = QueryExprError;
 
     fn try_from(value: &Type) -> Result<Self> {
         match value {
-            Type::Never | Type::True | Type::False | Type::Primitive { primitive_type: Primitive::Bool } => Ok(CastableType::Bool),
-            Type::Primitive { primitive_type: Primitive::Long } => Ok(CastableType::Long),
-            Type::Primitive { primitive_type: Primitive::String } => Ok(CastableType::StringOrEntity),
-            Type::Set { .. } => Ok(CastableType::Set),
-            Type::EntityOrRecord(EntityRecordKind::Record { .. }) => Ok(CastableType::Record),
-            Type::EntityOrRecord(_) => Ok(CastableType::StringOrEntity),
+            Type::Never | Type::True | Type::False | Type::Primitive { primitive_type: Primitive::Bool } => Ok(CastableType::Bool.into()),
+            Type::Primitive { primitive_type: Primitive::Long } => Ok(CastableType::Long.into()),
+            Type::Primitive { primitive_type: Primitive::String } => Ok(CastableType::StringOrEntity.into()),
+            Type::Set { element_type } => {
+                let mut inner_result: CastableTypeWithSet = element_type.as_deref()
+                    .ok_or(QueryExprError::TypeAnnotationNone)?
+                    .try_into()?;
+                inner_result.incr_nesting();
+                Ok(inner_result)
+            },
+            Type::EntityOrRecord(EntityRecordKind::Record { .. }) => Ok(CastableType::Record.into()),
+            Type::EntityOrRecord(_) => Ok(CastableType::StringOrEntity.into()),
             Type::ExtensionType { name } => Err(QueryExprError::ExtensionFunctionAppears(name.to_owned())),
         }
     }
@@ -116,8 +151,8 @@ pub enum QueryExpr {
     GetAttrRecord {
         expr: Box<QueryExpr>,
         attr: SmolStr,
-        result_type: CastableType  // we need to know the result type because sometimes
-                                   // the result will be "json" by default and we need to cast it
+        result_type: CastableTypeWithSet  // we need to know the result type because sometimes
+                                          // the result will be "json" by default and we need to cast it
     },
     HasAttrRecord {
         expr: Box<QueryExpr>,
