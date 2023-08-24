@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use cedar_policy::{PartialValue, EntityUid, ParsedEntity, EntityId, EntityTypeName, Value};
+use cedar_policy::{PartialValue, EntityUid, ParsedEntity, EntityId, EntityTypeName, Value, EntityAttrAccessError};
 use ref_cast::RefCast;
 use rusqlite::{Connection, Row, OptionalExtension, types::{FromSql, ValueRef}, Error};
 use rusqlite::Error::FromSqlConversionFailure;
@@ -119,6 +119,25 @@ impl<'e> EntitySQLInfo<'e> {
                 attrs.extend(extra_attrs(row)?);
                 Ok(attrs)
             }, ancestors)
+    }
+
+    pub fn get_single_attr(&self, conn: &Connection, id: &EntityId, attr: &str) -> Result<Value, EntityAttrAccessError<rusqlite::Error>> {
+        let attr_name = self.attr_names.iter()
+            .find(|(_, s)| *s == attr)
+            .and_then(|(i, _)| self.sql_attr_names.get(*i))
+            .ok_or(EntityAttrAccessError::UnknownAttr)?;
+        let query: String = format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = ?", attr_name, self.table, self.id_attr);
+        let query_result: SQLValue = conn.query_row(&query, &[&id.as_ref()], |row| row.get::<_, SQLValue>(0)).optional()?
+            .ok_or(EntityAttrAccessError::UnknownEntity)?;
+        match query_result {
+            SQLValue(Some(v)) => Ok(v),
+            SQLValue(None) => Err(EntityAttrAccessError::UnknownAttr)
+        }
+    }
+
+    pub fn exists_entity(&self, conn: &Connection, id: &EntityId) -> Result<bool, rusqlite::Error> {
+        let query: String = format!("SELECT 1 FROM \"{}\" WHERE \"{}\" = ?", self.table, self.id_attr);
+        Ok(conn.query_row(&query, &[&id.as_ref()], |_| Ok(())).optional()?.is_some())
     }
 }
 
