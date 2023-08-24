@@ -383,7 +383,7 @@ mod test_sqlite {
                     }).expect("Failed to translate response");
                 query.query_default_attr("title").expect("Query should have exactly one unknown");
                 let query =  query.to_string_sqlite();
-                assert_eq!(query, r#"SELECT "resource"."title" FROM "photos" AS "resource" INNER JOIN "users" AS "temp__0" ON "resource"."user_id" = "temp__0"."uid" WHERE TRUE AND (TRUE AND "temp__0"."name" = 'Alice') AND TRUE"#);
+                assert_eq!(query, r#"SELECT "resource"."title" FROM "photos" AS "resource" LEFT JOIN "users" AS "temp__0" ON "resource"."user_id" = "temp__0"."uid" WHERE TRUE AND (TRUE AND "temp__0"."name" = 'Alice') AND TRUE"#);
 
                 let conn = Connection::open(&*DB_PATH).expect("Connection failed");
                 conn.query_row(&query, [], |row| {

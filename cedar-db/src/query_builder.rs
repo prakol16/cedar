@@ -120,7 +120,7 @@ impl ExprWithBindings {
         for (bv, e) in self.bindings.iter() {
             let (tbl_ref, id_name) = table_names(&bv.ty);
             let id_name = id_name.into_iden();
-            query.join_as(sea_query::JoinType::InnerJoin,
+            query.join_as(sea_query::JoinType::LeftJoin,
                 tbl_ref, Alias::new(bv.name.clone()),
                 e.to_sql_query(&ein)?.eq((Alias::new(bv.name.as_str()), id_name).into_column_ref()));
         }
@@ -308,7 +308,7 @@ mod test {
             r#"5 <= unknown("resource: Photos").owner.level"#.parse().unwrap(),
             &get_schema(),
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE 5 <= "temp__0"."level""#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" LEFT JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE 5 <= "temp__0"."level""#);
     }
 
     #[test]
@@ -317,7 +317,7 @@ mod test {
             r#"unknown("resource: Photos").nextPhoto.nextPhoto.nextPhoto.owner.level == 3"#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Photos" AS "temp__0" ON "resource"."nextPhoto" = "temp__0"."uid" INNER JOIN "Photos" AS "temp__1" ON "temp__0"."nextPhoto" = "temp__1"."uid" INNER JOIN "Photos" AS "temp__2" ON "temp__1"."nextPhoto" = "temp__2"."uid" INNER JOIN "Users" AS "temp__3" ON "temp__2"."owner" = "temp__3"."uid" WHERE "temp__3"."level" = 3"#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" LEFT JOIN "Photos" AS "temp__0" ON "resource"."nextPhoto" = "temp__0"."uid" LEFT JOIN "Photos" AS "temp__1" ON "temp__0"."nextPhoto" = "temp__1"."uid" LEFT JOIN "Photos" AS "temp__2" ON "temp__1"."nextPhoto" = "temp__2"."uid" LEFT JOIN "Users" AS "temp__3" ON "temp__2"."owner" = "temp__3"."uid" WHERE "temp__3"."level" = 3"#);
     }
 
     #[test]
@@ -326,7 +326,7 @@ mod test {
             r#"5 <= unknown("resource: Photos").owner.level && unknown("resource: Photos").owner.level <= 10"#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE 5 <= "temp__0"."level" AND "temp__0"."level" <= 10"#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" LEFT JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE 5 <= "temp__0"."level" AND "temp__0"."level" <= 10"#);
     }
 
     #[test]
@@ -335,7 +335,7 @@ mod test {
             r#"(if unknown("resource: Photos") == Photos::"0" || unknown("resource: Photos") == Photos::"1" then unknown("resource: Photos") else unknown("resource: Photos").nextPhoto).owner == Users::"2""#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Photos" AS "temp__0" ON ((CASE WHEN ("resource"."uid" = '0' OR "resource"."uid" = '1') THEN "resource"."uid" ELSE "resource"."nextPhoto" END)) = "temp__0"."uid" WHERE "temp__0"."owner" = '2'"#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" LEFT JOIN "Photos" AS "temp__0" ON ((CASE WHEN ("resource"."uid" = '0' OR "resource"."uid" = '1') THEN "resource"."uid" ELSE "resource"."nextPhoto" END)) = "temp__0"."uid" WHERE "temp__0"."owner" = '2'"#);
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod test {
             r#"unknown("resource: Photos").owner.info.name == "Bob""#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" INNER JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE ("temp__0"."info" ->> 'name') = 'Bob'"#)
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" LEFT JOIN "Users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE ("temp__0"."info" ->> 'name') = 'Bob'"#)
     }
 
     #[test]
@@ -403,7 +403,7 @@ mod test {
             r#"5 <= unknown("temp__0: Photos").owner.level"#.parse().unwrap(),
             &get_schema(),
         );
-        assert_eq!(result, r#"SELECT "temp__0"."uid" FROM "Photos" AS "temp__0" INNER JOIN "Users" AS "temp__1" ON "temp__0"."owner" = "temp__1"."uid" WHERE 5 <= "temp__1"."level""#);
+        assert_eq!(result, r#"SELECT "temp__0"."uid" FROM "Photos" AS "temp__0" LEFT JOIN "Users" AS "temp__1" ON "temp__0"."owner" = "temp__1"."uid" WHERE 5 <= "temp__1"."level""#);
     }
 
     #[test]
