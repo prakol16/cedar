@@ -184,7 +184,7 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, Schema, Decision, PartialResponse, RestrictedExpression};
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, Schema, Decision, PartialResponse, RestrictedExpression, PolicySet};
 
     use cedar_policy_core::{ast::Expr, entities::SchemaType};
     use rusqlite::Connection;
@@ -233,6 +233,8 @@ mod test_sqlite {
 
         Table { conn }
     }
+
+
 
     fn get_schema() -> Schema {
         r#"
@@ -283,19 +285,6 @@ mod test_sqlite {
         }
         "#.parse().expect("Schema should not fail to parse")
     }
-
-    // See https://github.com/SeaQL/sea-query/issues/674
-    // #[test]
-    // fn test_sea_query() {
-    //     let e = SimpleExpr::from(true).and(SimpleExpr::from(true).and(SimpleExpr::from(20).eq(20)).and(SimpleExpr::from(30).eq(30)));
-    //     println!("Expr: {}",  Query::select().and_where(e).to_string(SqliteQueryBuilder));
-    // }
-
-    // #[test]
-    // fn test_sea_query2() {
-    //     let e = SimpleExpr::from(true).and(SimpleExpr::from(true).and(true.into()).and(true.into()));
-    //     println!("Expr: {}",  Query::select().and_where(e).to_string(SqliteQueryBuilder));
-    // }
 
     #[test]
     fn test_like() {
@@ -418,4 +407,108 @@ mod test_sqlite {
         assert!(result.decision() == Decision::Allow);
     }
 
+}
+
+#[cfg(feature = "rusqlite")]
+#[cfg(test)]
+mod test_docs_example {
+    use std::borrow::Cow;
+
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, Schema, Decision, PartialResponse, RestrictedExpression, PolicySet};
+
+    use cedar_policy_core::{ast::Expr, entities::SchemaType};
+    use rusqlite::Connection;
+    use sea_query::{Alias, SqliteQueryBuilder};
+
+    use crate::{sqlite::*, expr_to_query::{InByTable, InByLambda}, query_builder::{translate_response, translate_expr}};
+
+
+    fn get_schema() -> Schema {
+        // schema:
+        // There are users, documents, and teams.
+        // Users each have a string "role"
+        // Documents each have a string "title" and a user "owner"
+        // Teams have a string "name"
+        // Users can be children of teams
+        r#"
+        {
+            "": {
+                "entityTypes": {
+                    "Users": {
+                        "shape": {
+                            "type": "Record",
+                            "attributes": {
+                                "role": {
+                                    "type": "String"
+                                }
+                            }
+                        },
+                        "memberOfTypes": ["Teams"]
+                    },
+                    "Documents": {
+                        "shape": {
+                            "type": "Record",
+                            "attributes": {
+                                "title": {
+                                    "type": "String"
+                                },
+                                "owner": {
+                                    "type": "Entity",
+                                    "name": "Users"
+                                }
+                            }
+                        }
+                    },
+                    "Teams": {
+                        "shape": {
+                            "type": "Record",
+                            "attributes": {
+                                "name": {
+                                    "type": "String"
+                                }
+                            }
+                        }
+                    }
+                },
+                "actions": {
+                    "view": {
+                        "appliesTo": {
+                            "principalTypes": ["Users"],
+                            "resourceTypes": ["Documents"]
+                        }
+                    }
+                }
+            }
+        }
+        "#.parse().expect("Document schema should parse correctly")
+    }
+
+
+    fn get_policies_docs_example() -> PolicySet {
+        r#"
+        // Any vp can see any documents made by interns
+        permit(principal, action, resource) when {
+            principal.role == "vp" && resource.owner.role == "intern";
+        };
+
+        // The document with id 'doc4' is shared with everyone in Cedar
+        permit(principal in Teams::"cedar", action, resource == Documents::"doc4");
+        "#.parse().unwrap()
+    }
+
+
+    #[test]
+    fn test_partial_eval_docs_example() {
+        let schema = get_schema();
+        let pset = get_policies_docs_example();
+
+        let auth = Authorizer::new();
+        let q: Request = Request::builder()
+            .principal(Some("Users::\"danielle\"".parse().unwrap()))
+            .action(Some("Actions::\"view\"".parse().unwrap()))
+            .resource(Some("Documents::\"doc4\"".parse().unwrap()))
+            .build();
+
+
+    }
 }
