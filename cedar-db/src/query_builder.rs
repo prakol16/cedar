@@ -122,7 +122,7 @@ impl ExprWithBindings {
             let id_name = id_name.into_iden();
             query.join_as(sea_query::JoinType::InnerJoin,
                 tbl_ref, Alias::new(bv.name.clone()),
-                e.to_sql_query(&ein)?.eq((Alias::new(bv.name.clone()), id_name).into_column_ref()));
+                e.to_sql_query(&ein)?.eq((Alias::new(bv.name.as_str()), id_name).into_column_ref()));
         }
 
         let mut unk_table_names = HashMap::new();
