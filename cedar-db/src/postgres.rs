@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use cedar_policy::{Value, ParsedEntity, EntityUid, PartialValue, EntityId, EntityTypeName};
+use cedar_policy::{Value, ParsedEntity, EntityUid, PartialValue, EntityId, EntityTypeName, EntityAttrAccessError};
 use cedar_policy_core::{entities::{JsonDeserializationError, JSONValue}, evaluator::RestrictedEvaluator, extensions::Extensions, ast::NotValue};
 use postgres::{Client, types::{FromSql, Type, Kind}, Row};
 use ref_cast::RefCast;
@@ -191,6 +191,27 @@ impl<'e> EntitySQLInfo<'e> {
                 attrs.extend(extra_attrs(row)?);
                 Ok(attrs)
             }, ancestors)
+    }
+
+
+    pub fn get_single_attr(&self, conn: &mut Client, id: &EntityId, attr: &str) -> Result<Value, EntityAttrAccessError<PostgresToCedarError>> {
+        let attr_name = self.attr_names.iter()
+            .find(|(_, s)| *s == attr)
+            .and_then(|(i, _)| self.sql_attr_names.get(*i))
+            .ok_or(EntityAttrAccessError::UnknownAttr)?;
+        let query: String = format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = $1", attr_name, self.table, self.id_attr);
+        let query_result: SQLValue = conn.query_opt(&query, &[&id.as_ref()]).map_err(PostgresToCedarError::from)?
+            .ok_or(EntityAttrAccessError::UnknownEntity)?
+            .get(0);
+        match query_result {
+            SQLValue(Some(v)) => Ok(v),
+            SQLValue(None) => Err(EntityAttrAccessError::UnknownAttr)
+        }
+    }
+
+    pub fn exists_entity(&self, conn: &mut Client, id: &EntityId) -> Result<bool, PostgresToCedarError> {
+        let query: String = format!("SELECT 1 FROM \"{}\" WHERE \"{}\" = $1", self.table, self.id_attr);
+        Ok(conn.query_opt(&query, &[&id.as_ref()])?.is_some())
     }
 }
 

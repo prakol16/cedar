@@ -7,7 +7,7 @@ pub mod postgres;
 #[cfg(feature = "postgres")]
 #[cfg(test)]
 mod test_postgres {
-    use std::{borrow::Cow, collections::HashMap};
+    use std::borrow::Cow;
 
     use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EntityAttrDatabase, PartialValue, EntityAttrAccessError, CachedEntities, Decision};
     use postgres::{Client, NoTls};
@@ -45,36 +45,27 @@ mod test_postgres {
     fn make_entity_attr_database() -> impl EntityAttrDatabase {
         struct Table;
 
-        fn get_entity_attrs(uid: &EntityUid) -> Result<Option<HashMap<String, PartialValue>>, PostgresToCedarError> {
-            let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
-            match uid.type_name() {
-                t if *t == *USERS_TYPE =>
-                    Ok(conn.query_opt(USERS_TABLE_INFO.get_query_string(), &[&uid.id().as_ref()])?
-                        .map(|row| convert_attr_names(&row, &USERS_TABLE_INFO.attr_names))
-                        .transpose()?),
-                t if *t == *PHOTOS_TYPE =>
-                    Ok(conn.query_opt(PHOTOS_TABLE_INFO.get_query_string(), &[&uid.id().as_ref()])?
-                        .map(|row| convert_attr_names(&row, &PHOTOS_TABLE_INFO.attr_names))
-                        .transpose()?),
-                t if *t == *ASSIGNMENTS_TYPE =>
-                    Ok(conn.query_opt(ASSIGNMENTS_TABLE_INFO.get_query_string(), &[&uid.id().as_ref()])?
-                        .map(|row| convert_attr_names(&row, &ASSIGNMENTS_TABLE_INFO.attr_names))
-                        .transpose()?),
-                _ => Ok(None)
-            }
-        }
-
         impl EntityAttrDatabase for Table {
             type Error = PostgresToCedarError;
 
             fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error> {
-                Ok(get_entity_attrs(uid)?.is_some())
+                let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
+                match uid.type_name() {
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.exists_entity(&mut conn, uid.id())?),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.exists_entity(&mut conn, uid.id())?),
+                    t if *t == *ASSIGNMENTS_TYPE => Ok(ASSIGNMENTS_TABLE_INFO.exists_entity(&mut conn, uid.id())?),
+                    _ => Ok(false)
+                }
             }
 
             fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
-                get_entity_attrs(uid)?
-                .ok_or(EntityAttrAccessError::UnknownEntity)
-                .and_then(|attrs| attrs.get(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr))
+                let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
+                match uid.type_name() {
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.get_single_attr(&mut conn, uid.id(), attr)?.into()),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.get_single_attr(&mut conn, uid.id(), attr)?.into()),
+                    t if *t == *ASSIGNMENTS_TYPE => Ok(ASSIGNMENTS_TABLE_INFO.get_single_attr(&mut conn, uid.id(), attr)?.into()),
+                    _ => Err(EntityAttrAccessError::UnknownEntity)
+                }
             }
 
             fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, Self::Error> {
