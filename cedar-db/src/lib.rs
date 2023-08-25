@@ -562,11 +562,10 @@ mod test_docs_example {
         let q: Request = Request::builder()
             .principal(Some("Users::\"danielle\"".parse().unwrap()))
             .action(Some("Actions::\"view\"".parse().unwrap()))
-            .resource(Some(EntityUid::from_type_name_and_id("Documents".parse().unwrap(), doc.parse().unwrap())))
+            .resource(Some(EntityUid::from_type_name_and_id(DOCS_TYPE.clone(), doc.parse().unwrap())))
             .build();
 
         auth.is_authorized_full_parsed(&q, &pset, &get_sqlite_table())
-
     }
 
     #[test]
