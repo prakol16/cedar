@@ -195,7 +195,7 @@ mod test {
             let t1_str = t1.to_string();
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
-            Ok((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str)))
+            Ok(Some((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str))))
         }), |tp| (Alias::new(tp.basename()), Alias::new("uid"))).unwrap();
 
         query.query_default().expect("Querying the only unknown should succeed");
@@ -386,7 +386,7 @@ mod test {
             let t1_str = t1.to_string();
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
-            Ok((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str)))
+            Ok(Some((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str))))
         }), |tp| (Alias::new(tp.basename()), Alias::new("uid")),
     &HashMap::from([
             (UnknownType::EntityType { ty: "Photos".parse().unwrap(), name: "resource".into() },
@@ -419,7 +419,7 @@ mod test {
             let t1_str = t1.to_string();
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
-            Ok((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str)))
+            Ok(Some((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str))))
         }), |tp| (Alias::new(tp.basename()), Alias::new("uid"))).unwrap();
 
         query.query_default().expect("Querying the only unknown should succeed");

@@ -47,49 +47,55 @@ impl<S, T> InConfig for InByLambda<S, T>
 
 pub struct InByTable<A, B, T>(pub T)
     where A: IntoIden, B: IntoIden,
-          T: Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, B)>;
+          T: Fn(&EntityTypeName, &EntityTypeName) -> Result<Option<(A, B, B)>>;
 
 impl<A, B, T> InConfig for InByTable<A, B, T>
     where A: IntoIden, B: IntoIden,
-          T: Fn(&EntityTypeName, &EntityTypeName) -> Result<(A, B, B)> {
+          T: Fn(&EntityTypeName, &EntityTypeName) -> Result<Option<(A, B, B)>> {
     fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
-        let (tbl, col1, col2) = self.0(tp1, tp2)?;
-        let tbl = tbl.into_iden();
-        let col1 = col1.into_iden();
-        let col2 = col2.into_iden();
-        let col1 = (tbl.clone(), col1).into_column_ref();
-        let col2 = (tbl.clone(), col2).into_column_ref();
+        if let Some((tbl, col1, col2)) = self.0(tp1, tp2)? {
+            let tbl = tbl.into_iden();
+            let col1 = col1.into_iden();
+            let col2 = col2.into_iden();
+            let col1 = (tbl.clone(), col1).into_column_ref();
+            let col2 = (tbl.clone(), col2).into_column_ref();
 
-        // e2 in (SELECT tbl.col2 FROM tbl WHERE tbl.col1 = e1)
-        let sub_query = Query::select()
-            .column(col2)
-            .from(tbl)
-            .and_where(sea_query::Expr::col(col1).eq(e1))
-            .to_owned();
-        Ok(e2.binary(BinOper::In, SimpleExpr::SubQuery(
-            None,
-            Box::new(sub_query.into_sub_query_statement())
-        )))
+            // e2 in (SELECT tbl.col2 FROM tbl WHERE tbl.col1 = e1)
+            let sub_query = Query::select()
+                .column(col2)
+                .from(tbl)
+                .and_where(sea_query::Expr::col(col1).eq(e1))
+                .to_owned();
+            Ok(e2.binary(BinOper::In, SimpleExpr::SubQuery(
+                None,
+                Box::new(sub_query.into_sub_query_statement())
+            )))
+        } else {
+            Ok(false.into())
+        }
     }
 
     fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
-        let (tbl, col1, col2) = self.0(tp1, tp2)?;
-        let tbl = tbl.into_iden();
-        let col1 = col1.into_iden();
-        let col2 = col2.into_iden();
-        let col1 = (tbl.clone(), col1).into_column_ref();
-        let col2 = (tbl.clone(), col2).into_column_ref();
+        if let Some((tbl, col1, col2)) = self.0(tp1, tp2)? {
+            let tbl = tbl.into_iden();
+            let col1 = col1.into_iden();
+            let col2 = col2.into_iden();
+            let col1 = (tbl.clone(), col1).into_column_ref();
+            let col2 = (tbl.clone(), col2).into_column_ref();
 
-        // e1 in (SELECT tbl.col1 FROM tbl WHERE tbl.col2 = ANY(e2))
-        let sub_query = Query::select()
-            .column(col1)
-            .from(tbl)
-            .and_where(sea_query::Expr::col(col2).eq(PgFunc::any(e2)))
-            .to_owned();
-        Ok(e1.binary(BinOper::In, SimpleExpr::SubQuery(
-            None,
-            Box::new(sub_query.into_sub_query_statement())
-        )))
+            // e1 in (SELECT tbl.col1 FROM tbl WHERE tbl.col2 = ANY(e2))
+            let sub_query = Query::select()
+                .column(col1)
+                .from(tbl)
+                .and_where(sea_query::Expr::col(col2).eq(PgFunc::any(e2)))
+                .to_owned();
+            Ok(e1.binary(BinOper::In, SimpleExpr::SubQuery(
+                None,
+                Box::new(sub_query.into_sub_query_statement())
+            )))
+        } else {
+            Ok(false.into())
+        }
     }
 }
 

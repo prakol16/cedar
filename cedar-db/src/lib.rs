@@ -593,14 +593,14 @@ mod test_docs_example {
         let result = auth.is_authorized_parsed(&q, &pset, &table);
         match result {
             PartialResponse::Concrete(_) => panic!("Response should be residual"),
-            PartialResponse::Residual(res) => {
-                let mut query = translate_response(&res, &schema,
+            PartialResponse::Residual(resp) => {
+                let mut query = translate_response(&resp, &schema,
                     InByTable::<Alias, Alias, _>(|tp1, tp2| {
-                        if tp1 == &*USERS_TYPE && tp2 == &*TEAMS_TYPE {
-                            Ok((Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.table), Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.child_id), Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.parent_id)))
+                        Ok(if tp1 == &*USERS_TYPE && tp2 == &*TEAMS_TYPE {
+                            Some((Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.table), Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.child_id), Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.parent_id)))
                         } else {
-                            Err(crate::query_expr::QueryExprError::TypecheckError)
-                        }
+                            None
+                        })
                     }), |tp| {
                         (Alias::new(get_table_info(tp).expect("Entity type should be one of known entity types").table), Alias::new("uid"))
                     }).expect("Failed to translate response");
