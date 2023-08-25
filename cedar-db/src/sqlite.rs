@@ -121,18 +121,27 @@ impl<'e> EntitySQLInfo<'e> {
             }, ancestors)
     }
 
-    pub fn get_single_attr(&self, conn: &Connection, id: &EntityId, attr: &str) -> Result<Value, EntityAttrAccessError<rusqlite::Error>> {
+    pub fn get_single_attr_as<T: FromSql>(&self, conn: &Connection, id: &EntityId, attr: &str) -> Result<T, EntityAttrAccessError<rusqlite::Error>> {
         let attr_name = self.attr_names.iter()
             .find(|(_, s)| *s == attr)
             .and_then(|(i, _)| self.sql_attr_names.get(*i))
             .ok_or(EntityAttrAccessError::UnknownAttr)?;
         let query: String = format!("SELECT \"{}\" FROM \"{}\" WHERE \"{}\" = ?", attr_name, self.table, self.id_attr);
-        let query_result: SQLValue = conn.query_row(&query, &[&id.as_ref()], |row| row.get::<_, SQLValue>(0)).optional()?
-            .ok_or(EntityAttrAccessError::UnknownEntity)?;
+        conn.query_row(&query, &[&id.as_ref()], |row| row.get::<_, T>(0)).optional()?
+            .ok_or(EntityAttrAccessError::UnknownEntity)
+    }
+
+    pub fn get_single_attr(&self, conn: &Connection, id: &EntityId, attr: &str) -> Result<Value, EntityAttrAccessError<rusqlite::Error>> {
+        let query_result: SQLValue = self.get_single_attr_as(conn, id, attr)?;
         match query_result {
             SQLValue(Some(v)) => Ok(v),
             SQLValue(None) => Err(EntityAttrAccessError::UnknownAttr)
         }
+    }
+
+    pub fn get_single_attr_as_id(&self, conn: &Connection, id: &EntityId, attr: &str, tp: EntityTypeName) -> Result<Value, EntityAttrAccessError<rusqlite::Error>> {
+        let query_result: EntitySQLId = self.get_single_attr_as(conn, id, attr)?;
+        Ok(EntityUid::from_type_name_and_id(tp, query_result.id()).into())
     }
 
     pub fn exists_entity(&self, conn: &Connection, id: &EntityId) -> Result<bool, rusqlite::Error> {
