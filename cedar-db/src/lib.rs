@@ -458,6 +458,10 @@ mod test_docs_example {
             fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
                 let table_info = get_table_info(uid.type_name())
                     .ok_or(EntityAttrAccessError::UnknownEntity)?;
+                // Unfortunately, we currently do not have schema-based attribute fetching
+                // so the Cedar type of the attribute is simply based on the SQL type of the
+                // column in the database. This means we have to manually convert the attributes
+                // that are not strings but actually `EntityUid`'s
                 if uid.type_name() == &*DOCS_TYPE && attr == "owner" {
                     Ok(table_info.get_single_attr_as_id(&self.conn, uid.id(), attr, USERS_TYPE.clone())?.into())
                 } else {
@@ -570,9 +574,13 @@ mod test_docs_example {
 
     #[test]
     fn test_danielle_views() {
+        // Danielle can view doc1 because she is the owner
         assert!(can_danielle_view("doc1").decision() == Decision::Allow);
+        // Danielle can view doc2 because she is a vp and doc2 is owned by an intern
         assert!(can_danielle_view("doc2").decision() == Decision::Allow);
+        // Danielle cannot view doc3
         assert!(can_danielle_view("doc3").decision() == Decision::Deny);
+        // Danielle can view doc4 because it is shared with everyone in Cedar
         assert!(can_danielle_view("doc4").decision() == Decision::Allow);
     }
 
@@ -594,7 +602,7 @@ mod test_docs_example {
             PartialResponse::Concrete(_) => panic!("Response should be residual"),
             PartialResponse::Residual(resp) => {
                 let mut query = translate_response(&resp, &schema,
-                    InByTable::<Alias, Alias, _>(|tp1, tp2| {
+                    InByTable(|tp1, tp2| {
                         Ok(if tp1 == &*USERS_TYPE && tp2 == &*TEAMS_TYPE {
                             Some((Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.table), Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.child_id), Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.parent_id)))
                         } else {
