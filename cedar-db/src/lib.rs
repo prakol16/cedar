@@ -429,6 +429,43 @@ mod test_docs_example {
 
     struct Table { conn: Connection }
 
+    impl EntityAttrDatabase for Table {
+        type Error = rusqlite::Error;
+
+        fn partial_mode(&self) -> cedar_policy::Mode {
+            cedar_policy::Mode::Concrete
+        }
+
+        fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error> {
+            Ok(get_table_info(uid.type_name())
+                .map(|info| info.exists_entity(&self.conn, uid.id()))
+                .transpose()?
+                .unwrap_or(false))
+        }
+
+        fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
+            let table_info = get_table_info(uid.type_name())
+                .ok_or(EntityAttrAccessError::UnknownEntity)?;
+            // Unfortunately, we currently do not have schema-based attribute fetching
+            // so the Cedar type of the attribute is simply based on the SQL type of the
+            // column in the database. This means we have to manually convert the attributes
+            // that are not strings but actually `EntityUid`'s
+            if uid.type_name() == &*DOCS_TYPE && attr == "owner" {
+                Ok(table_info.get_single_attr_as_id(&self.conn, uid.id(), attr, USERS_TYPE.clone())?.into())
+            } else {
+                Ok(table_info.get_single_attr(&self.conn, uid.id(), attr)?.into())
+            }
+        }
+
+        fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, Self::Error> {
+            if u1.type_name() == &*USERS_TYPE && u2.type_name() == &*TEAMS_TYPE {
+                USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&self.conn, u1.id(), u2.id())
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
     fn get_table_info(tp: &EntityTypeName) -> Option<&EntitySQLInfo<'static>> {
         match tp {
             t if *t == *USERS_TYPE => Some(&USERS_TABLE_INFO),
@@ -440,43 +477,6 @@ mod test_docs_example {
 
     fn get_sqlite_table() -> Table {
         let conn = Connection::open(&*DB_PATH).expect("Connection failed");
-
-        impl EntityAttrDatabase for Table {
-            type Error = rusqlite::Error;
-
-            fn partial_mode(&self) -> cedar_policy::Mode {
-                cedar_policy::Mode::Concrete
-            }
-
-            fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error> {
-                Ok(get_table_info(uid.type_name())
-                    .map(|info| info.exists_entity(&self.conn, uid.id()))
-                    .transpose()?
-                    .unwrap_or(false))
-            }
-
-            fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
-                let table_info = get_table_info(uid.type_name())
-                    .ok_or(EntityAttrAccessError::UnknownEntity)?;
-                // Unfortunately, we currently do not have schema-based attribute fetching
-                // so the Cedar type of the attribute is simply based on the SQL type of the
-                // column in the database. This means we have to manually convert the attributes
-                // that are not strings but actually `EntityUid`'s
-                if uid.type_name() == &*DOCS_TYPE && attr == "owner" {
-                    Ok(table_info.get_single_attr_as_id(&self.conn, uid.id(), attr, USERS_TYPE.clone())?.into())
-                } else {
-                    Ok(table_info.get_single_attr(&self.conn, uid.id(), attr)?.into())
-                }
-            }
-
-            fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, Self::Error> {
-                if u1.type_name() == &*USERS_TYPE && u2.type_name() == &*TEAMS_TYPE {
-                    USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&self.conn, u1.id(), u2.id())
-                } else {
-                    Ok(false)
-                }
-            }
-        }
 
         Table { conn }
     }

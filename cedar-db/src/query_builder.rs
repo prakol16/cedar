@@ -142,6 +142,8 @@ impl ExprWithBindings {
 /// Does the translation from Cedar to SQL
 pub fn translate_expr_with_renames<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U), unknown_map: &HashMap<UnknownType, UnknownType>) -> Result<QueryBuilder> {
     let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
+    // The request environment should no longer matter, so this is a dirty hack to
+    // allocate memory for a request environment that we know will actually never be used.
     let req_env = RandomRequestEnv::new();
     let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
         .ok_or(QueryExprError::TypecheckError)?;
