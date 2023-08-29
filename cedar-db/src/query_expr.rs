@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use cedar_policy::EntityTypeName;
 use cedar_policy_core::{ast::{Expr, Literal, UnaryOp, BinaryOp, Pattern, ExprKind, SlotId, Var, Name, EntityType}, entities::SchemaType};
-use cedar_policy_validator::types::{Type, Primitive, EntityRecordKind, EntityLUB};
+use cedar_policy_validator::types::{Type, Primitive, EntityRecordKind, EntityLUB, OpenTag};
 use ref_cast::RefCast;
 use smol_str::SmolStr;
 use thiserror::Error;
@@ -32,6 +32,8 @@ pub enum QueryExprError {
     NotAttrReducedGetAttrEntity,
     #[error("Nested sets are not supported.")]
     NestedSetsError,
+    #[error("Incomparable types: comparing sets or comparing records with incomparable values is not supprted")]
+    IncomparableTypes,
 }
 
 type Result<T> = std::result::Result<T, QueryExprError>;
@@ -169,6 +171,22 @@ impl Default for QueryExpr {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ComparableResult {
+    Incomparable,
+    ComparableAsMutualContains,
+    ComparableAsEq,
+}
+
+impl ComparableResult {
+    pub fn must_be_eq(self) -> Self {
+        match self {
+            ComparableResult::ComparableAsEq => self,
+            _ => ComparableResult::Incomparable
+        }
+    }
+}
+
 impl QueryExpr {
     pub fn eq_or_in_entity(left: QueryExpr, right: QueryExpr, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
         let eq_expr = if left_type == right_type {
@@ -213,6 +231,67 @@ impl QueryExpr {
                 right: Box::new(inset_expr)
             },
             None => inset_expr
+        }
+    }
+
+    /// Returns true if types `t1` and `t2` are comparable using = in SQL
+    /// The only disallowed comparable types are sets (which are still comparable by mutual contains if
+    /// the element type is comparable by equals)
+    /// and records which might contain something that cannot be compared by equals.
+    /// This is because set equality requires sorting/some canonical order
+    fn are_comparable(t1: &Type, t2: &Type) -> Result<ComparableResult> {
+        match (t1, t2) {
+            (Type::EntityOrRecord(EntityRecordKind::Record { attrs, open_attributes }),
+                Type::EntityOrRecord(EntityRecordKind::Record { attrs: attrs2, open_attributes: open_attributes2 })) => {
+                if *open_attributes == OpenTag::OpenAttributes || *open_attributes2 == OpenTag::OpenAttributes {
+                    // Since the attributes are open, in particular the records may contain sets, so they are incomparable
+                    Ok(ComparableResult::Incomparable)
+                } else {
+                    for (k, v) in attrs.iter() {
+                        if let Some(v2) = attrs2.get_attr(k) {
+                            if QueryExpr::are_comparable(&v.attr_type, &v2.attr_type)? != ComparableResult::ComparableAsEq {
+                                return Ok(ComparableResult::Incomparable);
+                            }
+                        }
+                    }
+                    return Ok(ComparableResult::ComparableAsEq);
+                }
+            },
+            (Type::Set { element_type: e1 }, Type::Set { element_type: e2 }) => {
+                let e1 = e1.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                let e2 = e2.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                if QueryExpr::are_comparable(e1, e2)? == ComparableResult::ComparableAsEq {
+                    Ok(ComparableResult::ComparableAsMutualContains)
+                } else {
+                    Ok(ComparableResult::Incomparable)
+                }
+            },
+            _ => Ok(ComparableResult::ComparableAsEq)
+        }
+    }
+
+    fn are_op_comparable(op: BinaryOp, t1: &Type, t2: &Type) -> Result<ComparableResult> {
+        match op {
+            BinaryOp::Eq => QueryExpr::are_comparable(t1, t2),
+            BinaryOp::Contains => {
+                match t1 {
+                    Type::Set { element_type } =>
+                        Ok(QueryExpr::are_comparable(t1, element_type.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?)?
+                            .must_be_eq()),
+                    _ => Err(QueryExprError::TypecheckError)
+                }
+            },
+            BinaryOp::ContainsAll | BinaryOp::ContainsAny => {
+                match (t1, t2) {
+                    (Type::Set { element_type: e1 }, Type::Set { element_type: e2 }) => {
+                        let e1 = e1.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                        let e2 = e2.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                        Ok(QueryExpr::are_comparable(e1, e2)?.must_be_eq())
+                    },
+                    _ => Err(QueryExprError::TypecheckError)
+                }
+            },
+            _ => Ok(ComparableResult::ComparableAsEq)
         }
     }
 }
@@ -268,11 +347,31 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                         _ => Err(QueryExprError::TypecheckError)
                     }
                 } else {
-                    Ok(QueryExpr::BinaryApp {
-                        op: *op,
-                        left: Box::new(QueryExpr::try_from(arg1.as_ref())?),
-                        right: Box::new(QueryExpr::try_from(arg2.as_ref())?),
-                    })
+                    match QueryExpr::are_op_comparable(*op, arg1.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?,
+                                                       arg2.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?)? {
+                        ComparableResult::Incomparable => Err(QueryExprError::IncomparableTypes),
+                        ComparableResult::ComparableAsEq => Ok(QueryExpr::BinaryApp {
+                            op: *op,
+                            left: Box::new(QueryExpr::try_from(arg1.as_ref())?),
+                            right: Box::new(QueryExpr::try_from(arg2.as_ref())?),
+                        }),
+                        ComparableResult::ComparableAsMutualContains => {
+                            let left_query_expr = QueryExpr::try_from(arg1.as_ref())?;
+                            let right_query_expr = QueryExpr::try_from(arg2.as_ref())?;
+                            Ok(QueryExpr::And {
+                                left: Box::new(QueryExpr::BinaryApp {
+                                    op: BinaryOp::ContainsAll,
+                                    left: Box::new(left_query_expr.clone()),
+                                    right: Box::new(right_query_expr.clone()),
+                                }),
+                                right: Box::new(QueryExpr::BinaryApp {
+                                    op: BinaryOp::ContainsAll,
+                                    left: Box::new(right_query_expr),
+                                    right: Box::new(left_query_expr),
+                                }),
+                            })
+                        }
+                    }
                 }
             },
             ExprKind::MulByConst { arg, constant } => Ok(QueryExpr::MulByConst {
@@ -592,8 +691,3 @@ impl ExprWithBindings {
         &self.free_vars
     }
 }
-
-// #[test]
-// fn test() {
-//     let ex: Expr = r#"unknown("foo: "#.parse().unwrap();
-// }

@@ -226,13 +226,10 @@ mod test {
                                         "age": {
                                             "type": "Long"
                                         },
-                                        "nestedSetAttr": {
+                                        "setAttr": {
                                             "type": "Set",
                                             "element": {
-                                                "type": "Set",
-                                                "element": {
-                                                    "type": "Long"
-                                                }
+                                                "type": "Long"
                                             }
                                         }
                                     }
@@ -432,11 +429,21 @@ mod test {
     }
 
     #[test]
-    fn test_nested_array() {
+    fn test_json_array_cast() {
         let result = translate_expr_test(
-            r#"unknown("user: Users").info.nestedSetAttr.contains([6, 10, 11])"#.parse().unwrap(),
+            r#"unknown("user: Users").info.setAttr.containsAll([6, 10, 11])"#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE (ARRAY[6, 10, 11]) = ANY(Array((SELECT Array((SELECT CAST("result_d1"."value" AS integer) FROM jsonb_array_elements("result_d2"."value") AS "result_d1")) FROM jsonb_array_elements("user"."info" -> 'nestedSetAttr') AS "result_d2")))"#)
+        println!("{}", result);
+        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE Array((SELECT CAST("result"."value" AS integer) FROM jsonb_array_elements("user"."info" -> 'setAttr') AS "result")) @> (ARRAY[6, 10, 11])"#)
+    }
+
+    #[test]
+    fn test_json_array_eq() {
+        let result = translate_expr_test(
+            r#"unknown("user: Users").info.setAttr == [6, 10, 11]"#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE Array((SELECT CAST("result"."value" AS integer) FROM jsonb_array_elements("user"."info" -> 'setAttr') AS "result")) @> (ARRAY[6, 10, 11]) AND (ARRAY[6, 10, 11]) @> Array((SELECT CAST("result"."value" AS integer) FROM jsonb_array_elements("user"."info" -> 'setAttr') AS "result"))"#);
     }
 }

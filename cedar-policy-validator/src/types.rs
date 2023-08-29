@@ -907,7 +907,7 @@ impl Attributes {
     /// Get a tuple containing a boolean flag specifying if a attribute is
     /// required in the record and the type of the attribute. Returns None when
     /// the attribute is not in the record.
-    pub(crate) fn get_attr(&self, attr: &str) -> Option<&AttributeType> {
+    pub fn get_attr(&self, attr: &str) -> Option<&AttributeType> {
         self.attrs.get(attr)
     }
 
