@@ -30,6 +30,8 @@ pub enum QueryExprError {
     NotAttrReduced(SmolStr),
     #[error("Not attr-reduced. Argument of GetAttrEntity is not an entity deref unknown. Consider calling `reduce_attrs()`.")]
     NotAttrReducedGetAttrEntity,
+    #[error("Nested sets are not supported.")]
+    NestedSetsError,
 }
 
 type Result<T> = std::result::Result<T, QueryExprError>;
@@ -38,7 +40,7 @@ type Result<T> = std::result::Result<T, QueryExprError>;
 // This is the type information needed to cast a non-set Cedar value to a non-array SQL value
 // Note that `String` and `EntityId` are unified because both are represented as SQL strings
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CastableType {
+pub enum QueryPrimitiveType {
     Bool,
     Long,
     StringOrEntity,
@@ -46,52 +48,49 @@ pub enum CastableType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CastableTypeWithSet {
-    nesting: usize,
-    tp: CastableType,
+pub enum QueryType {
+    Primitive(QueryPrimitiveType),
+    Array(QueryPrimitiveType)
 }
 
-impl CastableTypeWithSet {
-    pub fn get_type(&self) -> CastableType {
-        self.tp
+impl QueryType {
+    pub fn get_type(self) -> QueryPrimitiveType {
+        match self {
+            QueryType::Primitive(t) => t,
+            QueryType::Array(t) => t,
+        }
     }
 
-    pub fn get_nesting(&self) -> usize {
-        self.nesting
-    }
-
-    pub fn incr_nesting(&mut self) {
-        self.nesting += 1;
-    }
-
-    pub fn decr_nesting(&mut self) {
-        self.nesting -= 1;
-    }
-}
-
-impl From<CastableType> for CastableTypeWithSet {
-    fn from(tp: CastableType) -> Self {
-        CastableTypeWithSet { tp, nesting: 0 }
+    pub fn promote(self) -> Result<Self> {
+        match self {
+            QueryType::Primitive(t) => Ok(QueryType::Array(t)),
+            QueryType::Array(_) => Err(QueryExprError::NestedSetsError),
+        }
     }
 }
 
-impl TryFrom<&Type> for CastableTypeWithSet {
+impl From<QueryPrimitiveType> for QueryType {
+    fn from(tp: QueryPrimitiveType) -> Self {
+        QueryType::Primitive(tp)
+    }
+}
+
+impl TryFrom<&Type> for QueryType {
     type Error = QueryExprError;
 
     fn try_from(value: &Type) -> Result<Self> {
         match value {
-            Type::Never | Type::True | Type::False | Type::Primitive { primitive_type: Primitive::Bool } => Ok(CastableType::Bool.into()),
-            Type::Primitive { primitive_type: Primitive::Long } => Ok(CastableType::Long.into()),
-            Type::Primitive { primitive_type: Primitive::String } => Ok(CastableType::StringOrEntity.into()),
+            Type::Never | Type::True | Type::False | Type::Primitive { primitive_type: Primitive::Bool } => Ok(QueryPrimitiveType::Bool.into()),
+            Type::Primitive { primitive_type: Primitive::Long } => Ok(QueryPrimitiveType::Long.into()),
+            Type::Primitive { primitive_type: Primitive::String } => Ok(QueryPrimitiveType::StringOrEntity.into()),
             Type::Set { element_type } => {
-                let mut inner_result: CastableTypeWithSet = element_type.as_deref()
+                let inner_result: QueryType = element_type.as_deref()
                     .ok_or(QueryExprError::TypeAnnotationNone)?
                     .try_into()?;
-                inner_result.incr_nesting();
-                Ok(inner_result)
+                inner_result.promote()
             },
-            Type::EntityOrRecord(EntityRecordKind::Record { .. }) => Ok(CastableType::Record.into()),
-            Type::EntityOrRecord(_) => Ok(CastableType::StringOrEntity.into()),
+            Type::EntityOrRecord(EntityRecordKind::Record { .. }) => Ok(QueryPrimitiveType::Record.into()),
+            Type::EntityOrRecord(_) => Ok(QueryPrimitiveType::StringOrEntity.into()),
             Type::ExtensionType { name } => Err(QueryExprError::ExtensionFunctionAppears(name.to_owned())),
         }
     }
@@ -151,8 +150,8 @@ pub enum QueryExpr {
     GetAttrRecord {
         expr: Box<QueryExpr>,
         attr: SmolStr,
-        result_type: CastableTypeWithSet  // we need to know the result type because sometimes
-                                          // the result will be "json" by default and we need to cast it
+        result_type: QueryType  // we need to know the result type because sometimes
+                                // the result will be "json" by default and we need to cast it
     },
     HasAttrRecord {
         expr: Box<QueryExpr>,
@@ -327,6 +326,7 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                 })
             },
             ExprKind::Set(s) => {
+                QueryType::try_from(value.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?)?;
                 Ok(QueryExpr::Set(s.iter().map(|e| QueryExpr::try_from(e)).collect::<Result<Vec<_>>>()?))
             },
             ExprKind::Record { pairs } =>  Ok(QueryExpr::Record {
