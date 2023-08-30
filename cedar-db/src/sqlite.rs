@@ -66,16 +66,25 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
             }, ancestors)
     }
 
-
-    pub fn get_single_attr(&self, conn: &Connection, id: &EntityId, attr: &str) -> Result<Value, EntityAttrAccessError<DatabaseToCedarError>> {
+    pub fn get_single_attr_as<T: FromSql>(&self, conn: &Connection, id: &EntityId, attr: &str) -> Result<T, EntityAttrAccessError<DatabaseToCedarError>> {
         let query = self.get_single_attr_select(id, attr).ok_or(EntityAttrAccessError::UnknownAttr)?;
-        let query_result: SQLValue = conn.query_row(&query.to_string(SqliteQueryBuilder), [], |row| row.get(0)).optional()
+        let query_result: T = conn.query_row(&query.to_string(SqliteQueryBuilder), [], |row| row.get(0)).optional()
             .map_err(DatabaseToCedarError::from)?
             .ok_or(EntityAttrAccessError::UnknownEntity)?;
+        Ok(query_result)
+    }
+
+    pub fn get_single_attr(&self, conn: &Connection, id: &EntityId, attr: &str) -> Result<Value, EntityAttrAccessError<DatabaseToCedarError>> {
+        let query_result: SQLValue = self.get_single_attr_as(conn, id, attr)?;
         match query_result {
             SQLValue(Some(v)) => Ok(v),
             SQLValue(None) => Err(EntityAttrAccessError::UnknownAttr)
         }
+    }
+
+    pub fn get_single_attr_as_id(&self, conn: &Connection, id: &EntityId, attr: &str, tp: EntityTypeName) -> Result<EntityUid, EntityAttrAccessError<DatabaseToCedarError>> {
+        let query_result: EntitySQLId = self.get_single_attr_as(conn, id, attr)?;
+        Ok(query_result.into_uid(tp).into())
     }
 
     pub fn exists_entity(&self, conn: &Connection, id: &EntityId) -> Result<bool, DatabaseToCedarError> {
