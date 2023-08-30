@@ -1,3 +1,5 @@
+pub mod sql_common;
+
 #[cfg(feature = "rusqlite")]
 pub mod sqlite;
 
@@ -9,6 +11,28 @@ pub mod query_expr_iterator;
 pub mod expr_to_query;
 pub mod query_builder;
 
+#[cfg(test)]
+mod idens {
+    #[derive(sea_query::Iden)]
+    pub(crate) enum Idens {
+        Users,
+            Ancestors,
+        Photos,
+        Assignments,
+            Owner,
+        TeamMemberships,
+            UserId,
+            TeamId,
+            User,
+            Team,
+        UsersInTeams,
+            UserUid,
+            TeamUid,
+        Docs,
+        Teams,
+    }
+}
+
 #[cfg(feature = "postgres")]
 #[cfg(test)]
 mod test_postgres {
@@ -17,7 +41,7 @@ mod test_postgres {
     use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EntityAttrDatabase, PartialValue, EntityAttrAccessError, CachedEntities, Decision};
     use postgres::{Client, NoTls};
 
-    use crate::postgres::*;
+    use crate::{postgres::*, sql_common::{EntitySQLInfo, AncestorSQLInfo, DatabaseToCedarError}, idens::Idens};
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "host=localhost user=postgres dbname=example_postgres password=postgres";
@@ -27,11 +51,11 @@ mod test_postgres {
         static ref TEAMS_TYPE: EntityTypeName = "Teams".parse().unwrap();
         static ref ASSIGNMENTS_TYPE: EntityTypeName = "Assignments".parse().unwrap();
 
-        static ref USERS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("users", vec!["name", "age"], Some("ancestors"));
-        static ref PHOTOS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("photos", vec!["title", "location"], Some("ancestors"));
-        static ref ASSIGNMENTS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("assignments", vec!["tasks", "owner"], None);
+        static ref USERS_TABLE_INFO: EntitySQLInfo<PostgresSQLInfo> = EntitySQLInfo::simple(Idens::Users, vec!["name".into(), "age".into()], Some(Idens::Ancestors));
+        static ref PHOTOS_TABLE_INFO: EntitySQLInfo<PostgresSQLInfo> = EntitySQLInfo::simple(Idens::Photos, vec!["title", "location"], Some(Idens::Ancestors));
+        static ref ASSIGNMENTS_TABLE_INFO: EntitySQLInfo<PostgresSQLInfo> = EntitySQLInfo::simple(Idens::Assignments, vec!["tasks", "owner"], Some(Idens::Owner));
 
-        static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<'static> = AncestorSQLInfo::new("team_memberships", "user_id", "team_id");
+        static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<PostgresSQLInfo> = AncestorSQLInfo::new(Idens::TeamMemberships, Idens::UserId, Idens::TeamId);
     }
 
 
@@ -51,7 +75,7 @@ mod test_postgres {
         struct Table;
 
         impl EntityAttrDatabase for Table {
-            type Error = PostgresToCedarError;
+            type Error = DatabaseToCedarError;
 
             fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error> {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
@@ -117,7 +141,7 @@ mod test_postgres {
         struct Table;
 
         impl EntityDatabase for Table {
-            type Error = PostgresToCedarError;
+            type Error = DatabaseToCedarError;
 
             fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error> {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
@@ -181,7 +205,7 @@ mod test_sqlite {
     use rusqlite::Connection;
     use sea_query::{Alias, SqliteQueryBuilder};
 
-    use crate::{sqlite::*, expr_to_query::{InByTable, InByLambda}, query_builder::{translate_response, translate_expr}};
+    use crate::{{sqlite::*, sql_common::{EntitySQLInfo, AncestorSQLInfo, DatabaseToCedarError}, idens::Idens}, expr_to_query::{InByTable, InByLambda}, query_builder::{translate_response, translate_expr}};
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/example_sqlite.db";
@@ -190,10 +214,10 @@ mod test_sqlite {
         static ref PHOTOS_TYPE: EntityTypeName = "Photos".parse().unwrap();
         static ref TEAMS_TYPE: EntityTypeName = "Teams".parse().unwrap();
 
-        static ref USERS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("users", vec!["name", "age"], Some("ancestors"));
-        static ref PHOTOS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("photos", vec!["title", "location"], Some("ancestors"));
+        static ref USERS_TABLE_INFO: EntitySQLInfo<SQLiteSQLInfo> = EntitySQLInfo::simple(Idens::Users, vec!["name", "age"], Some(Idens::Ancestors));
+        static ref PHOTOS_TABLE_INFO: EntitySQLInfo<SQLiteSQLInfo> = EntitySQLInfo::simple(Idens::Photos, vec!["title", "location"], Some(Idens::Ancestors));
 
-        static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<'static> = AncestorSQLInfo::new("team_memberships", "user", "team");
+        static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<SQLiteSQLInfo> = AncestorSQLInfo::new(Idens::TeamMemberships, Idens::User, Idens::Team);
     }
 
     fn get_conn() -> Connection {
@@ -207,7 +231,7 @@ mod test_sqlite {
         struct Table { conn: Connection }
 
         impl EntityDatabase for Table {
-            type Error = rusqlite::Error;
+            type Error = DatabaseToCedarError;
 
             fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error> {
                 match uid.type_name() {
@@ -354,9 +378,9 @@ mod test_sqlite {
                         panic!("There should not be any in's in the residual")
                     }), |tp| {
                         (if *tp == *USERS_TYPE {
-                            Alias::new(USERS_TABLE_INFO.table)
+                            Idens::Users
                         } else if *tp == *PHOTOS_TYPE {
-                            Alias::new(PHOTOS_TABLE_INFO.table)
+                            Idens::Photos
                         } else {
                             panic!("Unknown type")
                         }, Alias::new("uid"))
@@ -378,7 +402,9 @@ mod test_sqlite {
     fn test_ancestors() {
         let conn = Connection::open(&*DB_PATH).expect("Connection failed");
 
-        println!("Ancestors: {:?}", USERS_TEAMS_MEMBERSHIP_INFO.get_ancestors(&conn, &"1".parse().unwrap(), &TEAMS_TYPE));
+        let ancestors = USERS_TEAMS_MEMBERSHIP_INFO.get_ancestors(&conn, &"1".parse().unwrap(), &TEAMS_TYPE)
+            .expect("Failed to get ancestors");
+        assert!(ancestors.contains(&"Teams::\"0\"".parse().unwrap()));
 
         assert!(USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&conn, &"1".parse().unwrap(), &"0".parse().unwrap()).expect("Failed to check ancestor"));
 
@@ -397,7 +423,6 @@ mod test_sqlite {
             &get_sqlite_table());
         assert!(result.decision() == Decision::Allow);
     }
-
 }
 
 #[cfg(feature = "rusqlite")]
@@ -410,7 +435,7 @@ mod test_docs_example {
     use rusqlite::Connection;
     use sea_query::Alias;
 
-    use crate::{sqlite::*, query_builder::translate_response, expr_to_query::InByTable};
+    use crate::{sqlite::*, query_builder::translate_response, expr_to_query::InByTable, sql_common::{EntitySQLInfo, AncestorSQLInfo, DatabaseToCedarError, EntitySQLId}, idens::Idens};
 
 
     lazy_static::lazy_static! {
@@ -420,17 +445,17 @@ mod test_docs_example {
         static ref DOCS_TYPE: EntityTypeName = "Documents".parse().unwrap();
         static ref TEAMS_TYPE: EntityTypeName = "Teams".parse().unwrap();
 
-        static ref USERS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("users", vec!["role"], None);
-        static ref DOCS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("docs", vec!["title", "owner"], None);
-        static ref TEAMS_TABLE_INFO: EntitySQLInfo<'static> = EntitySQLInfo::simple("teams", vec!["name"], None);
+        static ref USERS_TABLE_INFO: EntitySQLInfo<SQLiteSQLInfo> = EntitySQLInfo::simple(Idens::Users, vec!["role"], None::<Idens>);
+        static ref DOCS_TABLE_INFO: EntitySQLInfo<SQLiteSQLInfo> = EntitySQLInfo::simple(Idens::Docs, vec!["title", "owner"], None::<Idens>);
+        static ref TEAMS_TABLE_INFO: EntitySQLInfo<SQLiteSQLInfo> = EntitySQLInfo::simple(Idens::Teams, vec!["name"], None::<Idens>);
 
-        static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<'static> = AncestorSQLInfo::new("users_in_teams", "user_uid", "team_uid");
+        static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<SQLiteSQLInfo> = AncestorSQLInfo::new(Idens::UsersInTeams, Idens::UserUid, Idens::TeamUid);
     }
 
     struct Table { conn: Connection }
 
     impl EntityAttrDatabase for Table {
-        type Error = rusqlite::Error;
+        type Error = DatabaseToCedarError;
 
         fn partial_mode(&self) -> cedar_policy::Mode {
             cedar_policy::Mode::Concrete
@@ -466,7 +491,7 @@ mod test_docs_example {
         }
     }
 
-    fn get_table_info(tp: &EntityTypeName) -> Option<&EntitySQLInfo<'static>> {
+    fn get_table_info(tp: &EntityTypeName) -> Option<&EntitySQLInfo<SQLiteSQLInfo>> {
         match tp {
             t if *t == *USERS_TYPE => Some(&USERS_TABLE_INFO),
             t if *t == *DOCS_TYPE => Some(&DOCS_TABLE_INFO),
@@ -604,12 +629,12 @@ mod test_docs_example {
                 let mut query = translate_response(&resp, &schema,
                     InByTable(|tp1, tp2| {
                         Ok(if tp1 == &*USERS_TYPE && tp2 == &*TEAMS_TYPE {
-                            Some((Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.table), Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.child_id), Alias::new(USERS_TEAMS_MEMBERSHIP_INFO.parent_id)))
+                            Some((Idens::UsersInTeams, Idens::UserUid, Idens::TeamUid))
                         } else {
                             None
                         })
                     }), |tp| {
-                        (Alias::new(get_table_info(tp).expect("Entity type should be one of known entity types").table), Alias::new("uid"))
+                        (get_table_info(tp).expect("Entity type should be one of known entity types").table.clone(), Alias::new("uid"))
                     }).expect("Failed to translate response");
                 query.query_default().expect("Query should have exactly one unknown");
                 query.query_default_attr("title").unwrap();
