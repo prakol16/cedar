@@ -82,7 +82,7 @@ impl EntityUIDEntry {
     pub fn uid(&self) -> Option<&EntityUID> {
         match self {
             Self::Concrete(euid) => Some(euid),
-            Self::Unknown => None,
+            Self::Unknown(_) => None,
         }
     }
 }
