@@ -298,7 +298,7 @@ mod test {
             r#"(if unknown("resource: Photos").owner == Users::"0" then Photos::"beach" else Photos::"carnival") == unknown("resource: Photos").nextPhoto"#.parse().unwrap(),
             &get_schema(),
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" WHERE ((CASE WHEN ("resource"."owner" = '0') THEN 'beach' ELSE 'carnival' END)) = "resource"."nextPhoto""#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" WHERE (CASE WHEN ("resource"."owner" = '0') THEN 'beach' ELSE 'carnival' END) = "resource"."nextPhoto""#);
     }
 
     #[test]
@@ -334,7 +334,7 @@ mod test {
             r#"(if unknown("resource: Photos") == Photos::"0" || unknown("resource: Photos") == Photos::"1" then unknown("resource: Photos") else unknown("resource: Photos").nextPhoto).owner == Users::"2""#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" LEFT JOIN "Photos" AS "temp__0" ON ((CASE WHEN ("resource"."uid" = '0' OR "resource"."uid" = '1') THEN "resource"."uid" ELSE "resource"."nextPhoto" END)) = "temp__0"."uid" WHERE "temp__0"."owner" = '2'"#);
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" LEFT JOIN "Photos" AS "temp__0" ON (CASE WHEN ("resource"."uid" = '0' OR "resource"."uid" = '1') THEN "resource"."uid" ELSE "resource"."nextPhoto" END) = "temp__0"."uid" WHERE "temp__0"."owner" = '2'"#);
     }
 
     #[test]
