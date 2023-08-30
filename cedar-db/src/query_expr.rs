@@ -20,6 +20,12 @@ pub enum QueryExprError {
     UnknownNotAnnotated(SmolStr),
     #[error("Found extension function call {0}. Extension functions are not currently supported.")]
     ExtensionFunctionAppears(Name),
+    #[error("Extension function `rawsql` called with unknown named {0}; name should be __RAWSQL")]
+    RawSQLFirstArgIncorrect(SmolStr),
+    #[error("Extension function `rawsql` not called with unknown as first argument")]
+    RawSQLFirstArgNotUnknown,
+    #[error("Cannot construct dynamic SQL queries")]
+    RawSQLDynamic,
     #[error("Typecheck error: Type annotation `None` on expression.")]
     TypeAnnotationNone,
     #[error("Type error: does not have correctly inferred types. Make sure to do `typecheck` or `strict_transform` before calling this function.")]
@@ -162,7 +168,8 @@ pub enum QueryExpr {
     IsNotNull(Box<QueryExpr>), // we use this instead of `HasAttr` on entities
     Like { expr: Box<QueryExpr>, pattern: Pattern },
     Set(Vec<QueryExpr>),
-    Record { pairs: Vec<(SmolStr, QueryExpr)> }
+    Record { pairs: Vec<(SmolStr, QueryExpr)> },
+    RawSQL { sql: SmolStr, args: Vec<QueryExpr> }
 }
 
 impl Default for QueryExpr {
@@ -378,7 +385,36 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                 arg: Box::new(QueryExpr::try_from(arg.as_ref())?),
                 constant: *constant,
             }),
-            ExprKind::ExtensionFunctionApp { fn_name, .. } => Err(QueryExprError::ExtensionFunctionAppears(fn_name.to_owned())),
+            ExprKind::ExtensionFunctionApp { fn_name, args } => {
+                if fn_name.namespace() == "rawsql" {
+                    let mut args_iter = args.iter();
+                    // Ignore the first argument because it must be an unknown
+                    match args_iter.next() {
+                        Some(e) => {
+                            match e.expr_kind() {
+                                ExprKind::Unknown { name, .. } => {
+                                    if name != "__RAWSQL" {
+                                        return Err(QueryExprError::RawSQLFirstArgIncorrect(name.to_owned()));
+                                    }
+                                },
+                                _ => return Err(QueryExprError::RawSQLFirstArgNotUnknown)
+                            }
+                        },
+                        _ => return Err(QueryExprError::RawSQLFirstArgNotUnknown)
+                    };
+                    let sql = match args_iter.next() {
+                        Some(e) => match e.expr_kind() {
+                            ExprKind::Lit(Literal::String(s)) => s.to_owned(),
+                            _ => return Err(QueryExprError::RawSQLDynamic)
+                        },
+                        _ => return Err(QueryExprError::TypecheckError)
+                    };
+                    let args = args_iter.map(|e| QueryExpr::try_from(e)).collect::<Result<Vec<_>>>()?;
+                    Ok(QueryExpr::RawSQL { sql, args })
+                } else {
+                    Err(QueryExprError::ExtensionFunctionAppears(fn_name.to_owned()))
+                }
+            },
             ExprKind::GetAttr { expr, attr } => {
                 let expr_tp = expr.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?;
                 match expr_tp {

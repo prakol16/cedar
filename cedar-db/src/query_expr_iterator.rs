@@ -35,6 +35,7 @@ pub enum QueryExprParentType {
     Like,
     Set,
     Record,
+    RawSQL
 }
 
 impl<'a> Iterator for QueryExprIterator<'a> {
@@ -101,6 +102,11 @@ impl<'a> Iterator for QueryExprIterator<'a> {
                     self.expression_stack.push((value, Some(QueryExprParentType::Record)));
                 }
             },
+            QueryExpr::RawSQL { args, .. } => {
+                for arg in args {
+                    self.expression_stack.push((arg, Some(QueryExprParentType::RawSQL)));
+                }
+            }
         };
         Some((next_expr, parent))
     }
@@ -167,6 +173,11 @@ impl QueryExpr {
             QueryExpr::Record { pairs } => {
                 for (_, v) in pairs {
                     v.mut_subexpressions_helper(Some(QueryExprParentType::Record), f);
+                }
+            },
+            QueryExpr::RawSQL { args, .. } => {
+                for arg in args {
+                    arg.mut_subexpressions_helper(Some(QueryExprParentType::RawSQL), f);
                 }
             }
         }

@@ -180,7 +180,7 @@ mod test {
     use std::collections::HashMap;
 
     use cedar_policy::Schema;
-    use cedar_policy_core::{evaluator::RestrictedEvaluator, extensions::Extensions, ast};
+    use cedar_policy_core::{evaluator::RestrictedEvaluator, extensions::Extensions, ast::{self}};
     use sea_query::{Alias, PostgresQueryBuilder};
 
     use crate::{expr_to_query::InByTable, query_expr::UnknownType};
@@ -445,5 +445,14 @@ mod test {
             &get_schema()
         );
         assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE Array((SELECT CAST("result"."value" AS integer) FROM jsonb_array_elements("user"."info" -> 'setAttr') AS "result")) @> (ARRAY[6, 10, 11]) AND (ARRAY[6, 10, 11]) @> Array((SELECT CAST("result"."value" AS integer) FROM jsonb_array_elements("user"."info" -> 'setAttr') AS "result"))"#);
+    }
+
+    #[test]
+    fn test_rawsql() {
+        let result = translate_expr_test(
+            r#"unknown("user: Users").level >= rawsql::long(unknown("__RAWSQL"), "SELECT AVG(level) FROM Users")"#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE (SELECT AVG(level) FROM Users) <= "user"."level""#);
     }
 }

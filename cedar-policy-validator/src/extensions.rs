@@ -26,6 +26,8 @@ pub mod decimal;
 
 pub mod partial_evaluation;
 
+pub mod rawsql;
+
 /// Get schemas for all the available extensions.
 pub fn all_available_extension_schemas() -> Vec<ExtensionSchema> {
     vec![
@@ -34,5 +36,6 @@ pub fn all_available_extension_schemas() -> Vec<ExtensionSchema> {
         #[cfg(feature = "decimal")]
         decimal::extension_schema(),
         partial_evaluation::extension_schema(),
+        rawsql::extension_schema(),
     ]
 }

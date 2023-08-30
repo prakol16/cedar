@@ -365,7 +365,14 @@ impl QueryExpr {
                 .iter()
                 .map(|(k, v)| Ok((k.clone(), v.to_sql_query(ein)?)))
                 .collect::<Result<Vec<_>>>()?)
-            )
+            ),
+            QueryExpr::RawSQL { sql, args } => {
+                let args = args
+                    .iter()
+                    .map(|v| v.to_sql_query(ein))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(sea_query::Expr::cust_with_exprs(sql.to_string(), args))
+            },
         }
     }
 }

@@ -42,9 +42,8 @@ pub fn extension() -> Extension {
                 crate::ast::CallStyle::FunctionStyle,
                 Box::new(make_error),
                 Some(schtp),
-                vec![]
+                vec![None, Some(SchemaType::String)]
             )
         })
     )
 }
-
