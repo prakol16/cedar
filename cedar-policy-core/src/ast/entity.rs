@@ -273,6 +273,13 @@ impl<T> Entity<T> {
         self.ancestors.iter()
     }
 
+    /// Iterate over this entity's attributes
+    pub fn attrs(&self) -> impl Iterator<Item = (&str, &T)> {
+        self.attrs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v))
+    }
+
     /// Create an `Entity` with the given UID, no attributes, and no parents.
     pub fn with_uid(uid: EntityUID) -> Self {
         Self {
@@ -284,7 +291,7 @@ impl<T> Entity<T> {
 
     /// Read-only access the internal `attrs` map of String to T.
     /// This function is available only inside Core.
-    pub(crate) fn attrs(&self) -> &HashMap<SmolStr, T> {
+    pub(crate) fn attrs_map(&self) -> &HashMap<SmolStr, T> {
         &self.attrs
     }
 
