@@ -84,7 +84,7 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
 
     pub fn get_single_attr_as_id(&self, conn: &Connection, id: &EntityId, attr: &str, tp: EntityTypeName) -> Result<EntityUid, EntityAttrAccessError<DatabaseToCedarError>> {
         let query_result: EntitySQLId = self.get_single_attr_as(conn, id, attr)?;
-        Ok(query_result.into_uid(tp).into())
+        Ok(query_result.into_uid(tp))
     }
 
     pub fn exists_entity(&self, conn: &Connection, id: &EntityId) -> Result<bool, DatabaseToCedarError> {
