@@ -350,7 +350,7 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
     fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) ->
         std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
         match self.get(uid) {
-            Some(e) => e.as_ref().attrs().get(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr),
+            Some(e) => e.as_ref().attrs_map().get(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr),
             None => Err(EntityAttrAccessError::UnknownEntity),
         }
     }
