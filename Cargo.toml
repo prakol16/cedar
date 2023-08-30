@@ -8,9 +8,8 @@ members = [
 	"cedar-db"
 ]
 
+resolver = "2"
+
 # Enable global integer overflow detection for the release profile
 [profile.release]
 overflow-checks = true
-
-
-

@@ -274,7 +274,7 @@ impl<T> Entity<T> {
     }
 
     /// Iterate over this entity's attributes
-    pub fn attrs<'s>(&'s self) -> impl Iterator<Item = (&'s str, &'s T)> {
+    pub fn attrs(&self) -> impl Iterator<Item = (&str, &T)> {
         self.attrs
             .iter()
             .map(|(k, v)| (k.as_str(), v))
