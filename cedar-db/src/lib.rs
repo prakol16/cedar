@@ -170,7 +170,7 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName};
+    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, Decision};
 
     use rusqlite::Connection;
 
@@ -189,20 +189,14 @@ mod test_sqlite {
         static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<'static> = AncestorSQLInfo::new("team_memberships", "user", "team");
     }
 
-    #[test]
-    fn test_ancestors() {
+    fn get_conn() -> Connection {
         let conn = Connection::open(&*DB_PATH).expect("Connection failed");
-
-        println!("Ancestors: {:?}", USERS_TEAMS_MEMBERSHIP_INFO.get_ancestors(&conn, &"1".parse().unwrap(), &TEAMS_TYPE));
-
-        assert!(USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&conn, &"1".parse().unwrap(), &"0".parse().unwrap()).expect("Failed to check ancestor"));
-
-        assert!(!USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&conn, &"0".parse().unwrap(), &"1".parse().unwrap()).expect("Failed to check ancestor"));
+        conn.pragma_update(None, "case_sensitive_like", true).expect("Failed to set case_sensitive_like");
+        conn
     }
 
-    #[test]
-    fn test_basic() {
-        let conn = Connection::open(&*DB_PATH).expect("Connection failed");
+    fn get_sqlite_table() -> impl EntityDatabase {
+        let conn = get_conn();
         struct Table { conn: Connection }
 
         impl EntityDatabase for Table {
@@ -221,17 +215,31 @@ mod test_sqlite {
             }
         }
 
+        Table { conn }
+    }
+
+    #[test]
+    fn test_ancestors() {
+        let conn = Connection::open(&*DB_PATH).expect("Connection failed");
+
+        println!("Ancestors: {:?}", USERS_TEAMS_MEMBERSHIP_INFO.get_ancestors(&conn, &"1".parse().unwrap(), &TEAMS_TYPE));
+
+        assert!(USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&conn, &"1".parse().unwrap(), &"0".parse().unwrap()).expect("Failed to check ancestor"));
+
+        assert!(!USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&conn, &"0".parse().unwrap(), &"1".parse().unwrap()).expect("Failed to check ancestor"));
+    }
+
+    #[test]
+    fn test_basic() {
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
-        let result = auth.is_authorized_parsed(
+        let result = auth.is_authorized_full_parsed(
             &Request::new(Some(euid.clone()),
                 Some("Actions::\"view\"".parse().unwrap()),
                 Some("Photos::\"2\"".parse().unwrap()), Context::empty())
             , &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
-            &Table { conn });
-
-        println!("Result {:?}", result);
-        // TODO: assert(result.decision == Allow)
+            &get_sqlite_table());
+        assert!(result.decision() == Decision::Allow);
     }
 
 }
