@@ -128,7 +128,7 @@ pub struct ExtensionFunction {
 
 impl ExtensionFunction {
     /// Create a new `ExtensionFunction` taking any number of arguments
-    fn new(
+    pub fn new(
         name: Name,
         style: CallStyle,
         func: ExtensionFunctionObject,

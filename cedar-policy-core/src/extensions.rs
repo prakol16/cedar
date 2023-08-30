@@ -23,6 +23,8 @@ pub mod ipaddr;
 pub mod decimal;
 pub mod partial_evaluation;
 
+pub mod rawsql;
+
 use crate::ast::{Extension, ExtensionFunction, Name};
 use crate::entities::SchemaType;
 use thiserror::Error;
@@ -34,6 +36,7 @@ lazy_static::lazy_static! {
         #[cfg(feature = "decimal")]
         decimal::extension(),
         partial_evaluation::extension(),
+        rawsql::extension(),
     ];
 }
 
