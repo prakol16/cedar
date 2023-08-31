@@ -455,4 +455,14 @@ mod test {
         );
         assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE (SELECT AVG(level) FROM Users) <= "user"."level""#);
     }
+
+
+    #[test]
+    fn test_rawsql_with_params() {
+        let result = translate_expr_test(
+            r#"unknown("user: Users").level >= rawsql::long(unknown("__RAWSQL"), "SELECT (AVG(level) * $) FROM Users", unknown("user: Users").info.age)"#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE (SELECT (AVG(level) * CAST(("user"."info" -> 'age') AS integer)) FROM Users) <= "user"."level""#);
+    }
 }

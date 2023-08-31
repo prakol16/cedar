@@ -198,7 +198,7 @@ impl<U: IsSQLDatabase> EntitySQLInfo<U> {
 // Make the ancestor set given the JSON representing the ancestors
 pub(crate) fn make_ancestors(ancestors: serde_json::Value) -> Result<HashSet<EntityUid>> {
     ancestors
-        .as_array().ok_or(DatabaseToCedarError::AncestorNotJsonArray)? // TODO: make an error type
+        .as_array().ok_or(DatabaseToCedarError::AncestorNotJsonArray)?
         .iter()
         .map(|x| {
             Ok(EntityUid::from_json(x.clone())?)
