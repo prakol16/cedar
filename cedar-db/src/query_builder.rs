@@ -5,7 +5,7 @@ use cedar_policy_validator::{ValidationMode, typecheck::Typechecker};
 use smol_str::SmolStr;
 use thiserror::Error;
 
-use sea_query::{IntoColumnRef, Alias, IntoIden, Query, SelectStatement, IntoTableRef, TableRef, SeaRc, Iden, SqliteQueryBuilder, PostgresQueryBuilder};
+use sea_query::{IntoColumnRef, Alias, Query, SelectStatement, IntoTableRef, TableRef, SqliteQueryBuilder, PostgresQueryBuilder};
 
 use crate::{query_expr::{ExprWithBindings, QueryExprError, QueryExpr, UnknownType}, expr_to_query::InConfig};
 
@@ -14,8 +14,8 @@ use crate::{query_expr::{ExprWithBindings, QueryExprError, QueryExpr, UnknownTyp
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryBuilder {
     query: SelectStatement,
-    /// Keeps a map of free variables --> (table name, id column name, table added)
-    table_names: HashMap<SmolStr, (bool, TableRef, SeaRc<dyn Iden>)>
+    /// Keeps a map of free variables --> (table added?, table name, id column name)
+    table_names: HashMap<SmolStr, (bool, TableRef, SmolStr)>
 }
 
 #[derive(Debug, Error)]
@@ -62,9 +62,9 @@ impl QueryBuilder {
             *added = true;
         }
 
-        let col = iden.map_or_else(|| id.clone(), |x| Alias::new(x).into_iden());
+        let col = iden.unwrap_or(id.as_str());
 
-        self.query.column((Alias::new(unknown), col));
+        self.query.column((Alias::new(unknown), Alias::new(col)));
         Ok(())
     }
 
@@ -114,12 +114,12 @@ impl QueryBuilder {
 }
 
 impl ExprWithBindings {
-    pub fn to_sql_query<T: IntoTableRef, U: IntoIden>(&self, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<QueryBuilder> {
+    pub fn to_sql_query<T: IntoTableRef>(&self, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr)) -> Result<QueryBuilder> {
         let mut query = Query::select();
         query.and_where(self.expr.to_sql_query(&ein)?);
         for (bv, e) in self.bindings.iter() {
             let (tbl_ref, id_name) = table_names(&bv.ty);
-            let id_name = id_name.into_iden();
+            let id_name = Alias::new(id_name);
             query.join_as(sea_query::JoinType::LeftJoin,
                 tbl_ref, Alias::new(bv.name.clone()),
                 e.to_sql_query(&ein)?.eq((Alias::new(bv.name.as_str()), id_name).into_column_ref()));
@@ -130,7 +130,7 @@ impl ExprWithBindings {
         for unk in unks {
             if let UnknownType::EntityType { ty, name } = unk {
                 let (tbl_ref, id_name) = table_names(ty);
-                unk_table_names.insert(name.clone(), (false, tbl_ref.into_table_ref(), id_name.into_iden()));
+                unk_table_names.insert(name.clone(), (false, tbl_ref.into_table_ref(), id_name));
             }
         }
 
@@ -140,7 +140,7 @@ impl ExprWithBindings {
 
 
 /// Does the translation from Cedar to SQL
-pub fn translate_expr_with_renames<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U), unknown_map: &HashMap<UnknownType, UnknownType>) -> Result<QueryBuilder> {
+pub fn translate_expr_with_renames<T: IntoTableRef>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr), unknown_map: &HashMap<UnknownType, UnknownType>) -> Result<QueryBuilder> {
     let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
     // The request environment should no longer matter, so this is a dirty hack to
     // allocate memory for a request environment that we know will actually never be used.
@@ -149,7 +149,21 @@ pub fn translate_expr_with_renames<T: IntoTableRef, U: IntoIden>(expr: &Expr, sc
         .ok_or(QueryExprError::TypecheckError)?;
 
     let mut query_expr: QueryExpr = (&typed_expr).try_into()?;
-    query_expr.rename(unknown_map);
+    // Rename any unknowns that appear in the query
+    if !unknown_map.is_empty() {
+        query_expr.rename(|u| {
+            if let Some(new_u) = unknown_map.get(u) {
+                *u = new_u.clone();
+            }
+        });
+    }
+    // Rename any ids that appear in the query
+    query_expr.rename_attrs(|tp, attr| {
+        match attr {
+            crate::query_expr::AttrOrId::Attr(_) => (),
+            crate::query_expr::AttrOrId::Id(s) => *s = table_names(tp).1,
+        }
+    });
 
     let mut query_with_bindings: ExprWithBindings = query_expr.into();
     query_with_bindings.reduce_attrs();
@@ -159,12 +173,12 @@ pub fn translate_expr_with_renames<T: IntoTableRef, U: IntoIden>(expr: &Expr, sc
 
 
 /// Does the translation from Cedar to SQL
-pub fn translate_expr<T: IntoTableRef, U: IntoIden>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<QueryBuilder> {
+pub fn translate_expr<T: IntoTableRef>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr)) -> Result<QueryBuilder> {
     translate_expr_with_renames(expr, schema, ein, table_names, &HashMap::new())
 }
 
 
-pub fn translate_response<T: IntoTableRef, U: IntoIden>(resp: &ResidualResponse, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, U)) -> Result<QueryBuilder> {
+pub fn translate_response<T: IntoTableRef>(resp: &ResidualResponse, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr)) -> Result<QueryBuilder> {
     let (permits, forbids): (Vec<_>, Vec<_>) =
         resp.residuals().policies()
             .partition(|p| p.effect() == Effect::Permit);
@@ -198,7 +212,7 @@ mod test {
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
             Ok(Some((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str))))
-        }), |tp| (Alias::new(tp.basename()), Alias::new("uid"))).unwrap();
+        }), |tp| (Alias::new(tp.basename()), "uid".into())).unwrap();
 
         query.query_default().expect("Querying the only unknown should succeed");
         query.to_string_postgres()
@@ -386,7 +400,7 @@ mod test {
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
             Ok(Some((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str))))
-        }), |tp| (Alias::new(tp.basename()), Alias::new("uid")),
+        }), |tp| (Alias::new(tp.basename()), "uid".into()),
     &HashMap::from([
             (UnknownType::EntityType { ty: "Photos".parse().unwrap(), name: "resource".into() },
             UnknownType::EntityType { ty: "Photos".parse().unwrap(), name: "pictures".into() }),
@@ -419,7 +433,7 @@ mod test {
             let t2_str = t2.to_string();
             let in_table = format!("{}_in_{}", t1_str, t2_str);
             Ok(Some((Alias::new(in_table), Alias::new(t1_str), Alias::new(t2_str))))
-        }), |tp| (Alias::new(tp.basename()), Alias::new("uid"))).unwrap();
+        }), |tp| (Alias::new(tp.basename()), "uid".into())).unwrap();
 
         query.query_default().expect("Querying the only unknown should succeed");
 

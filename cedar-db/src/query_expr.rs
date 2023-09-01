@@ -679,14 +679,19 @@ impl QueryExpr {
 
     /// Rename all the unknowns in this expression using the given map.
     /// Any unknowns which are not keys in the map are left alone
-    pub fn rename(&mut self, map: &HashMap<UnknownType, UnknownType>) {
-        if map.is_empty() { return; }
-
+    pub fn rename(&mut self, map: impl Fn(&mut UnknownType) -> ()) {
         self.mut_subexpressions(&mut |expr, _| {
             if let QueryExpr::Unknown(u) = expr {
-                if let Some(new_u) = map.get(u) {
-                    *u = new_u.clone();
-                }
+                map(u);
+            }
+        });
+    }
+
+    /// Rename all the attributes in this expression using the given map.
+    pub fn rename_attrs(&mut self, map: impl Fn(&EntityTypeName, &mut AttrOrId) -> ()) {
+        self.mut_subexpressions(&mut |expr, _| {
+            if let QueryExpr::GetAttrEntity { attr, expr_type, .. } = expr {
+                map(expr_type, attr);
             }
         });
     }

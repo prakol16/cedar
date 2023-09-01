@@ -1039,6 +1039,7 @@ impl ValidatorSchema {
             }
 
             for p_entity in action.applies_to.applicable_principal_types() {
+                let p_entity: &EntityType = p_entity;
                 match p_entity {
                     EntityType::Concrete(p_entity) => {
                         if !entity_types.contains_key(p_entity) {
@@ -1050,6 +1051,7 @@ impl ValidatorSchema {
             }
 
             for r_entity in action.applies_to.applicable_resource_types() {
+                let r_entity: &EntityType = r_entity;
                 match r_entity {
                     EntityType::Concrete(r_entity) => {
                         if !entity_types.contains_key(r_entity) {

@@ -6,6 +6,8 @@ pub mod sqlite;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
+pub mod dump_entities;
+
 pub mod query_expr;
 pub mod query_expr_iterator;
 pub mod expr_to_query;
@@ -308,7 +310,7 @@ mod test_sqlite {
         InByLambda {
             ein: |_, _, _, _| panic!("should not be building 'in' statement"),
             ein_set: |_, _, _, _| panic!("should not be building 'in' statement")
-        }, |_| (Alias::new(""), Alias::new(""))).expect("Failed to translate expression")
+        }, |_| (Alias::new(""), "".into())).expect("Failed to translate expression")
         .into_select_statement();
         q.expr(true);
         assert_eq!(q.to_string(SqliteQueryBuilder), r#"SELECT TRUE WHERE 'test _%\randomstuff*' LIKE 'test \_\%\\%*' ESCAPE '\'"#);
@@ -337,7 +339,7 @@ mod test_sqlite {
                 PartialResponse::Concrete(_) => panic!("Response should be residual"),
                 PartialResponse::Residual(res) => {
                     #[allow(unused_mut)]
-                    let mut query = translate_response::<Alias, Alias>(&res, &get_schema(),
+                    let mut query = translate_response::<Alias>(&res, &get_schema(),
                         InByTable::<Alias, Alias, _>(|_, _| {
                             panic!("There should not be any in's in the residual")
                         }), |_| {
@@ -383,7 +385,7 @@ mod test_sqlite {
                             Idens::Photos
                         } else {
                             panic!("Unknown type")
-                        }, Alias::new("uid"))
+                        }, "uid".into())
                     }).expect("Failed to translate response");
                 query.query_default_attr("title").expect("Query should have exactly one unknown");
                 let query =  query.to_string_sqlite();
@@ -433,7 +435,6 @@ mod test_docs_example {
     use cedar_policy::{Authorizer, EntityUid, Request, EntityTypeName, Schema, Decision, PolicySet, EntityAttrDatabase, EntityAttrAccessError, PartialValue, Response, PartialResponse, EntityId};
 
     use rusqlite::Connection;
-    use sea_query::Alias;
 
     use crate::{sqlite::*, query_builder::translate_response, expr_to_query::InByTable, sql_common::{EntitySQLInfo, AncestorSQLInfo, DatabaseToCedarError, EntitySQLId}, idens::Idens};
 
@@ -634,7 +635,7 @@ mod test_docs_example {
                             None
                         })
                     }), |tp| {
-                        (get_table_info(tp).expect("Entity type should be one of known entity types").table.clone(), Alias::new("uid"))
+                        (get_table_info(tp).expect("Entity type should be one of known entity types").table.clone(), "uid".into())
                     }).expect("Failed to translate response");
                 query.query_default().expect("Query should have exactly one unknown");
                 query.query_default_attr("title").unwrap();
