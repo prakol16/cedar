@@ -1,5 +1,5 @@
 [package]
-name = "cedar-db-example"
+name = "cedar-db"
 edition = "2021"
 
 version = "2.3.0"
