@@ -3,13 +3,13 @@
 //! This is particularly useful for testing or for migrating from
 //! a JSON-based store to a SQL-based store
 
-use std::{fmt, collections::HashMap};
+use std::collections::HashMap;
 
 use cedar_policy::{Schema, EntityTypeName};
-use cedar_policy_core::ast::Name;
-use cedar_policy_validator::types::{Type, EntityRecordKind};
+
+use cedar_policy_validator::{types::{Type, EntityRecordKind}, ValidatorEntityType};
 use ref_cast::RefCast;
-use sea_query::{TableCreateStatement, Table, Iden, ColumnDef, ColumnType, Alias, ForeignKey};
+use sea_query::{TableCreateStatement, Table, Iden, ColumnDef, ColumnType, Alias, ForeignKey, ForeignKeyCreateStatement, IntoTableRef, TableRef, IntoIden};
 use smol_str::SmolStr;
 use thiserror::Error;
 
@@ -27,15 +27,20 @@ pub enum DumpEntitiesError {
 
 type Result<T> = std::result::Result<T, DumpEntitiesError>;
 
+#[derive(Iden)]
+#[iden = "cedar"]
+pub struct CedarSQLSchemaName;
+
 /// The name of the table for a given entity type
 /// The name of the table will be "entity_{entity_type}"
 #[derive(Debug, Clone, PartialEq, Eq, Hash, RefCast)]
 #[repr(transparent)]
 pub struct EntityTableIden(EntityTypeName);
 
-impl Iden for EntityTableIden {
-    fn unquoted(&self,s: &mut dyn fmt::Write) {
-        write!(s, "entity_{}", self.0).unwrap();
+impl IntoTableRef for EntityTableIden {
+    fn into_table_ref(self) -> TableRef {
+        TableRef::SchemaTable(CedarSQLSchemaName.into_iden(),
+            Alias::new(format!("entity_{}", self.0)).into_iden())
     }
 }
 
@@ -67,9 +72,10 @@ impl EntityAncestryTableIden {
     }
 }
 
-impl Iden for EntityAncestryTableIden {
-    fn unquoted(&self, s: &mut dyn fmt::Write) {
-        write!(s, "ancestry_{}_{}_{}", self.child, self.escaped_str, self.parent).unwrap();
+impl IntoTableRef for EntityAncestryTableIden {
+    fn into_table_ref(self) -> TableRef {
+        TableRef::SchemaTable(CedarSQLSchemaName.into_iden(),
+            Alias::new(format!("ancestry_{}_{}_{}", self.child, self.escaped_str, self.parent)).into_iden())
     }
 }
 
@@ -110,12 +116,10 @@ pub fn create_id_map(schema: &Schema) -> HashMap<EntityTypeName, SmolStr> {
 }
 
 /// Creates a table for a given entity type in the schema
-/// The table will have columns matching the attributes of the entity type, as well as a text type column "uid"
+/// The table will have columns matching the attributes of the entity type, as well as a text type column for the id, whose name is given in id_map
 /// The table will be named "entity_{entity_type}"
-/// Returns the name of the id column of the table (which may be different from "uid" if there are existing attributes called "uid")
-pub fn create_table_from_entity_type(schema: &Schema, ty: &Name, id_map: HashMap<EntityTypeName, SmolStr>, result: &mut Vec<TableCreateStatement>) -> Result<()> {
-    let ety = EntityTypeName::ref_cast(ty);
-    let entity_type = schema.0.get_entity_type(ty).ok_or_else(|| DumpEntitiesError::EntityTypeNotFound(ety.clone()))?;
+/// In addition, we separately add foreign key constraints for the tables (which can be added after all the tables are created)
+pub fn create_table_from_entity_type(entity_type: &ValidatorEntityType, ety: &EntityTypeName, id_map: &HashMap<EntityTypeName, SmolStr>, result: &mut Vec<TableCreateStatement>, foreign_keys: &mut Vec<ForeignKeyCreateStatement>) -> Result<()> {
     let mut table = Table::create();
     let table_name = EntityTableIden(ety.clone());
     table.table(table_name.clone());
@@ -132,19 +136,20 @@ pub fn create_table_from_entity_type(schema: &Schema, ty: &Name, id_map: HashMap
         if let Type::EntityOrRecord(EntityRecordKind::Entity(lub)) = &tp.attr_type {
             let foreign_tp = EntityTypeName::ref_cast(lub.get_single_entity().ok_or(QueryExprError::GetAttrLUBNotSingle)?);
             let foreign_uid = id_map.get(&foreign_tp).ok_or_else(|| DumpEntitiesError::MissingIdInMap(foreign_tp.clone()))?.as_str();
-            table.foreign_key(ForeignKey::create()
-                .from(table_name.clone(), Alias::new(uid_str))
-                .to(EntityTableIden(foreign_tp.clone()), Alias::new(foreign_uid))
-            );
+            let mut foreign_key = ForeignKey::create();
+            foreign_key.from(table_name.clone(), Alias::new(uid_str));
+            foreign_key.to(EntityTableIden(foreign_tp.clone()), Alias::new(foreign_uid));
+            foreign_keys.push(foreign_key);
         }
     }
     result.push(table);
     Ok(())
 }
 
-pub fn create_ancestry_table(schema: &Schema, ty: &Name, id_map: HashMap<EntityTypeName, SmolStr>, result: &mut Vec<TableCreateStatement>) -> Result<()> {
-    let eparent = EntityTypeName::ref_cast(ty);
-    let entity_type = schema.0.get_entity_type(ty).ok_or_else(|| DumpEntitiesError::EntityTypeNotFound(eparent.clone()))?;
+/// Creates a table for the descendants of the given entity type in the schema
+/// Note: these tables already have foreign key constraints attached to them, so they should be created
+/// after the entity tables have been created
+pub fn create_ancestry_table(entity_type: &ValidatorEntityType, eparent: &EntityTypeName, id_map: &HashMap<EntityTypeName, SmolStr>, result: &mut Vec<TableCreateStatement>) -> Result<()> {
     for child in entity_type.descendants.iter() {
         let mut table = Table::create();
         let echild = EntityTypeName::ref_cast(child);
@@ -154,8 +159,8 @@ pub fn create_ancestry_table(schema: &Schema, ty: &Name, id_map: HashMap<EntityT
         // Create two columns for the child and parent ids
         const CHILD_UID: &str = "child_uid";
         const PARENT_UID: &str = "parent_uid";
-        table.col(ColumnDef::new(Alias::new(CHILD_UID)).not_null());
-        table.col(ColumnDef::new(Alias::new(PARENT_UID)).not_null());
+        table.col(ColumnDef::new(Alias::new(CHILD_UID)).text().not_null());
+        table.col(ColumnDef::new(Alias::new(PARENT_UID)).text().not_null());
 
         let child_fk = id_map.get(&echild).ok_or_else(|| DumpEntitiesError::MissingIdInMap(echild.clone()))?.as_str();
         let parent_fk = id_map.get(&eparent).ok_or_else(|| DumpEntitiesError::MissingIdInMap(eparent.clone()))?.as_str();
@@ -171,3 +176,96 @@ pub fn create_ancestry_table(schema: &Schema, ty: &Name, id_map: HashMap<EntityT
     }
     Ok(())
 }
+
+pub fn create_tables(schema: &Schema) -> Result<(Vec<TableCreateStatement>, Vec<ForeignKeyCreateStatement>)> {
+    let mut entity_tables = Vec::new();
+    let mut foreign_keys = Vec::new();
+    let mut ancestry_tables = Vec::new();
+    let id_map = create_id_map(schema);
+    for (name, ty) in schema.0.entity_types() {
+        create_table_from_entity_type(ty, EntityTypeName::ref_cast(name), &id_map, &mut entity_tables, &mut foreign_keys)?;
+        create_ancestry_table(ty, EntityTypeName::ref_cast(name), &id_map, &mut ancestry_tables)?;
+    }
+    Ok((entity_tables.into_iter().chain(ancestry_tables).collect(), foreign_keys))
+}
+
+#[cfg(test)]
+mod test {
+    use std::collections::HashSet;
+
+    use cedar_policy::Schema;
+    use sea_query::PostgresQueryBuilder;
+
+    use super::create_tables;
+
+    fn get_schema() -> Schema {
+        r#"
+        {
+            "": {
+                "entityTypes": {
+                    "Users": {
+                        "shape": {
+                            "type": "Record",
+                            "attributes": {
+                                "name": {
+                                    "type": "String"
+                                },
+                                "age": {
+                                    "type": "Long"
+                                },
+                                "location": {
+                                    "type": "String",
+                                    "required": false
+                                }
+                            }
+                        },
+                        "memberOfTypes": ["Users"]
+                    },
+                    "Photos": {
+                        "shape": {
+                            "type": "Record",
+                            "attributes": {
+                                "title": {
+                                    "type": "String"
+                                },
+                                "user_id": {
+                                    "type": "Entity",
+                                    "name": "Users"
+                                }
+                            }
+                        }
+                    }
+                },
+                "actions": {
+                    "view": {
+                        "appliesTo": {
+                            "principalTypes": ["Users"],
+                            "resourceTypes": ["Photos"]
+                        }
+                    }
+                }
+            }
+        }
+        "#.parse().expect("Schema should not fail to parse")
+    }
+
+    #[test]
+    fn test_create_from_schema() {
+        let schema = get_schema();
+        let (tables, fks) = create_tables(&schema).expect("Should not fail to create tables");
+        let result = tables.into_iter()
+            .map(|t| t.to_string(PostgresQueryBuilder))
+            .chain(
+                fks.into_iter()
+                    .map(|fk| fk.to_string(PostgresQueryBuilder))
+            )
+            .collect::<HashSet<_>>();
+        assert!(result == HashSet::from([
+            r#"CREATE TABLE "cedar"."entity_Users" ( "uid" text PRIMARY KEY, "age" bigint NOT NULL, "location" text, "name" text NOT NULL )"#.into(),
+            r#"CREATE TABLE "cedar"."entity_Photos" ( "uid" text PRIMARY KEY, "title" text NOT NULL, "user_id" text NOT NULL )"#.into(),
+            r#"CREATE TABLE "cedar"."ancestry_Users_,_Users" ( "child_uid" text NOT NULL, "parent_uid" text NOT NULL, FOREIGN KEY ("child_uid") REFERENCES "cedar"."entity_Users" ("uid"), FOREIGN KEY ("parent_uid") REFERENCES "cedar"."entity_Users" ("uid") )"#.into(),
+            r#"ALTER TABLE "cedar"."entity_Photos" ADD FOREIGN KEY ("uid") REFERENCES "cedar"."entity_Users" ("uid")"#.into()
+        ]));
+    }
+}
+
