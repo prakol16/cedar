@@ -1,17 +1,78 @@
 use std::{collections::{HashSet, HashMap}, marker::PhantomData};
 
 use cedar_policy::{Value, EntityUid, EntityId, EntityTypeName};
-use cedar_policy_core::{entities::{JsonDeserializationError, JSONValue}, ast::NotValue, extensions::Extensions, evaluator::RestrictedEvaluator};
+use cedar_policy_core::{entities::{JsonDeserializationError, JSONValue}, ast::{NotValue, Literal}, extensions::Extensions, evaluator::RestrictedEvaluator};
 use ref_cast::RefCast;
-use sea_query::{TableRef, ColumnRef, SelectStatement, Query, Alias, IntoColumnRef, Expr, IntoTableRef};
+use sea_query::{TableRef, ColumnRef, SelectStatement, Query, Alias, IntoColumnRef, Expr, IntoTableRef, ArrayType};
 use smol_str::SmolStr;
 use thiserror::Error;
+
+use crate::query_expr::{QueryType, QueryPrimitiveType};
 
 /// An SQLValue is a wrapper around a Cedar value that implements FromSql
 /// Note: None corresponds to NULL in the database
 #[derive(Debug, Clone, PartialEq, RefCast)]
 #[repr(transparent)]
 pub struct SQLValue(pub(crate) Option<Value>);
+
+impl From<QueryPrimitiveType> for ArrayType {
+    fn from(value: QueryPrimitiveType) -> Self {
+        match value {
+            QueryPrimitiveType::Bool => ArrayType::Bool,
+            QueryPrimitiveType::Long => ArrayType::BigInt,
+            QueryPrimitiveType::StringOrEntity => ArrayType::String,
+            QueryPrimitiveType::Record => ArrayType::Json,
+        }
+    }
+}
+
+/// Given a value, convert it to a JSON value
+/// The difference between this and `JSONValue::from_expr` is that the latter
+/// uses escapes to encode entity uids and extension functions. This, however,
+/// simply encodes entity uids as strings (keeping only the ids), and extensions as null
+/// In particular, note that this transformation is not reversible
+pub fn value_to_json_value(v: &Value) -> serde_json::Value {
+    match v {
+        Value::Lit(Literal::Bool(b)) => (*b).into(),
+        Value::Lit(Literal::Long(i)) => (*i).into(),
+        Value::Lit(Literal::String(s)) => s.as_str().into(),
+        Value::Lit(Literal::EntityUID(uid)) => {
+            let uid_str: &str = uid.eid().as_ref();
+            uid_str.into()
+        },
+        Value::Set(s) => {
+            s.iter().map(|v| value_to_json_value(v)).collect()
+        },
+        Value::Record(r) =>
+            r.iter()
+                .map(|(k, v)| (k.to_string(), value_to_json_value(v)))
+                .collect(),
+        Value::ExtensionValue(_) => serde_json::Value::Null,
+    }
+}
+
+pub fn value_to_sea_query_value(v: &Value, ty: QueryType) -> sea_query::Value {
+    match v {
+        Value::Lit(Literal::Bool(b)) => (*b).into(),
+        Value::Lit(Literal::Long(i)) => (*i).into(),
+        Value::Lit(Literal::String(s)) => s.as_str().into(),
+        Value::Lit(Literal::EntityUID(uid)) => {
+            let uid_str: &str = uid.eid().as_ref();
+            uid_str.into()
+        },
+        Value::Set(s) => {
+            let prim = ty.get_type(); // get the primitive type of the set
+            sea_query::Value::Array(prim.into(),
+                Some(Box::new(
+                    s.iter().map(|v| value_to_sea_query_value(v, prim.into())).collect()
+            )))
+        },
+        Value::Record(_) => value_to_json_value(v).into(),
+        // TODO: we can convert certain extension functions to values
+        // e.g. ip can be converted to native ip types, similarly with datetime, decimal -> int/bigdecimal, etc.
+        Value::ExtensionValue(_) => sea_query::Value::String(None),
+    }
+}
 
 /// An EntitySQLId is a wrapper around an EntityId that implements FromSql
 #[derive(Debug, Clone, PartialEq, RefCast)]

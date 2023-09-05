@@ -9,7 +9,7 @@ use cedar_policy::{Schema, EntityTypeName};
 
 use cedar_policy_validator::{types::{Type, EntityRecordKind}, ValidatorEntityType};
 use ref_cast::RefCast;
-use sea_query::{TableCreateStatement, Table, Iden, ColumnDef, ColumnType, Alias, ForeignKey, ForeignKeyCreateStatement, IntoTableRef, TableRef, IntoIden};
+use sea_query::{TableCreateStatement, Table, Iden, ColumnDef, ColumnType, Alias, ForeignKey, ForeignKeyCreateStatement, IntoTableRef, TableRef, IntoIden, PostgresQueryBuilder};
 use smol_str::SmolStr;
 use thiserror::Error;
 
@@ -53,7 +53,7 @@ pub struct EntityAncestryTableIden {
 
 impl EntityAncestryTableIden {
     /// Create a new table from `child` and `parent`
-    /// We ensure that escaped_str is an injective function of (child, parent)
+    /// We ensure that the table representation is an injective function of (child, parent)
     /// so that two different (child, parent) pairs will necessarily have different table names
     /// By default, the table name will be "ancestry_{child}_,_{parent}"
     pub fn new(child: EntityTypeName, parent: EntityTypeName) -> Self {
@@ -177,6 +177,8 @@ pub fn create_ancestry_table(entity_type: &ValidatorEntityType, eparent: &Entity
     Ok(())
 }
 
+/// Create all the tables necessary in `schema`, including the foreign key constraints
+/// (Note: the ancestry tables already have the foreign key constraints included in the table)
 pub fn create_tables(schema: &Schema) -> Result<(Vec<TableCreateStatement>, Vec<ForeignKeyCreateStatement>)> {
     let mut entity_tables = Vec::new();
     let mut foreign_keys = Vec::new();
@@ -187,6 +189,20 @@ pub fn create_tables(schema: &Schema) -> Result<(Vec<TableCreateStatement>, Vec<
         create_ancestry_table(ty, EntityTypeName::ref_cast(name), &id_map, &mut ancestry_tables)?;
     }
     Ok((entity_tables.into_iter().chain(ancestry_tables).collect(), foreign_keys))
+}
+
+/// Create all the tables necessary in `schema`, including the foreign key constraints
+/// as postgresql statements
+pub fn create_tables_postgres(schema: &Schema) -> Result<Vec<String>> {
+    let (tables, fks) = create_tables(schema)?;
+    let result = tables.into_iter()
+        .map(|t| t.to_string(PostgresQueryBuilder))
+        .chain(
+            fks.into_iter()
+                .map(|fk| fk.to_string(PostgresQueryBuilder))
+        )
+        .collect();
+    Ok(result)
 }
 
 #[cfg(test)]
