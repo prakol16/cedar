@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::query_expr_iterator::{QueryExprParentType, QueryExprIterator};
 
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum QueryExprError {
     #[error("Variable {0} appears in the expression. Consider calling `partial_eval` first.")]
     VariableAppears(Var),

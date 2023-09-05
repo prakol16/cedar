@@ -81,3 +81,21 @@ impl OptionalInsertStatement {
         self.has_values
     }
 }
+
+#[cfg(test)]
+mod test {
+    use sea_query::{SimpleExpr, ArrayType, Value, PostgresQueryBuilder, Query, ColumnRef, Alias};
+
+    #[test]
+    fn test_empty_array() {
+        let empty_array: SimpleExpr = Value::Array(ArrayType::BigInt, Some(Box::new(vec![]))).into();
+        let equality_check = empty_array.clone().eq(empty_array);
+        let query = Query::select()
+            .column(ColumnRef::Asterisk)
+            .from(Alias::new("tbl"))
+            .and_where(equality_check)
+            .to_owned();
+        println!("{:?}", query.build(PostgresQueryBuilder))
+        // assert_eq!(query.to_string(PostgresQueryBuilder), r#"SELECT * FROM "tbl" WHERE ARRAY [] = ARRAY []"#);
+    }
+}

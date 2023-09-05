@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use crate::{query_expr::{QueryExprError, QueryType, QueryPrimitiveType}, sql_common::{null_value_of_type, value_to_sea_query_value}, sea_query_extra::{StaticTableRef, OptionalInsertStatement}};
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum DumpEntitiesError {
     #[error("Entity type {0} not found in schema")]
     EntityTypeNotFound(EntityTypeName),
