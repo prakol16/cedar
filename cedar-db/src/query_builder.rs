@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use cedar_policy::{EntityTypeName, Schema, RandomRequestEnv, ResidualResponse, Effect};
-use cedar_policy_core::ast::{Expr, ExprBuilder};
+use cedar_policy_core::{ast::{Expr, ExprBuilder}, authorizer::PartialResponse};
 use cedar_policy_validator::{ValidationMode, typecheck::Typechecker};
 use smol_str::SmolStr;
 use thiserror::Error;
@@ -177,12 +177,29 @@ pub fn translate_expr<T: IntoTableRef>(expr: &Expr, schema: &Schema, ein: impl I
     translate_expr_with_renames(expr, schema, ein, table_names, &HashMap::new())
 }
 
-
+/// Given a residual response `resp`, which will contain unknowns to be filled in
+/// return a QueryBuilder containing the query that will fetch the ids of the unknowns
+/// The QueryBuilder initially does not have a table filled in, but if there is only one unknown
+/// the table can be filled using query_default() (see QueryBuilder for more details)
 pub fn translate_response<T: IntoTableRef>(resp: &ResidualResponse, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr)) -> Result<QueryBuilder> {
     let (permits, forbids): (Vec<_>, Vec<_>) =
         resp.residuals().policies()
             .partition(|p| p.effect() == Effect::Permit);
     let expr: Expr = ExprBuilder::new().and(
+        // In a residual response, all policies have no head constraints (everything is in the non-head constraint)
+        ExprBuilder::new().any(permits.into_iter().map(|p| p.non_head_constraints().clone())),
+        ExprBuilder::new().not(ExprBuilder::new().any(forbids.into_iter().map(|p| p.non_head_constraints().clone()))));
+    let query = translate_expr(&expr, schema, ein, table_names)?;
+    Ok(query)
+}
+
+/// Same as translate_response but uses a response from core
+pub fn translate_response_core<T: IntoTableRef>(resp: &PartialResponse, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr)) -> Result<QueryBuilder> {
+    let (permits, forbids): (Vec<_>, Vec<_>) =
+        resp.residuals.policies()
+            .partition(|p| p.effect() == Effect::Permit);
+    let expr: Expr = ExprBuilder::new().and(
+        // In a residual response, all policies have no head constraints (everything is in the non-head constraint)
         ExprBuilder::new().any(permits.into_iter().map(|p| p.non_head_constraints().clone())),
         ExprBuilder::new().not(ExprBuilder::new().any(forbids.into_iter().map(|p| p.non_head_constraints().clone()))));
     let query = translate_expr(&expr, schema, ein, table_names)?;

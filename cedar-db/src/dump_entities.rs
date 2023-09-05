@@ -188,7 +188,8 @@ pub fn create_ancestry_table(entity_type: &ValidatorEntityType, eparent: &Entity
 /// Create all the tables necessary in `schema`, including the foreign key constraints
 /// (Note: the ancestry tables already have the foreign key constraints included in the table)
 /// Then return the statements necessary to populate the tables
-pub fn create_tables(entities: &Entities<PartialValue>, schema: &Schema) -> Result<(Vec<TableCreateStatement>, Vec<ForeignKeyCreateStatement>, Vec<InsertStatement>)> {
+/// as well as the "id map" used for the tables (i.e. the column name for the id of each entity type)
+pub fn create_tables(entities: &Entities<PartialValue>, schema: &Schema) -> Result<(Vec<TableCreateStatement>, Vec<ForeignKeyCreateStatement>, Vec<InsertStatement>, HashMap<EntityTypeName, SmolStr>)> {
     let mut entity_tables = Vec::new();
     let mut foreign_keys = Vec::new();
     let mut ancestry_tables = Vec::new();
@@ -199,7 +200,7 @@ pub fn create_tables(entities: &Entities<PartialValue>, schema: &Schema) -> Resu
     }
     let mut inserts = populate_attr_tables(entities, schema, &id_map)?;
     inserts.extend(populate_ancestry_tables(entities, schema)?);
-    Ok((entity_tables.into_iter().chain(ancestry_tables).collect(), foreign_keys, inserts))
+    Ok((entity_tables.into_iter().chain(ancestry_tables).collect(), foreign_keys, inserts, id_map))
 }
 
 /// Add the entity to the insert statement
@@ -297,9 +298,9 @@ pub fn populate_ancestry_tables(entities: &Entities<PartialValue>, schema: &Sche
 
 
 /// Create all the tables necessary in `schema`, including the foreign key constraints
-/// as postgresql statements
-pub fn create_tables_postgres(entities: &Entities<PartialValue>, schema: &Schema) -> Result<Vec<String>> {
-    let (tables, fks, inserts) = create_tables(entities, schema)?;
+/// as postgresql statements; also returns the id map
+pub fn create_tables_postgres(entities: &Entities<PartialValue>, schema: &Schema) -> Result<(Vec<String>, HashMap<EntityTypeName, SmolStr>)> {
+    let (tables, fks, inserts, id_map) = create_tables(entities, schema)?;
     let result = tables.into_iter()
         .map(|t| t.to_string(PostgresQueryBuilder))
         .chain(
@@ -311,16 +312,18 @@ pub fn create_tables_postgres(entities: &Entities<PartialValue>, schema: &Schema
                 .map(|insert| insert.to_string(PostgresQueryBuilder))
         )
         .collect();
-    Ok(result)
+    Ok((result, id_map))
 }
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashSet;
+    use std::collections::{HashSet, HashMap};
 
-    use cedar_policy::Schema;
-    use cedar_policy_core::entities::Entities;
+    use cedar_policy::{Schema, PartialValue};
+    use cedar_policy_core::{entities::Entities, ast::Entity};
     use sea_query::PostgresQueryBuilder;
+
+    use crate::dump_entities::create_tables_postgres;
 
     use super::create_tables;
 
@@ -378,7 +381,7 @@ mod test {
     #[test]
     fn test_create_from_schema() {
         let schema = get_schema();
-        let (tables, fks, _) = create_tables(&Entities::new(), &schema).expect("Should not fail to create tables");
+        let (tables, fks, _, _) = create_tables(&Entities::new(), &schema).expect("Should not fail to create tables");
         let result = tables.into_iter()
             .map(|t| t.to_string(PostgresQueryBuilder))
             .chain(
@@ -392,6 +395,26 @@ mod test {
             r#"CREATE TABLE "cedar"."ancestry_Users_,_Users" ( "child_uid" text NOT NULL, "parent_uid" text NOT NULL, FOREIGN KEY ("child_uid") REFERENCES "cedar"."entity_Users" ("uid"), FOREIGN KEY ("parent_uid") REFERENCES "cedar"."entity_Users" ("uid") )"#.into(),
             r#"ALTER TABLE "cedar"."entity_Photos" ADD FOREIGN KEY ("uid") REFERENCES "cedar"."entity_Users" ("uid")"#.into()
         ]));
+    }
+
+
+    #[test]
+    fn test_unicode_zero() {
+        let schema = get_schema();
+        let entities = Entities::from_entities(
+            [
+                Entity::new("Users::\"\0\"".parse().unwrap(),
+                    HashMap::from([
+                        ("name".into(), PartialValue::from("")),
+                        ("age".into(), PartialValue::from(0))
+                    ]), HashSet::new())
+            ],
+            cedar_policy_core::entities::TCComputation::ComputeNow
+        ).expect("Should not fail to create entities");
+        create_tables_postgres(&entities, &schema)
+        // In theory this should actually fail since postgres cannot handle null unicode characters
+        // TODO: maybe make a sea query issue?
+            .expect_err("Should fail to create table with unicode zero");
     }
 }
 
