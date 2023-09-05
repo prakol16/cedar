@@ -44,6 +44,14 @@ pub struct CedarSQLSchemaName;
 #[repr(transparent)]
 pub struct EntityTableIden(EntityTypeName);
 
+impl EntityTableIden {
+    /// Create a new table from `entity_type`
+    /// The table name will be "entity_{entity_type}"
+    pub fn new(entity_type: EntityTypeName) -> Self {
+        Self(entity_type)
+    }
+}
+
 impl IntoTableRef for EntityTableIden {
     fn into_table_ref(self) -> TableRef {
         TableRef::SchemaTable(CedarSQLSchemaName.into_iden(),
@@ -153,8 +161,13 @@ pub fn create_table_from_entity_type(entity_type: &ValidatorEntityType, ety: &En
     Ok(())
 }
 
-const CHILD_UID: &str = "child_uid";
-const PARENT_UID: &str = "parent_uid";
+#[derive(Iden)]
+pub enum AncestryCols {
+    #[iden = "child_uid"]
+    Descendant,
+    #[iden = "parent_uid"]
+    Ancestor,
+}
 
 /// Creates a table for the descendants of the given entity type in the schema
 /// Note: these tables already have foreign key constraints attached to them, so they should be created
@@ -167,17 +180,17 @@ pub fn create_ancestry_table(entity_type: &ValidatorEntityType, eparent: &Entity
         table.table(table_name.clone());
 
         // Create two columns for the child and parent ids
-        table.col(ColumnDef::new(Alias::new(CHILD_UID)).text().not_null());
-        table.col(ColumnDef::new(Alias::new(PARENT_UID)).text().not_null());
+        table.col(ColumnDef::new(AncestryCols::Descendant).text().not_null());
+        table.col(ColumnDef::new(AncestryCols::Ancestor).text().not_null());
 
         let child_fk = id_map.get(&echild).ok_or_else(|| DumpEntitiesError::MissingIdInMap(echild.clone()))?.as_str();
         let parent_fk = id_map.get(&eparent).ok_or_else(|| DumpEntitiesError::MissingIdInMap(eparent.clone()))?.as_str();
         table.foreign_key(ForeignKey::create()
-            .from(table_name.clone(), Alias::new(CHILD_UID))
+            .from(table_name.clone(), AncestryCols::Descendant)
             .to(EntityTableIden(echild.clone()), Alias::new(child_fk))
         );
         table.foreign_key(ForeignKey::create()
-            .from(table_name.clone(), Alias::new(PARENT_UID))
+            .from(table_name.clone(), AncestryCols::Ancestor)
             .to(EntityTableIden(eparent.clone()), Alias::new(parent_fk))
         );
         result.push(table);
@@ -280,10 +293,7 @@ pub fn populate_ancestry_tables(entities: &Entities<PartialValue>, schema: &Sche
             let echild = EntityTypeName::ref_cast(child);
             let mut insert = Query::insert();
             insert.into_table(EntityAncestryTableIden::new(echild.clone(), eparent.clone()));
-            insert.columns([
-                Alias::new(CHILD_UID),
-                Alias::new(PARENT_UID)
-            ]);
+            insert.columns([AncestryCols::Descendant, AncestryCols::Ancestor]);
             inserts.insert((echild.clone(), eparent.clone()), insert);
         }
     }
