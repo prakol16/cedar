@@ -1,3 +1,4 @@
+pub mod sea_query_extra;
 pub mod sql_common;
 
 #[cfg(feature = "rusqlite")]

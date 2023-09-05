@@ -4,7 +4,7 @@ use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinO
 use smol_str::SmolStr;
 
 
-use crate::query_expr::{QueryExprError, QueryExpr, UnknownType, QueryPrimitiveType, AttrOrId, QueryType};
+use crate::{query_expr::{QueryExprError, QueryExpr, UnknownType, QueryPrimitiveType, AttrOrId, QueryType}, sea_query_extra::StaticTableRef};
 
 type Result<T> = std::result::Result<T, QueryExprError>;
 
@@ -46,19 +46,17 @@ impl<S, T> InConfig for InByLambda<S, T>
 }
 
 pub struct InByTable<A, B, T>(pub T)
-    where A: IntoIden, B: IntoIden,
+    where A: Into<StaticTableRef>, B: IntoIden,
           T: Fn(&EntityTypeName, &EntityTypeName) -> Result<Option<(A, B, B)>>;
 
 impl<A, B, T> InConfig for InByTable<A, B, T>
-    where A: IntoIden, B: IntoIden,
+    where A: Into<StaticTableRef>, B: IntoIden,
           T: Fn(&EntityTypeName, &EntityTypeName) -> Result<Option<(A, B, B)>> {
     fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
         if let Some((tbl, col1, col2)) = self.0(tp1, tp2)? {
-            let tbl = tbl.into_iden();
-            let col1 = col1.into_iden();
-            let col2 = col2.into_iden();
-            let col1 = (tbl.clone(), col1).into_column_ref();
-            let col2 = (tbl.clone(), col2).into_column_ref();
+            let tbl: StaticTableRef = tbl.into();
+            let col1 = tbl.clone().with_column(col1);
+            let col2 = tbl.clone().with_column(col2);
 
             // e2 in (SELECT tbl.col2 FROM tbl WHERE tbl.col1 = e1)
             let sub_query = Query::select()
@@ -77,11 +75,9 @@ impl<A, B, T> InConfig for InByTable<A, B, T>
 
     fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
         if let Some((tbl, col1, col2)) = self.0(tp1, tp2)? {
-            let tbl = tbl.into_iden();
-            let col1 = col1.into_iden();
-            let col2 = col2.into_iden();
-            let col1 = (tbl.clone(), col1).into_column_ref();
-            let col2 = (tbl.clone(), col2).into_column_ref();
+            let tbl: StaticTableRef = tbl.into();
+            let col1 = tbl.clone().with_column(col1);
+            let col2 = tbl.clone().with_column(col2);
 
             // e1 in (SELECT tbl.col1 FROM tbl WHERE tbl.col2 = ANY(e2))
             let sub_query = Query::select()
