@@ -14,7 +14,7 @@ use sea_query::{TableCreateStatement, Table, Iden, ColumnDef, ColumnType, Alias,
 use smol_str::SmolStr;
 use thiserror::Error;
 
-use crate::{query_expr::{QueryExprError, QueryType, QueryPrimitiveType}, sql_common::{null_value_of_type, value_to_sea_query_value}};
+use crate::{query_expr::{QueryExprError, QueryType, QueryPrimitiveType}, sql_common::{null_value_of_type, value_to_sea_query_value}, sea_query_extra::StaticTableRef};
 
 #[derive(Debug, Error)]
 pub enum DumpEntitiesError {
@@ -52,10 +52,15 @@ impl EntityTableIden {
     }
 }
 
+impl From<EntityTableIden> for StaticTableRef {
+    fn from(t: EntityTableIden) -> Self {
+        StaticTableRef::SchemaTable(CedarSQLSchemaName.into_iden(), Alias::new(format!("entity_{}", t.0)).into_iden())
+    }
+}
+
 impl IntoTableRef for EntityTableIden {
     fn into_table_ref(self) -> TableRef {
-        TableRef::SchemaTable(CedarSQLSchemaName.into_iden(),
-            Alias::new(format!("entity_{}", self.0)).into_iden())
+        StaticTableRef::from(self).into_table_ref()
     }
 }
 
@@ -87,10 +92,17 @@ impl EntityAncestryTableIden {
     }
 }
 
+
+impl From<EntityAncestryTableIden> for StaticTableRef {
+    fn from(t: EntityAncestryTableIden) -> Self {
+        StaticTableRef::SchemaTable(CedarSQLSchemaName.into_iden(),
+        Alias::new(format!("ancestry_{}_{}_{}", t.child, t.escaped_str, t.parent)).into_iden())
+    }
+}
+
 impl IntoTableRef for EntityAncestryTableIden {
     fn into_table_ref(self) -> TableRef {
-        TableRef::SchemaTable(CedarSQLSchemaName.into_iden(),
-            Alias::new(format!("ancestry_{}_{}_{}", self.child, self.escaped_str, self.parent)).into_iden())
+        StaticTableRef::from(self).into_table_ref()
     }
 }
 
