@@ -3,7 +3,7 @@ use std::{collections::{HashSet, HashMap}, marker::PhantomData};
 use cedar_policy::{Value, EntityUid, EntityId, EntityTypeName};
 use cedar_policy_core::{entities::{JsonDeserializationError, JSONValue}, ast::{NotValue, Literal}, extensions::Extensions, evaluator::RestrictedEvaluator};
 use ref_cast::RefCast;
-use sea_query::{TableRef, ColumnRef, SelectStatement, Query, Alias, IntoColumnRef, Expr, IntoTableRef, ArrayType};
+use sea_query::{TableRef, ColumnRef, SelectStatement, Query, Alias, IntoColumnRef, Expr, IntoTableRef, ArrayType, Nullable};
 use smol_str::SmolStr;
 use thiserror::Error;
 
@@ -23,6 +23,17 @@ impl From<QueryPrimitiveType> for ArrayType {
             QueryPrimitiveType::StringOrEntity => ArrayType::String,
             QueryPrimitiveType::Record => ArrayType::Json,
         }
+    }
+}
+
+/// Given a type, return the null value of that type
+pub fn null_value_of_type(ty: QueryType) -> sea_query::Value {
+    match ty {
+        QueryType::Primitive(QueryPrimitiveType::Bool) => bool::null(),
+        QueryType::Primitive(QueryPrimitiveType::Long) => i64::null(),
+        QueryType::Primitive(QueryPrimitiveType::StringOrEntity) => String::null(),
+        QueryType::Primitive(QueryPrimitiveType::Record) => serde_json::Value::null(),
+        QueryType::Array(p) => sea_query::Value::Array(p.into(), None),
     }
 }
 
