@@ -553,7 +553,12 @@ impl<'a> Typechecker<'a> {
 
     pub fn typecheck_expr_strict(&self, request_env: &RequestEnv, e: &Expr,
         expected_type: Type, type_errors: &mut Vec<TypeError>) -> Option<Expr<Option<Type>>> {
-        self.typecheck_strict(request_env, e, expected_type, type_errors).into_typed_expr()
+        let result = self.typecheck_strict(request_env, e, expected_type, type_errors);
+        if result.typechecked() {
+            result.into_typed_expr()
+        } else {
+            None
+        }
     }
 
     fn typecheck_strict<'b>(

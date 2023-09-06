@@ -147,7 +147,6 @@ pub fn translate_expr_with_renames<T: IntoTableRef>(expr: &Expr, schema: &Schema
     let req_env = RandomRequestEnv::new();
     let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
         .ok_or(QueryExprError::TypecheckError)?;
-
     let mut query_expr: QueryExpr = (&typed_expr).try_into()?;
     // Rename any unknowns that appear in the query
     if !unknown_map.is_empty() {
@@ -394,6 +393,15 @@ mod test {
         );
         assert_eq!(result, r#"SELECT "principal"."uid" FROM "Users" AS "principal" WHERE '0' = ANY("principal"."allowedPhotos") OR '0' IN (SELECT "Photos_in_Photos"."Photos" FROM "Photos_in_Photos" WHERE "Photos_in_Photos"."Photos" = ANY("principal"."allowedPhotos"))"#)
     }
+
+    // #[test]
+    // fn test_in_action() {
+    //     let result: String = translate_expr_test(
+    //         r#"(if Photos::"arbitrary".owner == Users::"0" then Photos::"arbitrary" else Photos::"1") in Action::"view""#.parse().unwrap(),
+    //         &get_schema()
+    //     );
+    //     println!("{}", result);
+    // }
 
     #[test]
     fn test_record_attr() {
