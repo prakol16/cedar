@@ -4863,6 +4863,38 @@ pub mod test {
     }
 
     #[test]
+    fn partial_ite() {
+        let es = Entities::from_entities([
+            Entity::new(r#"R::a::"u1c""#.parse().unwrap(), HashMap::new(), HashSet::new()),
+            Entity::new(r#"R::a::"""#.parse().unwrap(), HashMap::new(), HashSet::new()),
+        ], TCComputation::ComputeNow)
+            .unwrap();
+        let exts = Extensions::none();
+        let q = Request::new_with_unknowns(
+            EntityUIDEntry::concrete(r#"R::a::"u1c""#.parse().unwrap()),
+            EntityUIDEntry::concrete("R::Action::\"action\"".parse().unwrap()),
+            EntityUIDEntry::Unknown(None),
+            Some(Context::empty()));
+        let eval = Evaluator::new(&q, &es, &exts).unwrap();
+
+        let pset: &str = r#"forbid(
+            principal in R::a::"u1c",
+            action in [R::Action::"action"],
+            resource == R::a::""
+          ) when {
+            ((true && (!(!(resource in [])))) &&
+            ((if (resource in []) then (if true then principal else principal) else R::a::"") in [action])) && (resource in resource)
+          };"#;
+
+        let static_policy =
+        parser::parse_policy(Some("id".into()), pset)
+            .expect("Failed to parse");
+        let r = eval.partial_evaluate(&static_policy.into())
+            .expect("Failed to evaluate");
+        println!("{:?}", r);
+    }
+
+    #[test]
     fn partial_set() {
         let es = Entities::new();
         let exts = Extensions::none();

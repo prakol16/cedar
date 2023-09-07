@@ -99,7 +99,7 @@ impl<V: Into<Value>> From<V> for PartialValue {
 
 impl From<Expr> for PartialValue {
     fn from(e: Expr) -> Self {
-        debug_assert!(e.is_unknown());
+        assert!(e.is_unknown());
         PartialValue::Residual(e)
     }
 }
