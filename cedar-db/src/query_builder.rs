@@ -508,4 +508,13 @@ mod test {
         );
         assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE (SELECT (AVG(level) * CAST(("user"."info" -> 'age') AS integer)) FROM Users) <= "user"."level""#);
     }
+
+    #[test]
+    fn test_escape_sub_char() {
+        let result = translate_expr_test(
+            r#"unknown("user: Users") == Users::"""#.parse().unwrap(),
+            &get_schema()
+        );
+        println!("{}", result);
+    }
 }
