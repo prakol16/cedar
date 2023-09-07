@@ -1136,6 +1136,15 @@ impl Schema {
     pub fn action_entities(&self) -> Result<Entities, entities::EntitiesError> {
         Ok(Entities(self.0.action_entities()?))
     }
+
+    /// Determine if the first type can be a descendant of the second type
+    /// False if either of the types does not exist
+    pub fn can_be_descendant(&self, tp1: &EntityTypeName, tp2: &EntityTypeName) -> bool {
+        match self.0.get_entity_type(&tp2.0) {
+            Some(vtp) => vtp.descendants.contains(&tp1.0),
+            None => false,
+        }
+    }
 }
 
 /// Errors encountered during construction of a Validation Schema

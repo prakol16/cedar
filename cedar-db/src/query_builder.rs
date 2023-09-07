@@ -193,7 +193,7 @@ pub fn translate_response<T: IntoTableRef>(resp: &ResidualResponse, schema: &Sch
 }
 
 /// Same as translate_response but uses a response from core
-pub fn translate_response_core<T: IntoTableRef>(resp: &PartialResponse, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr)) -> Result<QueryBuilder> {
+pub fn translate_response_core<T: IntoTableRef>(resp: &PartialResponse, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr), ensure_unknown: Option<(&str, &EntityTypeName)>) -> Result<QueryBuilder> {
     let (permits, forbids): (Vec<_>, Vec<_>) =
         resp.residuals.policies()
             .partition(|p| p.effect() == Effect::Permit);
@@ -201,7 +201,11 @@ pub fn translate_response_core<T: IntoTableRef>(resp: &PartialResponse, schema: 
         // In a residual response, all policies have no head constraints (everything is in the non-head constraint)
         ExprBuilder::new().any(permits.into_iter().map(|p| p.non_head_constraints().clone())),
         ExprBuilder::new().not(ExprBuilder::new().any(forbids.into_iter().map(|p| p.non_head_constraints().clone()))));
-    let query = translate_expr(&expr, schema, ein, table_names)?;
+    let mut query = translate_expr(&expr, schema, ein, &table_names)?;
+    if let Some((unk, ty)) = ensure_unknown {
+        let (tbl, id) = table_names(&ty);
+        query.table_names.insert(unk.into(), (false, tbl.into_table_ref(), id));
+    }
     Ok(query)
 }
 
