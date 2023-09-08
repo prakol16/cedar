@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use sea_query::{IntoColumnRef, Alias, Query, SelectStatement, IntoTableRef, TableRef, SqliteQueryBuilder, PostgresQueryBuilder};
 
-use crate::{query_expr::{ExprWithBindings, QueryExprError, QueryExpr, UnknownType}, expr_to_query::InConfig};
+use crate::{query_expr::{ExprWithBindings, QueryExprError, UnknownType, QueryExprWithVars}, expr_to_query::InConfig};
 
 
 /// A wrapper around seaquery's builder with some Cedar-specific additions
@@ -141,13 +141,20 @@ impl ExprWithBindings {
 
 /// Does the translation from Cedar to SQL
 pub fn translate_expr_with_renames<T: IntoTableRef>(expr: &Expr, schema: &Schema, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr), unknown_map: &HashMap<UnknownType, UnknownType>) -> Result<QueryBuilder> {
+    // Get the free variables in the original expression
+    let vars = expr.subexpressions()
+        .filter_map(|u| {
+            UnknownType::from_expr(u)
+        })
+        .collect::<Vec<_>>();
+
     let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
     // The request environment should no longer matter, so this is a dirty hack to
     // allocate memory for a request environment that we know will actually never be used.
     let req_env = RandomRequestEnv::new();
     let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
         .ok_or(QueryExprError::TypecheckError)?;
-    let mut query_expr: QueryExpr = (&typed_expr).try_into()?;
+    let mut query_expr = QueryExprWithVars::from_expr(&typed_expr, vars)?;
     // Rename any unknowns that appear in the query
     if !unknown_map.is_empty() {
         query_expr.rename(|u| {
@@ -515,6 +522,16 @@ mod test {
             r#"unknown("user: Users") == Users::"""#.parse().unwrap(),
             &get_schema()
         );
-        println!("{}", result);
+        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE "user"."uid" = ''"#);
+    }
+
+    #[test]
+    fn test_free_vars_in_and_false() {
+        let result = translate_expr_test(
+            // This expression gets reduced to `false` during strict typechecking
+            r#"unknown("user: Users") == Users::"0" && false"#.parse().unwrap(),
+            &get_schema()
+        );
+        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE FALSE"#);
     }
 }

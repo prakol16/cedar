@@ -311,12 +311,9 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
             ExprKind::Lit(l) => Ok(QueryExpr::Lit(l.to_owned())),
             ExprKind::Var(v) => Err(QueryExprError::VariableAppears(v.to_owned())),
             ExprKind::Slot(s) => Err(QueryExprError::SlotAppears(s.to_owned())),
-            ExprKind::Unknown { name, type_annotation } =>
-                Ok(UnknownType::of_name_and_type(name.to_owned(),
-                match type_annotation {
-                    Some(SchemaType::Entity { ty: EntityType::Concrete(n) }) => Some(EntityTypeName::ref_cast(n).to_owned()),
-                    _ => None,
-                }).into()),
+            ExprKind::Unknown { .. } =>
+                // Doesn't panic because we know `value`'s constructor is `Unknown`
+                Ok(UnknownType::from_expr(value).unwrap().into()),
             ExprKind::If { test_expr, then_expr, else_expr } => Ok(QueryExpr::If {
                 test_expr: Box::new(QueryExpr::try_from(test_expr.as_ref())?),
                 then_expr: Box::new(QueryExpr::try_from(then_expr.as_ref())?),
@@ -506,6 +503,22 @@ impl UnknownType {
             _ => None
         }
     }
+
+    /// Helper function to convert an expression into an unknown
+    /// Used in the conversion and also to collect free variables
+    pub fn from_expr<T>(e: &Expr<T>) -> Option<Self> {
+        match e.expr_kind() {
+            ExprKind::Unknown { name, type_annotation } => {
+                Some(UnknownType::of_name_and_type(name.to_owned(),
+                    match type_annotation {
+                        Some(SchemaType::Entity { ty: EntityType::Concrete(n) }) => Some(EntityTypeName::ref_cast(n).to_owned()),
+                        _ => None,
+                    }
+                ))
+            },
+            _ => None
+        }
+    }
 }
 
 impl From<UnknownType> for QueryExpr {
@@ -530,6 +543,33 @@ impl QueryExpr {
                 QueryExpr::Unknown(u) => Some(u),
                 _ => None
             })
+    }
+}
+
+pub struct QueryExprWithVars {
+    pub(crate) expr: QueryExpr,
+    /// The set of unknowns in the *original* expression
+    /// We guarantee that the unknowns in the expression are a subset of this set
+    pub(crate) vars: Vec<UnknownType>
+}
+
+impl QueryExprWithVars {
+    pub fn from_expr(e: &Expr<Option<Type>>, vars: Vec<UnknownType>) -> Result<Self> {
+        Ok(QueryExprWithVars {
+            expr: QueryExpr::try_from(e)?,
+            vars: vars
+        })
+    }
+
+    pub fn rename(&mut self, map: impl Fn(&mut UnknownType) -> ()) {
+        self.expr.rename(&map);
+        for v in &mut self.vars {
+            map(v);
+        }
+    }
+
+    pub fn rename_attrs(&mut self, map: impl Fn(&EntityTypeName, &mut AttrOrId) -> ()) {
+        self.expr.rename_attrs(map);
     }
 }
 
@@ -589,7 +629,7 @@ impl BindingsBuilder {
 pub struct ExprWithBindings {
     pub(crate) bindings: Bindings,
     pub(crate) expr: Box<QueryExpr>,
-    /// invariant: expr.get_unknowns() U U b in Bindings, b.expr.get_unknowns() - U b in Bindings, b.name = bindings.get_unknowns()
+    /// all the free variables in the original expression
     free_vars: HashSet<UnknownType>,
 }
 
@@ -603,7 +643,16 @@ impl From<QueryExpr> for ExprWithBindings {
     }
 }
 
-// TODO: keep track of existing identifiers so we don't generate duplicates
+impl From<QueryExprWithVars> for ExprWithBindings {
+    fn from(value: QueryExprWithVars) -> Self {
+        ExprWithBindings {
+            bindings: Bindings::default(),
+            free_vars: value.vars.into_iter().collect(),
+            expr: Box::new(value.expr),
+        }
+    }
+}
+
 pub struct IdGen {
     next_id: usize
 }
@@ -615,6 +664,9 @@ impl IdGen {
         IdGen { next_id: 0 }
     }
 
+    /// Avoid generating ids that are already in use in the given query expression
+    /// We do this by simply incrementing `next_id` to a value large enough that it is not in use
+    /// This incrementing only occurs if an unknown name starts with the ID_GEN_PREFIX
     pub fn avoid_unknowns_in(&mut self, e: &QueryExpr) -> &mut Self {
         for unk in e.get_unknowns() {
             let name = unk.get_name();
