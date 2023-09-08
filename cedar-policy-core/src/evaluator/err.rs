@@ -269,7 +269,7 @@ pub enum EvaluationErrorKind {
 impl EvaluationError {
     /// Make a new error for when an entity request fails
     pub fn mk_request<T: Error>(e: T) -> Self {
-        EvaluationError::mk_request_string_error(format!("{}", e.to_string()))
+        EvaluationError::mk_request_string_error(e.to_string())
     }
 
     /// Make a new error for when an entity request fails from a string
