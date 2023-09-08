@@ -23,7 +23,6 @@ use crate::{
 
 use self::names::EXTENSION_NAME;
 
-
 // PANIC SAFETY All the names are valid names
 #[allow(clippy::expect_used)]
 mod names {
@@ -41,10 +40,12 @@ fn create_new_unknown(v: Value) -> evaluator::Result<ExtensionOutputValue> {
         Some((s1, s2)) => Ok(ExtensionOutputValue::Unknown(
             s1.into(),
             Some(SchemaType::Entity {
-                ty: EntityType::Concrete(
-                    s2.parse()
-                    .map_err(|_| EvaluationError::failed_extension_function_application(EXTENSION_NAME.clone(), format!("Failed to parse entity type name {}", s2)))?
-                ),
+                ty: EntityType::Concrete(s2.parse().map_err(|_| {
+                    EvaluationError::failed_extension_function_application(
+                        EXTENSION_NAME.clone(),
+                        format!("Failed to parse entity type name {}", s2),
+                    )
+                })?),
             }),
         )),
         None => Ok(ExtensionOutputValue::Unknown(s.into(), None)),

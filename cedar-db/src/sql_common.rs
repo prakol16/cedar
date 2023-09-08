@@ -62,7 +62,7 @@ pub fn value_to_json_value(v: &Value) -> serde_json::Value {
             let uid_str: &str = uid.eid().as_ref();
             uid_str.into()
         }
-        Value::Set(s) => s.iter().map(|v| value_to_json_value(v)).collect(),
+        Value::Set(s) => s.iter().map(value_to_json_value).collect(),
         Value::Record(r) => r
             .iter()
             .map(|(k, v)| (k.to_string(), value_to_json_value(v)))

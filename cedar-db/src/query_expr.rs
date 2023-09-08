@@ -393,9 +393,9 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
             ExprKind::Lit(l) => Ok(QueryExpr::Lit(l.to_owned())),
             ExprKind::Var(v) => Err(QueryExprError::VariableAppears(v.to_owned())),
             ExprKind::Slot(s) => Err(QueryExprError::SlotAppears(s.to_owned())),
-            ExprKind::Unknown { .. } =>
-            // Doesn't panic because we know `value`'s constructor is `Unknown`
-            {
+            ExprKind::Unknown { .. } => {
+                // PANIC SAFETY Doesn't panic because we know `value`'s constructor is `Unknown`
+                #[allow(clippy::unwrap_used)]
                 Ok(UnknownType::from_expr(value).unwrap().into())
             }
             ExprKind::If {
@@ -694,18 +694,18 @@ impl QueryExprWithVars {
     pub fn from_expr(e: &Expr<Option<Type>>, vars: Vec<UnknownType>) -> Result<Self> {
         Ok(QueryExprWithVars {
             expr: QueryExpr::try_from(e)?,
-            vars: vars,
+            vars,
         })
     }
 
-    pub fn rename(&mut self, map: impl Fn(&mut UnknownType) -> ()) {
+    pub fn rename(&mut self, map: impl Fn(&mut UnknownType)) {
         self.expr.rename(&map);
         for v in &mut self.vars {
             map(v);
         }
     }
 
-    pub fn rename_attrs(&mut self, map: impl Fn(&EntityTypeName, &mut AttrOrId) -> ()) {
+    pub fn rename_attrs(&mut self, map: impl Fn(&EntityTypeName, &mut AttrOrId)) {
         self.expr.rename_attrs(map);
     }
 }
@@ -816,8 +816,8 @@ impl IdGen {
     pub fn avoid_unknowns_in(&mut self, e: &QueryExpr) -> &mut Self {
         for unk in e.get_unknowns() {
             let name = unk.get_name();
-            if name.starts_with(ID_GEN_PREFIX) {
-                if let Ok(id) = name[ID_GEN_PREFIX.len()..].parse::<usize>() {
+            if let Some(stripped) = name.strip_prefix(ID_GEN_PREFIX) {
+                if let Ok(id) = stripped.parse::<usize>() {
                     self.next_id = self.next_id.max(id + 1);
                 }
             }
@@ -881,7 +881,7 @@ impl QueryExpr {
 
     /// Rename all the unknowns in this expression using the given map.
     /// Any unknowns which are not keys in the map are left alone
-    pub fn rename(&mut self, map: impl Fn(&mut UnknownType) -> ()) {
+    pub fn rename(&mut self, map: impl Fn(&mut UnknownType)) {
         self.mut_subexpressions(&mut |expr, _| {
             if let QueryExpr::Unknown(u) = expr {
                 map(u);
@@ -890,7 +890,7 @@ impl QueryExpr {
     }
 
     /// Rename all the attributes in this expression using the given map.
-    pub fn rename_attrs(&mut self, map: impl Fn(&EntityTypeName, &mut AttrOrId) -> ()) {
+    pub fn rename_attrs(&mut self, map: impl Fn(&EntityTypeName, &mut AttrOrId)) {
         self.mut_subexpressions(&mut |expr, _| {
             if let QueryExpr::GetAttrEntity {
                 attr, expr_type, ..

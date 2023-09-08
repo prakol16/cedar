@@ -407,7 +407,11 @@ impl QueryExpr {
                     BinaryOp::Contains => {
                         Ok(right.eq(PgFunc::any(left)))
                     },
-                    _ => Ok(left.binary(cedar_binary_to_sql_binary(*op).unwrap(), right))
+                    _ => {
+                        // PANIC SAFETY We manually checked for `In` and `Contains` above
+                        #[allow(clippy::unwrap_used)]
+                        Ok(left.binary(cedar_binary_to_sql_binary(*op).unwrap(), right))
+                    }
                 }
             }
             QueryExpr::InEntity {

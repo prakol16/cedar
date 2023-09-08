@@ -1176,10 +1176,9 @@ impl Schema {
     /// Determine if the first type can be a descendant of the second type
     /// False if either of the types does not exist
     pub fn can_be_descendant(&self, tp1: &EntityTypeName, tp2: &EntityTypeName) -> bool {
-        match self.0.get_entity_type(&tp2.0) {
-            Some(vtp) => vtp.descendants.contains(&tp1.0),
-            None => false,
-        }
+        self.0
+            .get_entity_type(&tp2.0)
+            .map_or(false, |vtp| vtp.descendants.contains(&tp1.0))
     }
 }
 
@@ -2795,18 +2794,9 @@ impl RequestBuilder {
 
     /// Create the [`Request`]
     pub fn build(self) -> Request {
-        let p = match self.principal {
-            Some(p) => p,
-            None => ast::EntityUIDEntry::Unknown(None),
-        };
-        let a = match self.action {
-            Some(a) => a,
-            None => ast::EntityUIDEntry::Unknown(None),
-        };
-        let r = match self.resource {
-            Some(r) => r,
-            None => ast::EntityUIDEntry::Unknown(None),
-        };
+        let p = self.principal.unwrap_or(ast::EntityUIDEntry::Unknown(None));
+        let a = self.action.unwrap_or(ast::EntityUIDEntry::Unknown(None));
+        let r = self.resource.unwrap_or(ast::EntityUIDEntry::Unknown(None));
         Request(ast::Request::new_with_unknowns(p, a, r, self.context))
     }
 }
@@ -2831,12 +2821,18 @@ impl RandomRequestEnv {
     }
 }
 
+impl Default for RandomRequestEnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a> From<&'a RandomRequestEnv> for RequestEnv<'a> {
     fn from(value: &'a RandomRequestEnv) -> Self {
         RequestEnv {
-            principal: &value.id.entity_type(),
+            principal: value.id.entity_type(),
             action: &value.id,
-            resource: &value.id.entity_type(),
+            resource: value.id.entity_type(),
             context: &value.attrs,
             principal_slot: None,
             resource_slot: None,

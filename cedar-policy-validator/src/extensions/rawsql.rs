@@ -19,7 +19,7 @@ pub fn extension_schema() -> ExtensionSchema {
             ExtensionFunctionType::new(
                 f.name().clone(),
                 f.arg_types()
-                    .into_iter()
+                    .iter()
                     .map(|ty| {
                         ty.as_ref()
                             .map(|tp| tp.clone().into())

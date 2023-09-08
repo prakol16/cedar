@@ -206,7 +206,7 @@ pub fn create_table_from_entity_type(
                     .ok_or(QueryExprError::GetAttrLUBNotSingle)?,
             );
             let foreign_uid = id_map
-                .get(&foreign_tp)
+                .get(foreign_tp)
                 .ok_or_else(|| DumpEntitiesError::MissingIdInMap(foreign_tp.clone()))?
                 .as_str();
             let mut foreign_key = ForeignKey::create();
@@ -247,7 +247,7 @@ pub fn create_ancestry_table(
         table.col(ColumnDef::new(AncestryCols::Ancestor).text().not_null());
 
         let child_fk = id_map
-            .get(&echild)
+            .get(echild)
             .ok_or_else(|| DumpEntitiesError::MissingIdInMap(echild.clone()))?
             .as_str();
         let parent_fk = id_map

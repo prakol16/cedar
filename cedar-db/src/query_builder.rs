@@ -93,12 +93,15 @@ impl QueryBuilder {
 
     pub fn get_unique_unknown(&self) -> Result<SmolStr> {
         let len = self.table_names.len();
-        if len == 0 {
-            Err(QueryBuilderError::NoEntityTypedUnknown)
-        } else if len == 1 {
-            Ok(self.table_names.keys().next().unwrap().to_owned())
-        } else {
+        if len > 1 {
             Err(QueryBuilderError::MultipleUnknowns)
+        } else {
+            Ok(self
+                .table_names
+                .keys()
+                .next()
+                .ok_or(QueryBuilderError::NoEntityTypedUnknown)?
+                .to_owned())
         }
     }
 

@@ -627,7 +627,7 @@ impl From<cedar_policy_core::entities::AttributeType> for AttributeType {
         let (attr_type, is_required) = value.into_data();
         Self {
             attr_type: attr_type.into(),
-            is_required: is_required,
+            is_required,
         }
     }
 }
