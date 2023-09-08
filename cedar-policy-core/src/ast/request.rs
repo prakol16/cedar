@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::sync::Arc;
 
-use super::{Expr, Literal, PartialValue, Value, Var, Name, EntityType};
+use super::{EntityType, Expr, Literal, Name, PartialValue, Value, Var};
 
 /// Represents the request tuple <P, A, R, C> (see the Cedar design doc).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,9 +59,13 @@ impl EntityUIDEntry {
     pub fn evaluate(&self, var: Var) -> PartialValue {
         match self {
             EntityUIDEntry::Concrete(euid) => Value::Lit(Literal::EntityUID(euid.clone())).into(),
-            EntityUIDEntry::Unknown(name) => {
-                Expr::unknown_with_type(var.to_string(), name.clone().map(|n| SchemaType::Entity { ty: EntityType::Concrete(n) })).into()
-            }
+            EntityUIDEntry::Unknown(name) => Expr::unknown_with_type(
+                var.to_string(),
+                name.clone().map(|n| SchemaType::Entity {
+                    ty: EntityType::Concrete(n),
+                }),
+            )
+            .into(),
         }
     }
 

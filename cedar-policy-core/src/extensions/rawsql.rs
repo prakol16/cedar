@@ -2,13 +2,16 @@
 //! raw SQL in a policy. This SQL is not evaluated by Cedar, but is
 //! converted to SQL using the partial evaluation to SQL translation.
 
-use crate::{ast::{Value, ExtensionOutputValue, Extension, ExtensionFunction, Name}, evaluator::EvaluationError, entities::SchemaType};
+use crate::{
+    ast::{Extension, ExtensionFunction, ExtensionOutputValue, Name, Value},
+    entities::SchemaType,
+    evaluator::EvaluationError,
+};
 
-use self::names::{RAWSQL_NAME, RAWSQL_ID, BOOL_SQL_ID, LONG_SQL_ID, STR_SQL_ID};
-
+use self::names::{BOOL_SQL_ID, LONG_SQL_ID, RAWSQL_ID, RAWSQL_NAME, STR_SQL_ID};
 
 mod names {
-    use crate::ast::{Name, Id};
+    use crate::ast::{Id, Name};
 
     // PANIC SAFETY all of the names here are valid names
     lazy_static::lazy_static! {
@@ -21,7 +24,7 @@ mod names {
     }
 }
 
-fn make_error(_ : &[Value]) -> Result<ExtensionOutputValue, EvaluationError> {
+fn make_error(_: &[Value]) -> Result<ExtensionOutputValue, EvaluationError> {
     Err(EvaluationError::failed_extension_function_application(
         RAWSQL_NAME.clone(),
         "The first argument of `rawsql` must be a dummy unknown with name __RAWSQL. rawsql cannot be evaluated directly".to_string(),
@@ -36,14 +39,16 @@ pub fn extension() -> Extension {
             (BOOL_SQL_ID.clone(), SchemaType::Bool),
             (LONG_SQL_ID.clone(), SchemaType::Long),
             (STR_SQL_ID.clone(), SchemaType::String),
-        ].into_iter().map(|(tp, schtp)| {
+        ]
+        .into_iter()
+        .map(|(tp, schtp)| {
             ExtensionFunction::new(
                 Name::new(tp, [RAWSQL_ID.clone()]),
                 crate::ast::CallStyle::FunctionStyle,
                 Box::new(make_error),
                 Some(schtp),
-                vec![None, Some(SchemaType::String)]
+                vec![None, Some(SchemaType::String)],
             )
-        })
+        }),
     )
 }

@@ -21,8 +21,8 @@ use crate::FromNormalizedStr;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
-use std::collections::HashSet;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// We support two types of entities. The first is a nominal type (e.g., User, Action)
 /// and the second is an unspecified type, which is used (internally) to represent cases
@@ -241,11 +241,7 @@ impl<T> Entity<T> {
     }
 
     /// Create a new `Entity` with this UID, attributes, and ancestors
-    pub fn new(
-        uid: EntityUID,
-        attrs: HashMap<SmolStr, T>,
-        ancestors: HashSet<EntityUID>,
-    ) -> Self {
+    pub fn new(uid: EntityUID, attrs: HashMap<SmolStr, T>, ancestors: HashSet<EntityUID>) -> Self {
         Entity {
             uid,
             attrs,
@@ -275,9 +271,7 @@ impl<T> Entity<T> {
 
     /// Iterate over this entity's attributes
     pub fn attrs(&self) -> impl Iterator<Item = (&str, &T)> {
-        self.attrs
-            .iter()
-            .map(|(k, v)| (k.as_str(), v))
+        self.attrs.iter().map(|(k, v)| (k.as_str(), v))
     }
 
     /// Create an `Entity` with the given UID, no attributes, and no parents.

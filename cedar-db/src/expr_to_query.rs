@@ -1,58 +1,113 @@
 use cedar_policy::EntityTypeName;
-use cedar_policy_core::ast::{Literal, UnaryOp, BinaryOp, Pattern, PatternElem};
-use sea_query::{SimpleExpr, IntoColumnRef, BinOper, extension::postgres::{PgBinOper, PgExpr}, Alias, IntoIden, Query, Keyword, PgFunc, LikeExpr, PostgresQueryBuilder, Iden, Func, TableRef};
+use cedar_policy_core::ast::{BinaryOp, Literal, Pattern, PatternElem, UnaryOp};
+use sea_query::{
+    extension::postgres::{PgBinOper, PgExpr},
+    Alias, BinOper, Func, Iden, IntoColumnRef, IntoIden, Keyword, LikeExpr, PgFunc,
+    PostgresQueryBuilder, Query, SimpleExpr, TableRef,
+};
 use smol_str::SmolStr;
 
-
-use crate::{query_expr::{QueryExprError, QueryExpr, UnknownType, QueryPrimitiveType, AttrOrId, QueryType}, sea_query_extra::StaticTableRef};
+use crate::{
+    query_expr::{AttrOrId, QueryExpr, QueryExprError, QueryPrimitiveType, QueryType, UnknownType},
+    sea_query_extra::StaticTableRef,
+};
 
 type Result<T> = std::result::Result<T, QueryExprError>;
 
 pub trait InConfig {
-    fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr>;
+    fn ein(
+        &self,
+        tp1: &EntityTypeName,
+        tp2: &EntityTypeName,
+        e1: SimpleExpr,
+        e2: SimpleExpr,
+    ) -> Result<SimpleExpr>;
 
-    fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr>;
+    fn ein_set(
+        &self,
+        tp1: &EntityTypeName,
+        tp2: &EntityTypeName,
+        e1: SimpleExpr,
+        e2: SimpleExpr,
+    ) -> Result<SimpleExpr>;
 }
 
 impl<T: InConfig> InConfig for &T {
-    fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+    fn ein(
+        &self,
+        tp1: &EntityTypeName,
+        tp2: &EntityTypeName,
+        e1: SimpleExpr,
+        e2: SimpleExpr,
+    ) -> Result<SimpleExpr> {
         (*self).ein(tp1, tp2, e1, e2)
     }
 
-    fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+    fn ein_set(
+        &self,
+        tp1: &EntityTypeName,
+        tp2: &EntityTypeName,
+        e1: SimpleExpr,
+        e2: SimpleExpr,
+    ) -> Result<SimpleExpr> {
         (*self).ein_set(tp1, tp2, e1, e2)
     }
 }
 
 pub struct InByLambda<S, T>
-    where S: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
-          T: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
+where
+    S: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
+    T: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
 {
     pub ein: S,
     pub ein_set: T,
 }
 
 impl<S, T> InConfig for InByLambda<S, T>
-    where S: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
+where
+    S: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
     T: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
 {
-    fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+    fn ein(
+        &self,
+        tp1: &EntityTypeName,
+        tp2: &EntityTypeName,
+        e1: SimpleExpr,
+        e2: SimpleExpr,
+    ) -> Result<SimpleExpr> {
         (self.ein)(tp1, tp2, e1, e2)
     }
 
-    fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+    fn ein_set(
+        &self,
+        tp1: &EntityTypeName,
+        tp2: &EntityTypeName,
+        e1: SimpleExpr,
+        e2: SimpleExpr,
+    ) -> Result<SimpleExpr> {
         (self.ein_set)(tp1, tp2, e1, e2)
     }
 }
 
 pub struct InByTable<A, B, T>(pub T)
-    where A: Into<StaticTableRef>, B: IntoIden,
-          T: Fn(&EntityTypeName, &EntityTypeName) -> Result<Option<(A, B, B)>>;
+where
+    A: Into<StaticTableRef>,
+    B: IntoIden,
+    T: Fn(&EntityTypeName, &EntityTypeName) -> Result<Option<(A, B, B)>>;
 
 impl<A, B, T> InConfig for InByTable<A, B, T>
-    where A: Into<StaticTableRef>, B: IntoIden,
-          T: Fn(&EntityTypeName, &EntityTypeName) -> Result<Option<(A, B, B)>> {
-    fn ein(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+where
+    A: Into<StaticTableRef>,
+    B: IntoIden,
+    T: Fn(&EntityTypeName, &EntityTypeName) -> Result<Option<(A, B, B)>>,
+{
+    fn ein(
+        &self,
+        tp1: &EntityTypeName,
+        tp2: &EntityTypeName,
+        e1: SimpleExpr,
+        e2: SimpleExpr,
+    ) -> Result<SimpleExpr> {
         if let Some((tbl, col1, col2)) = self.0(tp1, tp2)? {
             let tbl: StaticTableRef = tbl.into();
             let col1 = tbl.clone().with_column(col1);
@@ -64,16 +119,22 @@ impl<A, B, T> InConfig for InByTable<A, B, T>
                 .from(tbl)
                 .and_where(sea_query::Expr::col(col1).eq(e1))
                 .to_owned();
-            Ok(e2.binary(BinOper::In, SimpleExpr::SubQuery(
-                None,
-                Box::new(sub_query.into_sub_query_statement())
-            )))
+            Ok(e2.binary(
+                BinOper::In,
+                SimpleExpr::SubQuery(None, Box::new(sub_query.into_sub_query_statement())),
+            ))
         } else {
             Ok(false.into())
         }
     }
 
-    fn ein_set(&self, tp1: &EntityTypeName, tp2: &EntityTypeName, e1: SimpleExpr, e2: SimpleExpr) -> Result<SimpleExpr> {
+    fn ein_set(
+        &self,
+        tp1: &EntityTypeName,
+        tp2: &EntityTypeName,
+        e1: SimpleExpr,
+        e2: SimpleExpr,
+    ) -> Result<SimpleExpr> {
         if let Some((tbl, col1, col2)) = self.0(tp1, tp2)? {
             let tbl: StaticTableRef = tbl.into();
             let col1 = tbl.clone().with_column(col1);
@@ -85,16 +146,15 @@ impl<A, B, T> InConfig for InByTable<A, B, T>
                 .from(tbl)
                 .and_where(sea_query::Expr::col(col2).eq(PgFunc::any(e2)))
                 .to_owned();
-            Ok(e1.binary(BinOper::In, SimpleExpr::SubQuery(
-                None,
-                Box::new(sub_query.into_sub_query_statement())
-            )))
+            Ok(e1.binary(
+                BinOper::In,
+                SimpleExpr::SubQuery(None, Box::new(sub_query.into_sub_query_statement())),
+            ))
         } else {
             Ok(false.into())
         }
     }
 }
-
 
 fn cedar_binary_to_sql_binary(op: BinaryOp) -> Option<BinOper> {
     match op {
@@ -134,7 +194,7 @@ impl IntoIden for QueryPrimitiveType {
     fn into_iden(self) -> sea_query::DynIden {
         match self {
             QueryPrimitiveType::Bool => Alias::new("boolean").into_iden(),
-            QueryPrimitiveType::Long => Alias::new("integer").into_iden(),  // todo: use bigint?
+            QueryPrimitiveType::Long => Alias::new("integer").into_iden(), // todo: use bigint?
             QueryPrimitiveType::StringOrEntity => Alias::new("text").into_iden(),
             QueryPrimitiveType::Record => Alias::new("jsonb").into_iden(),
         }
@@ -150,7 +210,7 @@ impl QueryExpr {
             Literal::EntityUID(e) => {
                 let e_id: &str = e.eid().as_ref();
                 e_id.into()
-            },
+            }
         }
     }
 
@@ -203,10 +263,10 @@ impl QueryExpr {
                 PatternElem::Char(c) => {
                     escape_char(&mut result, *c);
                     result.push(*c);
-                },
+                }
                 PatternElem::Wildcard => {
                     result.push('%');
-                },
+                }
             }
         }
         LikeExpr::new(result).escape('\\')
@@ -240,20 +300,32 @@ impl QueryExpr {
                 let col_ref = (alias_name.clone(), Alias::new("value")).into_column_ref();
 
                 Func::cust(ArrayFunc)
-                    .arg(SimpleExpr::SubQuery(None, Box::new({
-                        // There is a special function for casting json text array to postgres text array
-                        if tp == QueryPrimitiveType::StringOrEntity {
-                            let mut subquery = Query::select();
-                            subquery.expr(sea_query::Expr::col(col_ref));
-                            subquery.from(TableRef::FunctionCall(Func::cust(ArrayElemsTextFunc).arg(e), alias_name.into_iden()));
-                            subquery.into_sub_query_statement()
-                        } else {
-                            let mut subquery = Query::select();
-                            subquery.expr(Self::cast_json(col_ref.into(), QueryType::Primitive(tp)));
-                            subquery.from(TableRef::FunctionCall(Func::cust(ArrayElemsFunc).arg(e), alias_name.into_iden()));
-                            subquery.into_sub_query_statement()
-                        }
-                    })))
+                    .arg(SimpleExpr::SubQuery(
+                        None,
+                        Box::new({
+                            // There is a special function for casting json text array to postgres text array
+                            if tp == QueryPrimitiveType::StringOrEntity {
+                                let mut subquery = Query::select();
+                                subquery.expr(sea_query::Expr::col(col_ref));
+                                subquery.from(TableRef::FunctionCall(
+                                    Func::cust(ArrayElemsTextFunc).arg(e),
+                                    alias_name.into_iden(),
+                                ));
+                                subquery.into_sub_query_statement()
+                            } else {
+                                let mut subquery = Query::select();
+                                subquery.expr(Self::cast_json(
+                                    col_ref.into(),
+                                    QueryType::Primitive(tp),
+                                ));
+                                subquery.from(TableRef::FunctionCall(
+                                    Func::cust(ArrayElemsFunc).arg(e),
+                                    alias_name.into_iden(),
+                                ));
+                                subquery.into_sub_query_statement()
+                            }
+                        }),
+                    ))
                     .into()
             }
         }
@@ -297,18 +369,32 @@ impl QueryExpr {
             QueryExpr::Lit(l) => Ok(Self::lit_to_sql(l)),
             QueryExpr::Unknown(UnknownType::NonEntityType { pfx, name }) => {
                 if let Some(pfx) = pfx {
-                    Ok((Alias::new(pfx.as_str()), Alias::new(name.as_str())).into_column_ref().into())
+                    Ok((Alias::new(pfx.as_str()), Alias::new(name.as_str()))
+                        .into_column_ref()
+                        .into())
                 } else {
                     Ok(Alias::new(name.as_str()).into_column_ref().into())
                 }
-            },
-            QueryExpr::Unknown(UnknownType::EntityType { name, .. }) => Err(QueryExprError::NotAttrReduced(name.clone())),
-            QueryExpr::If { test_expr, then_expr, else_expr } => Ok(
-                sea_query::Expr::case(test_expr.to_sql_query(ein)?,
-                    then_expr.to_sql_query(ein)?)
-                    .finally(else_expr.to_sql_query(ein)?).into()),
-            QueryExpr::And { left, right } => Ok(left.to_sql_query(ein)?.and(right.to_sql_query(ein)?)),
-            QueryExpr::Or { left, right } => Ok(left.to_sql_query(ein)?.or(right.to_sql_query(ein)?)),
+            }
+            QueryExpr::Unknown(UnknownType::EntityType { name, .. }) => {
+                Err(QueryExprError::NotAttrReduced(name.clone()))
+            }
+            QueryExpr::If {
+                test_expr,
+                then_expr,
+                else_expr,
+            } => Ok(sea_query::Expr::case(
+                test_expr.to_sql_query(ein)?,
+                then_expr.to_sql_query(ein)?,
+            )
+            .finally(else_expr.to_sql_query(ein)?)
+            .into()),
+            QueryExpr::And { left, right } => {
+                Ok(left.to_sql_query(ein)?.and(right.to_sql_query(ein)?))
+            }
+            QueryExpr::Or { left, right } => {
+                Ok(left.to_sql_query(ein)?.or(right.to_sql_query(ein)?))
+            }
             QueryExpr::UnaryApp { op, arg } => match op {
                 UnaryOp::Not => Ok(arg.to_sql_query(ein)?.not()),
                 UnaryOp::Neg => Ok(arg.to_sql_query(ein)?.mul(-1)), // TODO: find unary negation operator
@@ -323,52 +409,85 @@ impl QueryExpr {
                     },
                     _ => Ok(left.binary(cedar_binary_to_sql_binary(*op).unwrap(), right))
                 }
-            },
-            QueryExpr::InEntity { left, right, left_type, right_type } => {
-                ein.ein(left_type, right_type, left.to_sql_query(ein)?, right.to_sql_query(ein)?)
-            },
-            QueryExpr::InSet { left, right, left_type, right_type } => {
-                ein.ein_set(left_type, right_type, left.to_sql_query(ein)?, right.to_sql_query(ein)?)
-            },
-            QueryExpr::MulByConst { arg, constant } => {
-                Ok(arg.to_sql_query(ein)?.mul(*constant))
-            },
-            QueryExpr::GetAttrEntity { expr, attr, .. } => {
-                Ok((Alias::new(expr.get_unknown_entity_deref_name().ok_or(QueryExprError::NotAttrReducedGetAttrEntity)?),
-                    attr.clone()).into_column_ref().into())
-            },
-            QueryExpr::GetAttrRecord { expr, attr, result_type } => {
+            }
+            QueryExpr::InEntity {
+                left,
+                right,
+                left_type,
+                right_type,
+            } => ein.ein(
+                left_type,
+                right_type,
+                left.to_sql_query(ein)?,
+                right.to_sql_query(ein)?,
+            ),
+            QueryExpr::InSet {
+                left,
+                right,
+                left_type,
+                right_type,
+            } => ein.ein_set(
+                left_type,
+                right_type,
+                left.to_sql_query(ein)?,
+                right.to_sql_query(ein)?,
+            ),
+            QueryExpr::MulByConst { arg, constant } => Ok(arg.to_sql_query(ein)?.mul(*constant)),
+            QueryExpr::GetAttrEntity { expr, attr, .. } => Ok((
+                Alias::new(
+                    expr.get_unknown_entity_deref_name()
+                        .ok_or(QueryExprError::NotAttrReducedGetAttrEntity)?,
+                ),
+                attr.clone(),
+            )
+                .into_column_ref()
+                .into()),
+            QueryExpr::GetAttrRecord {
+                expr,
+                attr,
+                result_type,
+            } => {
                 let left = expr.to_sql_query(ein)?;
                 match result_type {
                     // If the result type is a string, there is a special function in postgres to handle this case
-                    QueryType::Primitive(QueryPrimitiveType::StringOrEntity) => Ok(left.cast_json_field(attr.as_str())),
+                    QueryType::Primitive(QueryPrimitiveType::StringOrEntity) => {
+                        Ok(left.cast_json_field(attr.as_str()))
+                    }
                     // `cast_array` correctly handles the base case of 0 nesting (non-array) values as well
-                    _ => Ok(Self::cast_json(left.get_json_field(attr.as_str()), *result_type))
+                    _ => Ok(Self::cast_json(
+                        left.get_json_field(attr.as_str()),
+                        *result_type,
+                    )),
                 }
-            },
-            QueryExpr::HasAttrRecord { expr, attr } => {
-                Ok(expr.to_sql_query(ein)?.binary(BinOper::Custom("?"), attr.as_str()))
-            },
-            QueryExpr::IsNotNull(expr) => Ok(expr.to_sql_query(ein)?.binary(BinOper::IsNot, Keyword::Null)),
-            QueryExpr::Like { expr, pattern  } =>
-                Ok(expr.to_sql_query(ein)?.like(Self::pattern_to_likeexpr(pattern))),
-            QueryExpr::Set(values) => Ok(Self::mk_postgres_array(values
-                .iter()
-                .map(|v| v.to_sql_query(ein))
-                .collect::<Result<Vec<_>>>()?)
-            ),
-            QueryExpr::Record { pairs  } => Ok(Self::mk_postgres_record(pairs
-                .iter()
-                .map(|(k, v)| Ok((k.clone(), v.to_sql_query(ein)?)))
-                .collect::<Result<Vec<_>>>()?)
-            ),
+            }
+            QueryExpr::HasAttrRecord { expr, attr } => Ok(expr
+                .to_sql_query(ein)?
+                .binary(BinOper::Custom("?"), attr.as_str())),
+            QueryExpr::IsNotNull(expr) => Ok(expr
+                .to_sql_query(ein)?
+                .binary(BinOper::IsNot, Keyword::Null)),
+            QueryExpr::Like { expr, pattern } => Ok(expr
+                .to_sql_query(ein)?
+                .like(Self::pattern_to_likeexpr(pattern))),
+            QueryExpr::Set(values) => Ok(Self::mk_postgres_array(
+                values
+                    .iter()
+                    .map(|v| v.to_sql_query(ein))
+                    .collect::<Result<Vec<_>>>()?,
+            )),
+            QueryExpr::Record { pairs } => Ok(Self::mk_postgres_record(
+                pairs
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), v.to_sql_query(ein)?)))
+                    .collect::<Result<Vec<_>>>()?,
+            )),
             QueryExpr::RawSQL { sql, args } => {
                 let args = args
                     .iter()
                     .map(|v| v.to_sql_query(ein))
                     .collect::<Result<Vec<_>>>()?;
                 Ok(sea_query::Expr::cust_with_exprs(sql.to_string(), args))
-            },
+            }
         }
     }
 }

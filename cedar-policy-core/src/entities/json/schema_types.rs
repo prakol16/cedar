@@ -15,7 +15,7 @@
  */
 
 use crate::ast::{EntityType, Name, Type};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::BTreeMap;
 

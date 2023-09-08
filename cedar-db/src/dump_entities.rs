@@ -5,16 +5,29 @@
 
 use std::collections::HashMap;
 
-use cedar_policy::{Schema, EntityTypeName, PartialValue};
+use cedar_policy::{EntityTypeName, PartialValue, Schema};
 
-use cedar_policy_core::{entities::Entities, ast::{Entity, EntityUID}};
-use cedar_policy_validator::{types::{Type, EntityRecordKind, AttributeType}, ValidatorEntityType};
+use cedar_policy_core::{
+    ast::{Entity, EntityUID},
+    entities::Entities,
+};
+use cedar_policy_validator::{
+    types::{AttributeType, EntityRecordKind, Type},
+    ValidatorEntityType,
+};
 use ref_cast::RefCast;
-use sea_query::{TableCreateStatement, Table, Iden, ColumnDef, ColumnType, Alias, ForeignKey, ForeignKeyCreateStatement, IntoTableRef, TableRef, IntoIden, PostgresQueryBuilder};
+use sea_query::{
+    Alias, ColumnDef, ColumnType, ForeignKey, ForeignKeyCreateStatement, Iden, IntoIden,
+    IntoTableRef, PostgresQueryBuilder, Table, TableCreateStatement, TableRef,
+};
 use smol_str::SmolStr;
 use thiserror::Error;
 
-use crate::{query_expr::{QueryExprError, QueryType, QueryPrimitiveType}, sql_common::{null_value_of_type, value_to_sea_query_value}, sea_query_extra::{StaticTableRef, OptionalInsertStatement}};
+use crate::{
+    query_expr::{QueryExprError, QueryPrimitiveType, QueryType},
+    sea_query_extra::{OptionalInsertStatement, StaticTableRef},
+    sql_common::{null_value_of_type, value_to_sea_query_value},
+};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DumpEntitiesError {
@@ -56,7 +69,10 @@ impl EntityTableIden {
 
 impl From<EntityTableIden> for StaticTableRef {
     fn from(t: EntityTableIden) -> Self {
-        StaticTableRef::SchemaTable(CedarSQLSchemaName.into_iden(), Alias::new(format!("entity_{}", t.0)).into_iden())
+        StaticTableRef::SchemaTable(
+            CedarSQLSchemaName.into_iden(),
+            Alias::new(format!("entity_{}", t.0)).into_iden(),
+        )
     }
 }
 
@@ -70,7 +86,7 @@ impl IntoTableRef for EntityTableIden {
 pub struct EntityAncestryTableIden {
     child: EntityTypeName,
     parent: EntityTypeName,
-    escaped_str: String
+    escaped_str: String,
 }
 
 impl EntityAncestryTableIden {
@@ -89,16 +105,21 @@ impl EntityAncestryTableIden {
         Self {
             child,
             parent,
-            escaped_str
+            escaped_str,
         }
     }
 }
 
-
 impl From<EntityAncestryTableIden> for StaticTableRef {
     fn from(t: EntityAncestryTableIden) -> Self {
-        StaticTableRef::SchemaTable(CedarSQLSchemaName.into_iden(),
-        Alias::new(format!("ancestry_{}_{}_{}", t.child, t.escaped_str, t.parent)).into_iden())
+        StaticTableRef::SchemaTable(
+            CedarSQLSchemaName.into_iden(),
+            Alias::new(format!(
+                "ancestry_{}_{}_{}",
+                t.child, t.escaped_str, t.parent
+            ))
+            .into_iden(),
+        )
     }
 }
 
@@ -130,7 +151,9 @@ impl From<QueryType> for ColumnType {
 
 pub fn create_id_map(schema: &Schema) -> HashMap<EntityTypeName, SmolStr> {
     let uid_smolstr = SmolStr::from("uid");
-    schema.0.entity_types()
+    schema
+        .0
+        .entity_types()
         .map(|(name, v)| {
             if v.attr(uid_smolstr.as_str()).is_some() {
                 return (EntityTypeName::ref_cast(name).clone(), uid_smolstr.clone());
@@ -139,7 +162,10 @@ pub fn create_id_map(schema: &Schema) -> HashMap<EntityTypeName, SmolStr> {
             while v.attr(&uid_str).is_some() {
                 uid_str.push('!'); // add escape character ! until we don't have a collision
             }
-            (EntityTypeName::ref_cast(name).clone(), SmolStr::from(uid_str))
+            (
+                EntityTypeName::ref_cast(name).clone(),
+                SmolStr::from(uid_str),
+            )
         })
         .collect()
 }
@@ -148,23 +174,41 @@ pub fn create_id_map(schema: &Schema) -> HashMap<EntityTypeName, SmolStr> {
 /// The table will have columns matching the attributes of the entity type, as well as a text type column for the id, whose name is given in id_map
 /// The table will be named "entity_{entity_type}"
 /// In addition, we separately add foreign key constraints for the tables (which can be added after all the tables are created)
-pub fn create_table_from_entity_type(entity_type: &ValidatorEntityType, ety: &EntityTypeName, id_map: &HashMap<EntityTypeName, SmolStr>, result: &mut Vec<TableCreateStatement>, foreign_keys: &mut Vec<ForeignKeyCreateStatement>) -> Result<()> {
+pub fn create_table_from_entity_type(
+    entity_type: &ValidatorEntityType,
+    ety: &EntityTypeName,
+    id_map: &HashMap<EntityTypeName, SmolStr>,
+    result: &mut Vec<TableCreateStatement>,
+    foreign_keys: &mut Vec<ForeignKeyCreateStatement>,
+) -> Result<()> {
     let mut table = Table::create();
     let table_name = EntityTableIden(ety.clone());
     table.table(table_name.clone());
 
-    let uid_str = id_map.get(ety).ok_or_else(|| DumpEntitiesError::MissingIdInMap(ety.clone()))?.as_str();
+    let uid_str = id_map
+        .get(ety)
+        .ok_or_else(|| DumpEntitiesError::MissingIdInMap(ety.clone()))?
+        .as_str();
     table.col(ColumnDef::new_with_type(Alias::new(uid_str), ColumnType::Text).primary_key());
 
     for (attr, tp) in entity_type.attributes() {
-        let mut new_col = ColumnDef::new_with_type(Alias::new(attr.as_str()), QueryType::try_from(&tp.attr_type)?.into());
+        let mut new_col = ColumnDef::new_with_type(
+            Alias::new(attr.as_str()),
+            QueryType::try_from(&tp.attr_type)?.into(),
+        );
         if tp.is_required {
             new_col.not_null();
         }
         table.col(&mut new_col);
         if let Type::EntityOrRecord(EntityRecordKind::Entity(lub)) = &tp.attr_type {
-            let foreign_tp = EntityTypeName::ref_cast(lub.get_single_entity().ok_or(QueryExprError::GetAttrLUBNotSingle)?);
-            let foreign_uid = id_map.get(&foreign_tp).ok_or_else(|| DumpEntitiesError::MissingIdInMap(foreign_tp.clone()))?.as_str();
+            let foreign_tp = EntityTypeName::ref_cast(
+                lub.get_single_entity()
+                    .ok_or(QueryExprError::GetAttrLUBNotSingle)?,
+            );
+            let foreign_uid = id_map
+                .get(&foreign_tp)
+                .ok_or_else(|| DumpEntitiesError::MissingIdInMap(foreign_tp.clone()))?
+                .as_str();
             let mut foreign_key = ForeignKey::create();
             foreign_key.from(table_name.clone(), Alias::new(uid_str));
             foreign_key.to(EntityTableIden(foreign_tp.clone()), Alias::new(foreign_uid));
@@ -186,7 +230,12 @@ pub enum AncestryCols {
 /// Creates a table for the descendants of the given entity type in the schema
 /// Note: these tables already have foreign key constraints attached to them, so they should be created
 /// after the entity tables have been created
-pub fn create_ancestry_table(entity_type: &ValidatorEntityType, eparent: &EntityTypeName, id_map: &HashMap<EntityTypeName, SmolStr>, result: &mut Vec<TableCreateStatement>) -> Result<()> {
+pub fn create_ancestry_table(
+    entity_type: &ValidatorEntityType,
+    eparent: &EntityTypeName,
+    id_map: &HashMap<EntityTypeName, SmolStr>,
+    result: &mut Vec<TableCreateStatement>,
+) -> Result<()> {
     for child in entity_type.descendants.iter() {
         let mut table = Table::create();
         let echild = EntityTypeName::ref_cast(child);
@@ -197,15 +246,23 @@ pub fn create_ancestry_table(entity_type: &ValidatorEntityType, eparent: &Entity
         table.col(ColumnDef::new(AncestryCols::Descendant).text().not_null());
         table.col(ColumnDef::new(AncestryCols::Ancestor).text().not_null());
 
-        let child_fk = id_map.get(&echild).ok_or_else(|| DumpEntitiesError::MissingIdInMap(echild.clone()))?.as_str();
-        let parent_fk = id_map.get(&eparent).ok_or_else(|| DumpEntitiesError::MissingIdInMap(eparent.clone()))?.as_str();
-        table.foreign_key(ForeignKey::create()
-            .from(table_name.clone(), AncestryCols::Descendant)
-            .to(EntityTableIden(echild.clone()), Alias::new(child_fk))
+        let child_fk = id_map
+            .get(&echild)
+            .ok_or_else(|| DumpEntitiesError::MissingIdInMap(echild.clone()))?
+            .as_str();
+        let parent_fk = id_map
+            .get(&eparent)
+            .ok_or_else(|| DumpEntitiesError::MissingIdInMap(eparent.clone()))?
+            .as_str();
+        table.foreign_key(
+            ForeignKey::create()
+                .from(table_name.clone(), AncestryCols::Descendant)
+                .to(EntityTableIden(echild.clone()), Alias::new(child_fk)),
         );
-        table.foreign_key(ForeignKey::create()
-            .from(table_name.clone(), AncestryCols::Ancestor)
-            .to(EntityTableIden(eparent.clone()), Alias::new(parent_fk))
+        table.foreign_key(
+            ForeignKey::create()
+                .from(table_name.clone(), AncestryCols::Ancestor)
+                .to(EntityTableIden(eparent.clone()), Alias::new(parent_fk)),
         );
         result.push(table);
     }
@@ -216,97 +273,156 @@ pub fn create_ancestry_table(entity_type: &ValidatorEntityType, eparent: &Entity
 /// (Note: the ancestry tables already have the foreign key constraints included in the table)
 /// Then return the statements necessary to populate the tables
 /// as well as the "id map" used for the tables (i.e. the column name for the id of each entity type)
-pub fn create_tables(entities: &Entities<PartialValue>, schema: &Schema) -> Result<(Vec<TableCreateStatement>, Vec<ForeignKeyCreateStatement>, Vec<OptionalInsertStatement>, HashMap<EntityTypeName, SmolStr>)> {
+pub fn create_tables(
+    entities: &Entities<PartialValue>,
+    schema: &Schema,
+) -> Result<(
+    Vec<TableCreateStatement>,
+    Vec<ForeignKeyCreateStatement>,
+    Vec<OptionalInsertStatement>,
+    HashMap<EntityTypeName, SmolStr>,
+)> {
     let mut entity_tables = Vec::new();
     let mut foreign_keys = Vec::new();
     let mut ancestry_tables = Vec::new();
     let id_map = create_id_map(schema);
     for (name, ty) in schema.0.entity_types() {
-        create_table_from_entity_type(ty, EntityTypeName::ref_cast(name), &id_map, &mut entity_tables, &mut foreign_keys)?;
-        create_ancestry_table(ty, EntityTypeName::ref_cast(name), &id_map, &mut ancestry_tables)?;
+        create_table_from_entity_type(
+            ty,
+            EntityTypeName::ref_cast(name),
+            &id_map,
+            &mut entity_tables,
+            &mut foreign_keys,
+        )?;
+        create_ancestry_table(
+            ty,
+            EntityTypeName::ref_cast(name),
+            &id_map,
+            &mut ancestry_tables,
+        )?;
     }
     let mut inserts = populate_attr_tables(entities, schema, &id_map)?;
     inserts.extend(populate_ancestry_tables(entities, schema)?);
-    Ok((entity_tables.into_iter().chain(ancestry_tables).collect(), foreign_keys, inserts, id_map))
+    Ok((
+        entity_tables.into_iter().chain(ancestry_tables).collect(),
+        foreign_keys,
+        inserts,
+        id_map,
+    ))
 }
 
 /// Add the entity to the insert statement
 /// The first value is assumed to be the id; the rest of the attributes will be filled in according to `attrs`
-fn add_entity_attrs_to_insert<'e, T: Iterator<Item = (&'e SmolStr, &'e AttributeType)>>(entity: &Entity<PartialValue>, insert: &mut OptionalInsertStatement, attrs: T) -> Result<()> {
+fn add_entity_attrs_to_insert<'e, T: Iterator<Item = (&'e SmolStr, &'e AttributeType)>>(
+    entity: &Entity<PartialValue>,
+    insert: &mut OptionalInsertStatement,
+    attrs: T,
+) -> Result<()> {
     let uid = entity.uid();
     let id: &str = uid.eid().as_ref();
-    let values: Vec<sea_query::SimpleExpr> =
-    std::iter::once(Ok(id.into()))
-    .chain(
-        attrs
-        .map(|(attr, ty)| {
-            let value = entity.get(attr);
-            let ty = QueryType::try_from(&ty.attr_type)?;
-            match value {
-                Some(PartialValue::Residual(_)) | None => Ok(null_value_of_type(ty)),
-                Some(PartialValue::Value(v)) => Ok(value_to_sea_query_value(v, ty)),
-            }
-        })
-        .map(|v| v.map(|v| v.into()))
-    ).collect::<Result<_>>()?;
+    let values: Vec<sea_query::SimpleExpr> = std::iter::once(Ok(id.into()))
+        .chain(
+            attrs
+                .map(|(attr, ty)| {
+                    let value = entity.get(attr);
+                    let ty = QueryType::try_from(&ty.attr_type)?;
+                    match value {
+                        Some(PartialValue::Residual(_)) | None => Ok(null_value_of_type(ty)),
+                        Some(PartialValue::Value(v)) => Ok(value_to_sea_query_value(v, ty)),
+                    }
+                })
+                .map(|v| v.map(|v| v.into())),
+        )
+        .collect::<Result<_>>()?;
     insert.values(values)?;
     Ok(())
 }
 
 /// Add the relationship to the insert statements
-fn add_relationship(inserts: &mut HashMap<(EntityTypeName, EntityTypeName), OptionalInsertStatement>, child: &EntityUID, parent: &EntityUID) -> Result<()> {
+fn add_relationship(
+    inserts: &mut HashMap<(EntityTypeName, EntityTypeName), OptionalInsertStatement>,
+    child: &EntityUID,
+    parent: &EntityUID,
+) -> Result<()> {
     match (child.entity_type(), parent.entity_type()) {
-        (cedar_policy_core::ast::EntityType::Concrete(child_ty), cedar_policy_core::ast::EntityType::Concrete(parent_ty)) => {
+        (
+            cedar_policy_core::ast::EntityType::Concrete(child_ty),
+            cedar_policy_core::ast::EntityType::Concrete(parent_ty),
+        ) => {
             let echild = EntityTypeName::ref_cast(child_ty);
             let eparent = EntityTypeName::ref_cast(parent_ty);
             let child_id: &str = child.eid().as_ref();
             let parent_id: &str = parent.eid().as_ref();
-            inserts.get_mut(&(echild.clone(), eparent.clone()))
-                .ok_or_else(|| DumpEntitiesError::EntityTypeNotFound2(echild.clone(), eparent.clone()))?
+            inserts
+                .get_mut(&(echild.clone(), eparent.clone()))
+                .ok_or_else(|| {
+                    DumpEntitiesError::EntityTypeNotFound2(echild.clone(), eparent.clone())
+                })?
                 .values([child_id.into(), parent_id.into()])?;
             Ok(())
-        },
-        _ => Err(DumpEntitiesError::UnknownEntityType)
+        }
+        _ => Err(DumpEntitiesError::UnknownEntityType),
     }
 }
 
 /// Populate the entity tables with the given entities' attributes
-pub fn populate_attr_tables(entities: &Entities<PartialValue>, schema: &Schema, id_map: &HashMap<EntityTypeName, SmolStr>) -> Result<Vec<OptionalInsertStatement>> {
+pub fn populate_attr_tables(
+    entities: &Entities<PartialValue>,
+    schema: &Schema,
+    id_map: &HashMap<EntityTypeName, SmolStr>,
+) -> Result<Vec<OptionalInsertStatement>> {
     let mut inserts: HashMap<EntityTypeName, OptionalInsertStatement> = HashMap::new();
     for (ty, attrs) in schema.0.entity_types() {
         let mut insert = OptionalInsertStatement::new();
         let ty = EntityTypeName::ref_cast(ty);
         insert.into_table(EntityTableIden(ty.clone()));
 
-        let id_col_name = id_map.get(&ty).ok_or_else(|| DumpEntitiesError::MissingIdInMap(ty.clone()))?;
-        insert.columns(std::iter::once(Alias::new(id_col_name.as_str()))
-            .chain(attrs.attributes().map(|(k, _)| Alias::new(k.as_str()))));
+        let id_col_name = id_map
+            .get(&ty)
+            .ok_or_else(|| DumpEntitiesError::MissingIdInMap(ty.clone()))?;
+        insert.columns(
+            std::iter::once(Alias::new(id_col_name.as_str()))
+                .chain(attrs.attributes().map(|(k, _)| Alias::new(k.as_str()))),
+        );
         inserts.insert(ty.clone(), insert);
     }
     for entity in entities.iter() {
         let uid = entity.uid();
         let entity_type_name = match uid.entity_type() {
             cedar_policy_core::ast::EntityType::Concrete(n) => n,
-            cedar_policy_core::ast::EntityType::Unspecified => return Err(DumpEntitiesError::UnknownEntityType),
+            cedar_policy_core::ast::EntityType::Unspecified => {
+                return Err(DumpEntitiesError::UnknownEntityType)
+            }
         };
         let eentity_type_name = EntityTypeName::ref_cast(entity_type_name);
-        let entity_type = schema.0.get_entity_type(entity_type_name)
+        let entity_type = schema
+            .0
+            .get_entity_type(entity_type_name)
             .ok_or_else(|| DumpEntitiesError::EntityTypeNotFound(eentity_type_name.clone()))?;
-        let insert = inserts.get_mut(&eentity_type_name).expect("Existence of entity type checked should have been checked above");
+        let insert = inserts
+            .get_mut(&eentity_type_name)
+            .expect("Existence of entity type checked should have been checked above");
         add_entity_attrs_to_insert(entity, insert, entity_type.attributes())?;
     }
     Ok(inserts.into_values().collect())
 }
 
 /// Populate the ancestry tables with the given entities' ancestry information
-pub fn populate_ancestry_tables(entities: &Entities<PartialValue>, schema: &Schema) -> Result<Vec<OptionalInsertStatement>> {
-    let mut inserts: HashMap<(EntityTypeName, EntityTypeName), OptionalInsertStatement> = HashMap::new();
+pub fn populate_ancestry_tables(
+    entities: &Entities<PartialValue>,
+    schema: &Schema,
+) -> Result<Vec<OptionalInsertStatement>> {
+    let mut inserts: HashMap<(EntityTypeName, EntityTypeName), OptionalInsertStatement> =
+        HashMap::new();
     for (name, ty) in schema.0.entity_types() {
         let eparent = EntityTypeName::ref_cast(name);
         for child in ty.descendants.iter() {
             let echild = EntityTypeName::ref_cast(child);
             let mut insert = OptionalInsertStatement::new();
-            insert.into_table(EntityAncestryTableIden::new(echild.clone(), eparent.clone()));
+            insert.into_table(EntityAncestryTableIden::new(
+                echild.clone(),
+                eparent.clone(),
+            ));
             insert.columns([AncestryCols::Descendant, AncestryCols::Ancestor]);
             inserts.insert((echild.clone(), eparent.clone()), insert);
         }
@@ -355,36 +471,37 @@ fn constrain_lens(schema: &Schema) -> Result<()> {
 
 /// Create all the tables necessary in `schema`, including the foreign key constraints
 /// as postgresql statements; also returns the id map
-pub fn create_tables_postgres(entities: &Entities<PartialValue>, schema: &Schema) -> Result<(Vec<String>, HashMap<EntityTypeName, SmolStr>)> {
+pub fn create_tables_postgres(
+    entities: &Entities<PartialValue>,
+    schema: &Schema,
+) -> Result<(Vec<String>, HashMap<EntityTypeName, SmolStr>)> {
     constrain_lens(&schema)?;
     let (tables, fks, inserts, id_map) = create_tables(entities, schema)?;
-    let result = tables.into_iter()
+    let result = tables
+        .into_iter()
         .map(|t| t.to_string(PostgresQueryBuilder))
-        .chain(
-            fks.into_iter()
-                .map(|fk| fk.to_string(PostgresQueryBuilder))
-        )
-        .chain(
-            inserts.into_iter()
-                .filter_map(|insert|
-                    if insert.has_values() {
-                        Some(insert.into_insert_statement().to_string(PostgresQueryBuilder))
-                    } else {
-                        None
-                    }
+        .chain(fks.into_iter().map(|fk| fk.to_string(PostgresQueryBuilder)))
+        .chain(inserts.into_iter().filter_map(|insert| {
+            if insert.has_values() {
+                Some(
+                    insert
+                        .into_insert_statement()
+                        .to_string(PostgresQueryBuilder),
                 )
-
-        )
+            } else {
+                None
+            }
+        }))
         .collect();
     Ok((result, id_map))
 }
 
 #[cfg(test)]
 mod test {
-    use std::collections::{HashSet, HashMap};
+    use std::collections::{HashMap, HashSet};
 
-    use cedar_policy::{Schema, PartialValue};
-    use cedar_policy_core::{entities::Entities, ast::Entity};
+    use cedar_policy::{PartialValue, Schema};
+    use cedar_policy_core::{ast::Entity, entities::Entities};
     use sea_query::PostgresQueryBuilder;
 
     use crate::dump_entities::create_tables_postgres;
@@ -439,19 +556,20 @@ mod test {
                 }
             }
         }
-        "#.parse().expect("Schema should not fail to parse")
+        "#
+        .parse()
+        .expect("Schema should not fail to parse")
     }
 
     #[test]
     fn test_create_from_schema() {
         let schema = get_schema();
-        let (tables, fks, _, _) = create_tables(&Entities::new(), &schema).expect("Should not fail to create tables");
-        let result = tables.into_iter()
+        let (tables, fks, _, _) =
+            create_tables(&Entities::new(), &schema).expect("Should not fail to create tables");
+        let result = tables
+            .into_iter()
             .map(|t| t.to_string(PostgresQueryBuilder))
-            .chain(
-                fks.into_iter()
-                    .map(|fk| fk.to_string(PostgresQueryBuilder))
-            )
+            .chain(fks.into_iter().map(|fk| fk.to_string(PostgresQueryBuilder)))
             .collect::<HashSet<_>>();
         assert!(result == HashSet::from([
             r#"CREATE TABLE "cedar"."entity_Users" ( "uid" text PRIMARY KEY, "age" bigint NOT NULL, "location" text, "name" text NOT NULL )"#.into(),
@@ -461,26 +579,26 @@ mod test {
         ]));
     }
 
-
     #[test]
     fn test_unicode_zero() {
         let schema = get_schema();
         let entities = Entities::from_entities(
-            [
-                Entity::new("Users::\"\0\"".parse().unwrap(),
-                    HashMap::from([
-                        ("name".into(), PartialValue::from("")),
-                        ("age".into(), PartialValue::from(0))
-                    ]), HashSet::new())
-            ],
-            cedar_policy_core::entities::TCComputation::ComputeNow
-        ).expect("Should not fail to create entities");
+            [Entity::new(
+                "Users::\"\0\"".parse().unwrap(),
+                HashMap::from([
+                    ("name".into(), PartialValue::from("")),
+                    ("age".into(), PartialValue::from(0)),
+                ]),
+                HashSet::new(),
+            )],
+            cedar_policy_core::entities::TCComputation::ComputeNow,
+        )
+        .expect("Should not fail to create entities");
         let result = create_tables_postgres(&entities, &schema)
-        // In theory this should actually fail since postgres cannot handle null unicode characters
-        // TODO: maybe make a sea query issue?
+            // In theory this should actually fail since postgres cannot handle null unicode characters
+            // TODO: maybe make a sea query issue?
             // .expect_err("Should fail to create table with unicode zero");
             .expect("It actually ends up working");
         println!("{}", result.0.join("\n"));
     }
 }
-

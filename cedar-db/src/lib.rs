@@ -9,28 +9,28 @@ pub mod postgres;
 
 pub mod dump_entities;
 
-pub mod query_expr;
-pub mod query_expr_iterator;
 pub mod expr_to_query;
 pub mod query_builder;
+pub mod query_expr;
+pub mod query_expr_iterator;
 
 #[cfg(test)]
 mod idens {
     #[derive(sea_query::Iden)]
     pub(crate) enum Idens {
         Users,
-            Ancestors,
+        Ancestors,
         Photos,
         Assignments,
-            Owner,
+        Owner,
         TeamMemberships,
-            UserId,
-            TeamId,
-            User,
-            Team,
+        UserId,
+        TeamId,
+        User,
+        Team,
         UsersInTeams,
-            UserUid,
-            TeamUid,
+        UserUid,
+        TeamUid,
         Docs,
         Teams,
     }
@@ -41,10 +41,17 @@ mod idens {
 mod test_postgres {
     use std::borrow::Cow;
 
-    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EntityAttrDatabase, PartialValue, EntityAttrAccessError, CachedEntities, Decision};
+    use cedar_policy::{
+        Authorizer, CachedEntities, Context, Decision, EntityAttrAccessError, EntityAttrDatabase,
+        EntityDatabase, EntityTypeName, EntityUid, PartialValue, Request,
+    };
     use postgres::{Client, NoTls};
 
-    use crate::{postgres::*, sql_common::{EntitySQLInfo, AncestorSQLInfo, DatabaseToCedarError}, idens::Idens};
+    use crate::{
+        idens::Idens,
+        postgres::*,
+        sql_common::{AncestorSQLInfo, DatabaseToCedarError, EntitySQLInfo},
+    };
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "host=localhost user=postgres dbname=example_postgres password=postgres";
@@ -61,15 +68,14 @@ mod test_postgres {
         static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<PostgresSQLInfo> = AncestorSQLInfo::new(Idens::TeamMemberships, Idens::UserId, Idens::TeamId);
     }
 
-
     #[test]
     fn test_basic() {
-        let mut conn = Client::connect(&*DB_PATH, NoTls)
-            .expect("Connection failed");
+        let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
 
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
 
-        let entity = USERS_TABLE_INFO.make_entity_ancestors(&mut conn, &euid)
+        let entity = USERS_TABLE_INFO
+            .make_entity_ancestors(&mut conn, &euid)
             .expect("Failed to make entity");
         println!("Result: {:?}", entity); // should be Users::"0" named "Alice" with parent Users::"1"
     }
@@ -83,30 +89,47 @@ mod test_postgres {
             fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error> {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.exists_entity(&mut conn, uid.id())?),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.exists_entity(&mut conn, uid.id())?),
-                    t if *t == *ASSIGNMENTS_TYPE => Ok(ASSIGNMENTS_TABLE_INFO.exists_entity(&mut conn, uid.id())?),
-                    _ => Ok(false)
+                    t if *t == *USERS_TYPE => {
+                        Ok(USERS_TABLE_INFO.exists_entity(&mut conn, uid.id())?)
+                    }
+                    t if *t == *PHOTOS_TYPE => {
+                        Ok(PHOTOS_TABLE_INFO.exists_entity(&mut conn, uid.id())?)
+                    }
+                    t if *t == *ASSIGNMENTS_TYPE => {
+                        Ok(ASSIGNMENTS_TABLE_INFO.exists_entity(&mut conn, uid.id())?)
+                    }
+                    _ => Ok(false),
                 }
             }
 
-            fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
+            fn entity_attr<'e>(
+                &'e self,
+                uid: &EntityUid,
+                attr: &str,
+            ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.get_single_attr(&mut conn, uid.id(), attr)?.into()),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.get_single_attr(&mut conn, uid.id(), attr)?.into()),
-                    t if *t == *ASSIGNMENTS_TYPE => Ok(ASSIGNMENTS_TABLE_INFO.get_single_attr(&mut conn, uid.id(), attr)?.into()),
-                    _ => Err(EntityAttrAccessError::UnknownEntity)
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO
+                        .get_single_attr(&mut conn, uid.id(), attr)?
+                        .into()),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO
+                        .get_single_attr(&mut conn, uid.id(), attr)?
+                        .into()),
+                    t if *t == *ASSIGNMENTS_TYPE => Ok(ASSIGNMENTS_TABLE_INFO
+                        .get_single_attr(&mut conn, uid.id(), attr)?
+                        .into()),
+                    _ => Err(EntityAttrAccessError::UnknownEntity),
                 }
             }
 
             fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, Self::Error> {
                 match (u1.type_name(), u2.type_name()) {
                     (t1, t2) if *t1 == *USERS_TYPE && *t2 == *TEAMS_TYPE => {
-                        let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
+                        let mut conn =
+                            Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                         USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&mut conn, u1.id(), u2.id())
-                    },
-                    _ => Ok(false)
+                    }
+                    _ => Ok(false),
                 }
             }
 
@@ -121,8 +144,18 @@ mod test_postgres {
     #[test]
     fn test_entity_attr_database() {
         let table = make_entity_attr_database();
-        assert!(table.entity_in(&"Users::\"1\"".parse().unwrap(), &"Teams::\"0\"".parse().unwrap()).expect("Failed to check entity in"));
-        assert!(!table.entity_in(&"Users::\"0\"".parse().unwrap(), &"Teams::\"0\"".parse().unwrap()).expect("Failed to check entity in"));
+        assert!(table
+            .entity_in(
+                &"Users::\"1\"".parse().unwrap(),
+                &"Teams::\"0\"".parse().unwrap()
+            )
+            .expect("Failed to check entity in"));
+        assert!(!table
+            .entity_in(
+                &"Users::\"0\"".parse().unwrap(),
+                &"Teams::\"0\"".parse().unwrap()
+            )
+            .expect("Failed to check entity in"));
     }
 
     #[test]
@@ -146,12 +179,20 @@ mod test_postgres {
         impl EntityDatabase for Table {
             type Error = DatabaseToCedarError;
 
-            fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error> {
+            fn get<'e>(
+                &'e self,
+                uid: &EntityUid,
+            ) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error>
+            {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&mut conn, uid)?.map(Cow::Owned)),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&mut conn, uid)?.map(Cow::Owned)),
-                    _ => Ok(None)
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO
+                        .make_entity_ancestors(&mut conn, uid)?
+                        .map(Cow::Owned)),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO
+                        .make_entity_ancestors(&mut conn, uid)?
+                        .map(Cow::Owned)),
+                    _ => Ok(None),
                 }
             }
 
@@ -162,9 +203,12 @@ mod test_postgres {
 
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
-        let request = Request::new(Some(euid.clone()),
+        let request = Request::new(
+            Some(euid.clone()),
             Some("Actions::\"view\"".parse().unwrap()),
-            Some("Photos::\"2\"".parse().unwrap()), Context::empty());
+            Some("Photos::\"2\"".parse().unwrap()),
+            Context::empty(),
+        );
 
         let result = auth.is_authorized_full_parsed(
             &request,
@@ -180,11 +224,17 @@ mod test_postgres {
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"1\"".parse().unwrap();
         let result1 = auth.is_authorized_full_parsed(
-            &Request::new(Some(euid.clone()),
+            &Request::new(
+                Some(euid.clone()),
                 Some("Actions::\"view\"".parse().unwrap()),
-                Some("Assignments::\"0\"".parse().unwrap()), Context::empty())
-            , &r#"permit(principal, action, resource) when { principal == resource.owner };"#.parse().unwrap(),
-            &table);
+                Some("Assignments::\"0\"".parse().unwrap()),
+                Context::empty(),
+            ),
+            &r#"permit(principal, action, resource) when { principal == resource.owner };"#
+                .parse()
+                .unwrap(),
+            &table,
+        );
         assert!(result1.decision() == Decision::Deny);
 
         let result2 = auth.is_authorized_full_parsed(
@@ -202,13 +252,24 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, Schema, Decision, PartialResponse, RestrictedExpression};
+    use cedar_policy::{
+        Authorizer, Context, Decision, EntityDatabase, EntityTypeName, EntityUid, PartialResponse,
+        Request, RestrictedExpression, Schema,
+    };
 
     use cedar_policy_core::{ast::Expr, entities::SchemaType};
     use rusqlite::Connection;
     use sea_query::{Alias, SqliteQueryBuilder};
 
-    use crate::{{sqlite::*, sql_common::{EntitySQLInfo, AncestorSQLInfo, DatabaseToCedarError}, idens::Idens}, expr_to_query::{InByTable, InByLambda}, query_builder::{translate_response, translate_expr}};
+    use crate::{
+        expr_to_query::{InByLambda, InByTable},
+        query_builder::{translate_expr, translate_response},
+        {
+            idens::Idens,
+            sql_common::{AncestorSQLInfo, DatabaseToCedarError, EntitySQLInfo},
+            sqlite::*,
+        },
+    };
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/example_sqlite.db";
@@ -225,22 +286,33 @@ mod test_sqlite {
 
     fn get_conn() -> Connection {
         let conn = Connection::open(&*DB_PATH).expect("Connection failed");
-        conn.pragma_update(None, "case_sensitive_like", true).expect("Failed to set case_sensitive_like");
+        conn.pragma_update(None, "case_sensitive_like", true)
+            .expect("Failed to set case_sensitive_like");
         conn
     }
 
     fn get_sqlite_table() -> impl EntityDatabase {
         let conn = get_conn();
-        struct Table { conn: Connection }
+        struct Table {
+            conn: Connection,
+        }
 
         impl EntityDatabase for Table {
             type Error = DatabaseToCedarError;
 
-            fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error> {
+            fn get<'e>(
+                &'e self,
+                uid: &EntityUid,
+            ) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error>
+            {
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&self.conn, uid)?.map(Cow::Owned)),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&self.conn, uid)?.map(Cow::Owned)),
-                    _ => Ok(None)
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO
+                        .make_entity_ancestors(&self.conn, uid)?
+                        .map(Cow::Owned)),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO
+                        .make_entity_ancestors(&self.conn, uid)?
+                        .map(Cow::Owned)),
+                    _ => Ok(None),
                 }
             }
 
@@ -251,8 +323,6 @@ mod test_sqlite {
 
         Table { conn }
     }
-
-
 
     fn get_schema() -> Schema {
         r#"
@@ -301,20 +371,30 @@ mod test_sqlite {
                 }
             }
         }
-        "#.parse().expect("Schema should not fail to parse")
+        "#
+        .parse()
+        .expect("Schema should not fail to parse")
     }
 
     #[test]
     fn test_like() {
         let e: Expr = r#""test _%\\randomstuff*" like "test _%\\*\*""#.parse().unwrap();
-        let mut q = translate_expr(&e, &get_schema(),
-        InByLambda {
-            ein: |_, _, _, _| panic!("should not be building 'in' statement"),
-            ein_set: |_, _, _, _| panic!("should not be building 'in' statement")
-        }, |_| (Alias::new(""), "".into())).expect("Failed to translate expression")
+        let mut q = translate_expr(
+            &e,
+            &get_schema(),
+            InByLambda {
+                ein: |_, _, _, _| panic!("should not be building 'in' statement"),
+                ein_set: |_, _, _, _| panic!("should not be building 'in' statement"),
+            },
+            |_| (Alias::new(""), "".into()),
+        )
+        .expect("Failed to translate expression")
         .into_select_statement();
         q.expr(true);
-        assert_eq!(q.to_string(SqliteQueryBuilder), r#"SELECT TRUE WHERE 'test _%\randomstuff*' LIKE 'test \_\%\\%*' ESCAPE '\'"#);
+        assert_eq!(
+            q.to_string(SqliteQueryBuilder),
+            r#"SELECT TRUE WHERE 'test _%\randomstuff*' LIKE 'test \_\%\\%*' ESCAPE '\'"#
+        );
     }
 
     #[test]
@@ -325,35 +405,41 @@ mod test_sqlite {
             .principal(Some("Users::\"1\"".parse().unwrap()))
             .action(Some("Actions::\"view\"".parse().unwrap()))
             .resource(Some("Photos::\"2\"".parse().unwrap()))
-            .context(Context::from_pairs([
-                ("age".into(), RestrictedExpression::new_unknown("age", Some(SchemaType::Long)))
-            ]))
+            .context(Context::from_pairs([(
+                "age".into(),
+                RestrictedExpression::new_unknown("age", Some(SchemaType::Long)),
+            )]))
             .build();
-
 
         let result = auth.is_authorized_parsed(&q,
             // Only 20-30 year olds can see photo 2
             &"permit(principal, action, resource) when { resource == Photos::\"2\" && 20 <= context.age && context.age <= 30 };".parse().unwrap(),
             &get_sqlite_table());
 
-            match result {
-                PartialResponse::Concrete(_) => panic!("Response should be residual"),
-                PartialResponse::Residual(res) => {
-                    #[allow(unused_mut)]
-                    let mut query = translate_response::<Alias>(&res, &get_schema(),
-                        InByTable::<Alias, Alias, _>(|_, _| {
-                            panic!("There should not be any in's in the residual")
-                        }), |_| {
-                            panic!("There should not be any tables in the residual")
-                        }).expect("Failed to translate response");
-                    let query =  query.into_select_statement()
-                        .column(sea_query::Asterisk)
-                        .from(Alias::new("people"))
-                        .to_string(SqliteQueryBuilder);
-                    assert_eq!(query, r#"SELECT * FROM "people" WHERE TRUE AND (TRUE AND 20 <= "age" AND "age" <= 30) AND TRUE"#);
-                }
+        match result {
+            PartialResponse::Concrete(_) => panic!("Response should be residual"),
+            PartialResponse::Residual(res) => {
+                #[allow(unused_mut)]
+                let mut query = translate_response::<Alias>(
+                    &res,
+                    &get_schema(),
+                    InByTable::<Alias, Alias, _>(|_, _| {
+                        panic!("There should not be any in's in the residual")
+                    }),
+                    |_| panic!("There should not be any tables in the residual"),
+                )
+                .expect("Failed to translate response");
+                let query = query
+                    .into_select_statement()
+                    .column(sea_query::Asterisk)
+                    .from(Alias::new("people"))
+                    .to_string(SqliteQueryBuilder);
+                assert_eq!(
+                    query,
+                    r#"SELECT * FROM "people" WHERE TRUE AND (TRUE AND 20 <= "age" AND "age" <= 30) AND TRUE"#
+                );
             }
-
+        }
     }
 
     #[test]
@@ -376,28 +462,46 @@ mod test_sqlite {
         match result {
             PartialResponse::Concrete(_) => panic!("Response should be residual"),
             PartialResponse::Residual(res) => {
-                let mut query = translate_response(&res, &schema,
+                let mut query = translate_response(
+                    &res,
+                    &schema,
                     InByTable::<Alias, Alias, _>(|_, _| {
                         panic!("There should not be any in's in the residual")
-                    }), |tp| {
-                        (if *tp == *USERS_TYPE {
-                            Idens::Users
-                        } else if *tp == *PHOTOS_TYPE {
-                            Idens::Photos
-                        } else {
-                            panic!("Unknown type")
-                        }, "uid".into())
-                    }).expect("Failed to translate response");
-                query.query_default_attr("title").expect("Query should have exactly one unknown");
-                let query =  query.to_string_sqlite();
-                assert_eq!(query, r#"SELECT "resource"."title" FROM "photos" AS "resource" LEFT JOIN "users" AS "temp__0" ON "resource"."user_id" = "temp__0"."uid" WHERE TRUE AND (TRUE AND "temp__0"."name" = 'Alice') AND TRUE"#);
+                    }),
+                    |tp| {
+                        (
+                            if *tp == *USERS_TYPE {
+                                Idens::Users
+                            } else if *tp == *PHOTOS_TYPE {
+                                Idens::Photos
+                            } else {
+                                panic!("Unknown type")
+                            },
+                            "uid".into(),
+                        )
+                    },
+                )
+                .expect("Failed to translate response");
+                query
+                    .query_default_attr("title")
+                    .expect("Query should have exactly one unknown");
+                let query = query.to_string_sqlite();
+                assert_eq!(
+                    query,
+                    r#"SELECT "resource"."title" FROM "photos" AS "resource" LEFT JOIN "users" AS "temp__0" ON "resource"."user_id" = "temp__0"."uid" WHERE TRUE AND (TRUE AND "temp__0"."name" = 'Alice') AND TRUE"#
+                );
 
                 let conn = Connection::open(&*DB_PATH).expect("Connection failed");
                 conn.query_row(&query, [], |row| {
-                    assert_eq!(row.get::<_, String>(0).expect("Row should have title column"), "Beach photo");
+                    assert_eq!(
+                        row.get::<_, String>(0)
+                            .expect("Row should have title column"),
+                        "Beach photo"
+                    );
                     Ok(())
-                }).expect("Failed to query");
-            },
+                })
+                .expect("Failed to query");
+            }
         }
     }
 
@@ -405,13 +509,18 @@ mod test_sqlite {
     fn test_ancestors() {
         let conn = Connection::open(&*DB_PATH).expect("Connection failed");
 
-        let ancestors = USERS_TEAMS_MEMBERSHIP_INFO.get_ancestors(&conn, &"1".parse().unwrap(), &TEAMS_TYPE)
+        let ancestors = USERS_TEAMS_MEMBERSHIP_INFO
+            .get_ancestors(&conn, &"1".parse().unwrap(), &TEAMS_TYPE)
             .expect("Failed to get ancestors");
         assert!(ancestors.contains(&"Teams::\"0\"".parse().unwrap()));
 
-        assert!(USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&conn, &"1".parse().unwrap(), &"0".parse().unwrap()).expect("Failed to check ancestor"));
+        assert!(USERS_TEAMS_MEMBERSHIP_INFO
+            .is_ancestor(&conn, &"1".parse().unwrap(), &"0".parse().unwrap())
+            .expect("Failed to check ancestor"));
 
-        assert!(!USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&conn, &"0".parse().unwrap(), &"1".parse().unwrap()).expect("Failed to check ancestor"));
+        assert!(!USERS_TEAMS_MEMBERSHIP_INFO
+            .is_ancestor(&conn, &"0".parse().unwrap(), &"1".parse().unwrap())
+            .expect("Failed to check ancestor"));
     }
 
     #[test]
@@ -433,12 +542,20 @@ mod test_sqlite {
 mod test_docs_example {
     use std::collections::HashSet;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, EntityTypeName, Schema, Decision, PolicySet, EntityAttrDatabase, EntityAttrAccessError, PartialValue, Response, PartialResponse, EntityId};
+    use cedar_policy::{
+        Authorizer, Decision, EntityAttrAccessError, EntityAttrDatabase, EntityId, EntityTypeName,
+        EntityUid, PartialResponse, PartialValue, PolicySet, Request, Response, Schema,
+    };
 
     use rusqlite::Connection;
 
-    use crate::{sqlite::*, query_builder::translate_response, expr_to_query::InByTable, sql_common::{EntitySQLInfo, AncestorSQLInfo, DatabaseToCedarError, EntitySQLId}, idens::Idens};
-
+    use crate::{
+        expr_to_query::InByTable,
+        idens::Idens,
+        query_builder::translate_response,
+        sql_common::{AncestorSQLInfo, DatabaseToCedarError, EntitySQLId, EntitySQLInfo},
+        sqlite::*,
+    };
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/docs_example.db";
@@ -454,7 +571,9 @@ mod test_docs_example {
         static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<SQLiteSQLInfo> = AncestorSQLInfo::new(Idens::UsersInTeams, Idens::UserUid, Idens::TeamUid);
     }
 
-    struct Table { conn: Connection }
+    struct Table {
+        conn: Connection,
+    }
 
     impl EntityAttrDatabase for Table {
         type Error = DatabaseToCedarError;
@@ -470,17 +589,25 @@ mod test_docs_example {
                 .unwrap_or(false))
         }
 
-        fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
-            let table_info = get_table_info(uid.type_name())
-                .ok_or(EntityAttrAccessError::UnknownEntity)?;
+        fn entity_attr<'e>(
+            &'e self,
+            uid: &EntityUid,
+            attr: &str,
+        ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
+            let table_info =
+                get_table_info(uid.type_name()).ok_or(EntityAttrAccessError::UnknownEntity)?;
             // Unfortunately, we currently do not have schema-based attribute fetching
             // so the Cedar type of the attribute is simply based on the SQL type of the
             // column in the database. This means we have to manually convert the attributes
             // that are not strings but actually `EntityUid`'s
             if uid.type_name() == &*DOCS_TYPE && attr == "owner" {
-                Ok(table_info.get_single_attr_as_id(&self.conn, uid.id(), attr, USERS_TYPE.clone())?.into())
+                Ok(table_info
+                    .get_single_attr_as_id(&self.conn, uid.id(), attr, USERS_TYPE.clone())?
+                    .into())
             } else {
-                Ok(table_info.get_single_attr(&self.conn, uid.id(), attr)?.into())
+                Ok(table_info
+                    .get_single_attr(&self.conn, uid.id(), attr)?
+                    .into())
             }
         }
 
@@ -498,7 +625,7 @@ mod test_docs_example {
             t if *t == *USERS_TYPE => Some(&USERS_TABLE_INFO),
             t if *t == *DOCS_TYPE => Some(&DOCS_TABLE_INFO),
             t if *t == *TEAMS_TYPE => Some(&TEAMS_TABLE_INFO),
-            _ => None
+            _ => None,
         }
     }
 
@@ -565,9 +692,10 @@ mod test_docs_example {
                 }
             }
         }
-        "#.parse().expect("Document schema should parse correctly")
+        "#
+        .parse()
+        .expect("Document schema should parse correctly")
     }
-
 
     fn get_policies_docs_example() -> PolicySet {
         r#"
@@ -583,7 +711,9 @@ mod test_docs_example {
 
         // The document with id 'doc4' is shared with everyone in Cedar
         permit(principal in Teams::"cedar", action, resource == Documents::"doc4");
-        "#.parse().expect("Policies should parse correctly")
+        "#
+        .parse()
+        .expect("Policies should parse correctly")
     }
 
     fn can_danielle_view(doc: &str) -> Response {
@@ -593,7 +723,10 @@ mod test_docs_example {
         let q: Request = Request::builder()
             .principal(Some("Users::\"danielle\"".parse().unwrap()))
             .action(Some("Actions::\"view\"".parse().unwrap()))
-            .resource(Some(EntityUid::from_type_name_and_id(DOCS_TYPE.clone(), doc.parse().unwrap())))
+            .resource(Some(EntityUid::from_type_name_and_id(
+                DOCS_TYPE.clone(),
+                doc.parse().unwrap(),
+            )))
             .build();
 
         auth.is_authorized_full_parsed(&q, &pset, &get_sqlite_table())
@@ -628,24 +761,41 @@ mod test_docs_example {
         match result {
             PartialResponse::Concrete(_) => panic!("Response should be residual"),
             PartialResponse::Residual(resp) => {
-                let mut query = translate_response(&resp, &schema,
+                let mut query = translate_response(
+                    &resp,
+                    &schema,
                     InByTable(|tp1, tp2| {
                         Ok(if tp1 == &*USERS_TYPE && tp2 == &*TEAMS_TYPE {
                             Some((Idens::UsersInTeams, Idens::UserUid, Idens::TeamUid))
                         } else {
                             None
                         })
-                    }), |tp| {
-                        (get_table_info(tp).expect("Entity type should be one of known entity types").table.clone(), "uid".into())
-                    }).expect("Failed to translate response");
-                query.query_default().expect("Query should have exactly one unknown");
+                    }),
+                    |tp| {
+                        (
+                            get_table_info(tp)
+                                .expect("Entity type should be one of known entity types")
+                                .table
+                                .clone(),
+                            "uid".into(),
+                        )
+                    },
+                )
+                .expect("Failed to translate response");
+                query
+                    .query_default()
+                    .expect("Query should have exactly one unknown");
                 query.query_default_attr("title").unwrap();
 
-                let query_str =  query.to_string_sqlite();
+                let query_str = query.to_string_sqlite();
                 // assert_eq!(query_str, r#"SELECT "resource"."uid", "resource"."title" FROM "docs" AS "resource" LEFT JOIN "users" AS "temp__0" ON "resource"."owner" = "temp__0"."uid" WHERE ((TRUE AND "resource"."uid" = 'doc4' AND TRUE) OR (TRUE AND 'danielle' = "resource"."owner") OR (TRUE AND (TRUE AND "temp__0"."role" = 'intern'))) AND TRUE"#);
 
-                let mut stmt = table.conn.prepare(&query_str).expect("Failed to parse query");
-                let query_result = stmt.query_map([], |row| {
+                let mut stmt = table
+                    .conn
+                    .prepare(&query_str)
+                    .expect("Failed to parse query");
+                let query_result = stmt
+                    .query_map([], |row| {
                         let id: EntitySQLId = row.get(0)?;
                         let title: String = row.get(1)?;
                         Ok((id.id(), title))
@@ -653,15 +803,20 @@ mod test_docs_example {
                     .expect("Failed to execute query")
                     .collect::<Result<HashSet<(EntityId, String)>, _>>()
                     .expect("Failed to get columns of row in the requested types");
-                assert!(query_result ==
-                    vec![
-                        ("doc1".parse().unwrap(), "Super secret info".into()),
-                        ("doc2".parse().unwrap(), "Regular old intern stuff".into()),
-                        ("doc4".parse().unwrap(), "Cedar partial evaluation proposal".into()),
-                    ].into_iter().collect()
+                assert!(
+                    query_result
+                        == vec![
+                            ("doc1".parse().unwrap(), "Super secret info".into()),
+                            ("doc2".parse().unwrap(), "Regular old intern stuff".into()),
+                            (
+                                "doc4".parse().unwrap(),
+                                "Cedar partial evaluation proposal".into()
+                            ),
+                        ]
+                        .into_iter()
+                        .collect()
                 );
             }
         }
-
     }
 }

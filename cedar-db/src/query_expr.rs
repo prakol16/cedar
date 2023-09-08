@@ -1,14 +1,19 @@
 use std::collections::{HashMap, HashSet};
 
 use cedar_policy::EntityTypeName;
-use cedar_policy_core::{ast::{Expr, Literal, UnaryOp, BinaryOp, Pattern, ExprKind, SlotId, Var, Name, EntityType}, entities::SchemaType};
-use cedar_policy_validator::{types::{Type, Primitive, EntityRecordKind, EntityLUB, OpenTag}, TypeError};
+use cedar_policy_core::{
+    ast::{BinaryOp, EntityType, Expr, ExprKind, Literal, Name, Pattern, SlotId, UnaryOp, Var},
+    entities::SchemaType,
+};
+use cedar_policy_validator::{
+    types::{EntityLUB, EntityRecordKind, OpenTag, Primitive, Type},
+    TypeError,
+};
 use ref_cast::RefCast;
 use smol_str::SmolStr;
 use thiserror::Error;
 
-use crate::query_expr_iterator::{QueryExprParentType, QueryExprIterator};
-
+use crate::query_expr_iterator::{QueryExprIterator, QueryExprParentType};
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum QueryExprError {
@@ -50,7 +55,6 @@ pub enum QueryExprError {
 
 type Result<T> = std::result::Result<T, QueryExprError>;
 
-
 // This is the type information needed to cast a non-set Cedar value to a non-array SQL value
 // Note that `String` and `EntityId` are unified because both are represented as SQL strings
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -64,7 +68,7 @@ pub enum QueryPrimitiveType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryType {
     Primitive(QueryPrimitiveType),
-    Array(QueryPrimitiveType)
+    Array(QueryPrimitiveType),
 }
 
 impl QueryType {
@@ -94,40 +98,57 @@ impl TryFrom<&Type> for QueryType {
 
     fn try_from(value: &Type) -> Result<Self> {
         match value {
-            Type::Never | Type::True | Type::False | Type::Primitive { primitive_type: Primitive::Bool } => Ok(QueryPrimitiveType::Bool.into()),
-            Type::Primitive { primitive_type: Primitive::Long } => Ok(QueryPrimitiveType::Long.into()),
-            Type::Primitive { primitive_type: Primitive::String } => Ok(QueryPrimitiveType::StringOrEntity.into()),
+            Type::Never
+            | Type::True
+            | Type::False
+            | Type::Primitive {
+                primitive_type: Primitive::Bool,
+            } => Ok(QueryPrimitiveType::Bool.into()),
+            Type::Primitive {
+                primitive_type: Primitive::Long,
+            } => Ok(QueryPrimitiveType::Long.into()),
+            Type::Primitive {
+                primitive_type: Primitive::String,
+            } => Ok(QueryPrimitiveType::StringOrEntity.into()),
             Type::Set { element_type } => {
-                let inner_result: QueryType = element_type.as_deref()
+                let inner_result: QueryType = element_type
+                    .as_deref()
                     .ok_or(QueryExprError::TypeAnnotationNone)?
                     .try_into()?;
                 inner_result.promote()
-            },
-            Type::EntityOrRecord(EntityRecordKind::Record { .. }) => Ok(QueryPrimitiveType::Record.into()),
+            }
+            Type::EntityOrRecord(EntityRecordKind::Record { .. }) => {
+                Ok(QueryPrimitiveType::Record.into())
+            }
             Type::EntityOrRecord(_) => Ok(QueryPrimitiveType::StringOrEntity.into()),
-            Type::ExtensionType { name } => Err(QueryExprError::ExtensionFunctionAppears(name.to_owned())),
+            Type::ExtensionType { name } => {
+                Err(QueryExprError::ExtensionFunctionAppears(name.to_owned()))
+            }
         }
     }
 }
 
 fn entity_lub_to_typename(lub: &EntityLUB) -> Result<&EntityTypeName> {
-    lub.get_single_entity().ok_or(QueryExprError::GetAttrLUBNotSingle).map(|e| EntityTypeName::ref_cast(e))
+    lub.get_single_entity()
+        .ok_or(QueryExprError::GetAttrLUBNotSingle)
+        .map(|e| EntityTypeName::ref_cast(e))
 }
 
 fn type_to_entity_typename(tp: Option<&Type>) -> Result<&EntityTypeName> {
     match tp.ok_or(QueryExprError::TypeAnnotationNone)? {
         Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => entity_lub_to_typename(&lub),
-        Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) => Err(QueryExprError::ActionTypeAppears(name.clone())),
+        Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) => {
+            Err(QueryExprError::ActionTypeAppears(name.clone()))
+        }
         _ => Err(QueryExprError::TypecheckError),
     }
 }
-
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum AttrOrId {
     Attr(SmolStr),
     /// This attribute is the ID of the entity
-    Id(SmolStr)
+    Id(SmolStr),
 }
 
 /// This is a Cedar expression intended to be more easily converted into a SQL query.
@@ -137,12 +158,29 @@ pub enum AttrOrId {
 pub enum QueryExpr {
     Lit(Literal),
     // Skipped: Var, Slot; these should be removed by partial evaluation/policy instantiation
-    Unknown(UnknownType),  // type annotation is mandatory
-    If { test_expr: Box<QueryExpr>, then_expr: Box<QueryExpr>, else_expr: Box<QueryExpr> },
-    And { left: Box<QueryExpr>, right: Box<QueryExpr> },
-    Or { left: Box<QueryExpr>, right: Box<QueryExpr> },
-    UnaryApp { op: UnaryOp, arg: Box<QueryExpr> },
-    BinaryApp { op: BinaryOp, left: Box<QueryExpr>, right: Box<QueryExpr> }, // op should not be `in`
+    Unknown(UnknownType), // type annotation is mandatory
+    If {
+        test_expr: Box<QueryExpr>,
+        then_expr: Box<QueryExpr>,
+        else_expr: Box<QueryExpr>,
+    },
+    And {
+        left: Box<QueryExpr>,
+        right: Box<QueryExpr>,
+    },
+    Or {
+        left: Box<QueryExpr>,
+        right: Box<QueryExpr>,
+    },
+    UnaryApp {
+        op: UnaryOp,
+        arg: Box<QueryExpr>,
+    },
+    BinaryApp {
+        op: BinaryOp,
+        left: Box<QueryExpr>,
+        right: Box<QueryExpr>,
+    }, // op should not be `in`
     InEntity {
         left: Box<QueryExpr>,
         right: Box<QueryExpr>,
@@ -155,17 +193,20 @@ pub enum QueryExpr {
         left_type: EntityTypeName,
         right_type: EntityTypeName,
     },
-    MulByConst { arg: Box<QueryExpr>, constant: i64 },
+    MulByConst {
+        arg: Box<QueryExpr>,
+        constant: i64,
+    },
     // TODO: extension functions
     GetAttrEntity {
         expr: Box<QueryExpr>,
         expr_type: EntityTypeName,
-        attr: AttrOrId
+        attr: AttrOrId,
     },
     GetAttrRecord {
         expr: Box<QueryExpr>,
         attr: SmolStr,
-        result_type: QueryType  // we need to know the result type because sometimes
+        result_type: QueryType, // we need to know the result type because sometimes
                                 // the result will be "json" by default and we need to cast it
     },
     HasAttrRecord {
@@ -173,10 +214,18 @@ pub enum QueryExpr {
         attr: SmolStr,
     },
     IsNotNull(Box<QueryExpr>), // we use this instead of `HasAttr` on entities
-    Like { expr: Box<QueryExpr>, pattern: Pattern },
+    Like {
+        expr: Box<QueryExpr>,
+        pattern: Pattern,
+    },
     Set(Vec<QueryExpr>),
-    Record { pairs: Vec<(SmolStr, QueryExpr)> },
-    RawSQL { sql: SmolStr, args: Vec<QueryExpr> }
+    Record {
+        pairs: Vec<(SmolStr, QueryExpr)>,
+    },
+    RawSQL {
+        sql: SmolStr,
+        args: Vec<QueryExpr>,
+    },
 }
 
 impl Default for QueryExpr {
@@ -196,20 +245,27 @@ impl ComparableResult {
     pub fn must_be_eq(self) -> Self {
         match self {
             ComparableResult::ComparableAsEq => self,
-            _ => ComparableResult::Incomparable
+            _ => ComparableResult::Incomparable,
         }
     }
 }
 
 impl QueryExpr {
-    pub fn eq_or_in_entity(left: QueryExpr, right: QueryExpr, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
+    pub fn eq_or_in_entity(
+        left: QueryExpr,
+        right: QueryExpr,
+        left_type: EntityTypeName,
+        right_type: EntityTypeName,
+    ) -> Self {
         let eq_expr = if left_type == right_type {
             Some(QueryExpr::BinaryApp {
                 op: BinaryOp::Eq,
                 left: Box::new(left.clone()),
-                right: Box::new(right.clone())
+                right: Box::new(right.clone()),
             })
-        } else { None };
+        } else {
+            None
+        };
         let in_entity_expr = QueryExpr::InEntity {
             left: Box::new(left),
             right: Box::new(right),
@@ -219,20 +275,27 @@ impl QueryExpr {
         match eq_expr {
             Some(eq_expr) => QueryExpr::Or {
                 left: Box::new(eq_expr),
-                right: Box::new(in_entity_expr)
+                right: Box::new(in_entity_expr),
             },
-            None => in_entity_expr
+            None => in_entity_expr,
         }
     }
 
-    pub fn contains_or_in_set(left: QueryExpr, right: QueryExpr, left_type: EntityTypeName, right_type: EntityTypeName) -> Self {
+    pub fn contains_or_in_set(
+        left: QueryExpr,
+        right: QueryExpr,
+        left_type: EntityTypeName,
+        right_type: EntityTypeName,
+    ) -> Self {
         let contains_expr = if left_type == right_type {
             Some(QueryExpr::BinaryApp {
                 op: BinaryOp::Contains,
                 left: Box::new(right.clone()),
-                right: Box::new(left.clone())
+                right: Box::new(left.clone()),
             })
-        } else { None };
+        } else {
+            None
+        };
         let inset_expr = QueryExpr::InSet {
             left: Box::new(left),
             right: Box::new(right),
@@ -242,9 +305,9 @@ impl QueryExpr {
         match contains_expr {
             Some(contains_expr) => QueryExpr::Or {
                 left: Box::new(contains_expr),
-                right: Box::new(inset_expr)
+                right: Box::new(inset_expr),
             },
-            None => inset_expr
+            None => inset_expr,
         }
     }
 
@@ -255,22 +318,34 @@ impl QueryExpr {
     /// This is because set equality requires sorting/some canonical order
     fn are_comparable(t1: &Type, t2: &Type) -> Result<ComparableResult> {
         match (t1, t2) {
-            (Type::EntityOrRecord(EntityRecordKind::Record { attrs, open_attributes }),
-                Type::EntityOrRecord(EntityRecordKind::Record { attrs: attrs2, open_attributes: open_attributes2 })) => {
-                if *open_attributes == OpenTag::OpenAttributes || *open_attributes2 == OpenTag::OpenAttributes {
+            (
+                Type::EntityOrRecord(EntityRecordKind::Record {
+                    attrs,
+                    open_attributes,
+                }),
+                Type::EntityOrRecord(EntityRecordKind::Record {
+                    attrs: attrs2,
+                    open_attributes: open_attributes2,
+                }),
+            ) => {
+                if *open_attributes == OpenTag::OpenAttributes
+                    || *open_attributes2 == OpenTag::OpenAttributes
+                {
                     // Since the attributes are open, in particular the records may contain sets, so they are incomparable
                     Ok(ComparableResult::Incomparable)
                 } else {
                     for (k, v) in attrs.iter() {
                         if let Some(v2) = attrs2.get_attr(k) {
-                            if QueryExpr::are_comparable(&v.attr_type, &v2.attr_type)? != ComparableResult::ComparableAsEq {
+                            if QueryExpr::are_comparable(&v.attr_type, &v2.attr_type)?
+                                != ComparableResult::ComparableAsEq
+                            {
                                 return Ok(ComparableResult::Incomparable);
                             }
                         }
                     }
                     return Ok(ComparableResult::ComparableAsEq);
                 }
-            },
+            }
             (Type::Set { element_type: e1 }, Type::Set { element_type: e2 }) => {
                 let e1 = e1.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
                 let e2 = e2.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
@@ -279,33 +354,33 @@ impl QueryExpr {
                 } else {
                     Ok(ComparableResult::Incomparable)
                 }
-            },
-            _ => Ok(ComparableResult::ComparableAsEq)
+            }
+            _ => Ok(ComparableResult::ComparableAsEq),
         }
     }
 
     fn are_op_comparable(op: BinaryOp, t1: &Type, t2: &Type) -> Result<ComparableResult> {
         match op {
             BinaryOp::Eq => QueryExpr::are_comparable(t1, t2),
-            BinaryOp::Contains => {
-                match t1 {
-                    Type::Set { element_type } =>
-                        Ok(QueryExpr::are_comparable(t1, element_type.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?)?
-                            .must_be_eq()),
-                    _ => Err(QueryExprError::TypecheckError)
-                }
+            BinaryOp::Contains => match t1 {
+                Type::Set { element_type } => Ok(QueryExpr::are_comparable(
+                    t1,
+                    element_type
+                        .as_deref()
+                        .ok_or(QueryExprError::TypeAnnotationNone)?,
+                )?
+                .must_be_eq()),
+                _ => Err(QueryExprError::TypecheckError),
             },
-            BinaryOp::ContainsAll | BinaryOp::ContainsAny => {
-                match (t1, t2) {
-                    (Type::Set { element_type: e1 }, Type::Set { element_type: e2 }) => {
-                        let e1 = e1.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
-                        let e2 = e2.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
-                        Ok(QueryExpr::are_comparable(e1, e2)?.must_be_eq())
-                    },
-                    _ => Err(QueryExprError::TypecheckError)
+            BinaryOp::ContainsAll | BinaryOp::ContainsAny => match (t1, t2) {
+                (Type::Set { element_type: e1 }, Type::Set { element_type: e2 }) => {
+                    let e1 = e1.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                    let e2 = e2.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                    Ok(QueryExpr::are_comparable(e1, e2)?.must_be_eq())
                 }
+                _ => Err(QueryExprError::TypecheckError),
             },
-            _ => Ok(ComparableResult::ComparableAsEq)
+            _ => Ok(ComparableResult::ComparableAsEq),
         }
     }
 }
@@ -319,9 +394,15 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
             ExprKind::Var(v) => Err(QueryExprError::VariableAppears(v.to_owned())),
             ExprKind::Slot(s) => Err(QueryExprError::SlotAppears(s.to_owned())),
             ExprKind::Unknown { .. } =>
-                // Doesn't panic because we know `value`'s constructor is `Unknown`
-                Ok(UnknownType::from_expr(value).unwrap().into()),
-            ExprKind::If { test_expr, then_expr, else_expr } => Ok(QueryExpr::If {
+            // Doesn't panic because we know `value`'s constructor is `Unknown`
+            {
+                Ok(UnknownType::from_expr(value).unwrap().into())
+            }
+            ExprKind::If {
+                test_expr,
+                then_expr,
+                else_expr,
+            } => Ok(QueryExpr::If {
                 test_expr: Box::new(QueryExpr::try_from(test_expr.as_ref())?),
                 then_expr: Box::new(QueryExpr::try_from(then_expr.as_ref())?),
                 else_expr: Box::new(QueryExpr::try_from(else_expr.as_ref())?),
@@ -341,7 +422,10 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
             ExprKind::BinaryApp { op, arg1, arg2 } => {
                 if matches!(op, BinaryOp::In) {
                     let arg1_tp_entity = type_to_entity_typename(arg1.data().as_ref())?;
-                    let arg2_tp = arg2.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                    let arg2_tp = arg2
+                        .data()
+                        .as_ref()
+                        .ok_or(QueryExprError::TypeAnnotationNone)?;
                     match arg2_tp {
                         Type::EntityOrRecord(_) => Ok(QueryExpr::eq_or_in_entity(
                             QueryExpr::try_from(arg1.as_ref())?,
@@ -355,11 +439,18 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                             arg1_tp_entity.to_owned(),
                             type_to_entity_typename(element_type.as_deref())?.to_owned(),
                         )),
-                        _ => Err(QueryExprError::TypecheckError)
+                        _ => Err(QueryExprError::TypecheckError),
                     }
                 } else {
-                    match QueryExpr::are_op_comparable(*op, arg1.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?,
-                                                       arg2.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?)? {
+                    match QueryExpr::are_op_comparable(
+                        *op,
+                        arg1.data()
+                            .as_ref()
+                            .ok_or(QueryExprError::TypeAnnotationNone)?,
+                        arg2.data()
+                            .as_ref()
+                            .ok_or(QueryExprError::TypeAnnotationNone)?,
+                    )? {
                         ComparableResult::Incomparable => Err(QueryExprError::IncomparableTypes),
                         ComparableResult::ComparableAsEq => Ok(QueryExpr::BinaryApp {
                             op: *op,
@@ -384,7 +475,7 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                         }
                     }
                 }
-            },
+            }
             ExprKind::MulByConst { arg, constant } => Ok(QueryExpr::MulByConst {
                 arg: Box::new(QueryExpr::try_from(arg.as_ref())?),
                 constant: *constant,
@@ -394,87 +485,117 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                     let mut args_iter = args.iter();
                     // Ignore the first argument because it must be an unknown
                     match args_iter.next() {
-                        Some(e) => {
-                            match e.expr_kind() {
-                                ExprKind::Unknown { name, .. } => {
-                                    if name != "__RAWSQL" {
-                                        return Err(QueryExprError::RawSQLFirstArgIncorrect(name.to_owned()));
-                                    }
-                                },
-                                _ => return Err(QueryExprError::RawSQLFirstArgNotUnknown)
+                        Some(e) => match e.expr_kind() {
+                            ExprKind::Unknown { name, .. } => {
+                                if name != "__RAWSQL" {
+                                    return Err(QueryExprError::RawSQLFirstArgIncorrect(
+                                        name.to_owned(),
+                                    ));
+                                }
                             }
+                            _ => return Err(QueryExprError::RawSQLFirstArgNotUnknown),
                         },
-                        _ => return Err(QueryExprError::RawSQLFirstArgNotUnknown)
+                        _ => return Err(QueryExprError::RawSQLFirstArgNotUnknown),
                     };
                     let sql = match args_iter.next() {
                         Some(e) => match e.expr_kind() {
                             ExprKind::Lit(Literal::String(s)) => s.to_owned(),
-                            _ => return Err(QueryExprError::RawSQLDynamic)
+                            _ => return Err(QueryExprError::RawSQLDynamic),
                         },
-                        _ => return Err(QueryExprError::TypecheckError)
+                        _ => return Err(QueryExprError::TypecheckError),
                     };
-                    let args = args_iter.map(|e| QueryExpr::try_from(e)).collect::<Result<Vec<_>>>()?;
+                    let args = args_iter
+                        .map(|e| QueryExpr::try_from(e))
+                        .collect::<Result<Vec<_>>>()?;
                     Ok(QueryExpr::RawSQL { sql, args })
                 } else {
                     Err(QueryExprError::ExtensionFunctionAppears(fn_name.to_owned()))
                 }
-            },
+            }
             ExprKind::GetAttr { expr, attr } => {
-                let expr_tp = expr.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                let expr_tp = expr
+                    .data()
+                    .as_ref()
+                    .ok_or(QueryExprError::TypeAnnotationNone)?;
                 match expr_tp {
                     Type::EntityOrRecord(EntityRecordKind::Record { .. }) => {
                         Ok(QueryExpr::GetAttrRecord {
                             expr: Box::new(QueryExpr::try_from(expr.as_ref())?),
                             attr: attr.to_owned(),
-                            result_type: value.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?.try_into()?
+                            result_type: value
+                                .data()
+                                .as_ref()
+                                .ok_or(QueryExprError::TypeAnnotationNone)?
+                                .try_into()?,
                         })
-                    },
+                    }
                     Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => {
                         Ok(QueryExpr::GetAttrEntity {
                             expr: Box::new(QueryExpr::try_from(expr.as_ref())?),
                             expr_type: entity_lub_to_typename(lub)?.to_owned(),
                             attr: AttrOrId::Attr(attr.to_owned()),
                         })
-                    },
-                    Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) =>
-                        Err(QueryExprError::ActionAttribute { action: name.clone(), attr: attr.clone() }),
+                    }
+                    Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) => {
+                        Err(QueryExprError::ActionAttribute {
+                            action: name.clone(),
+                            attr: attr.clone(),
+                        })
+                    }
                     _ => Err(QueryExprError::TypecheckError),
                 }
-            },
+            }
             ExprKind::HasAttr { expr, attr } => {
-                let expr_tp = expr.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                let expr_tp = expr
+                    .data()
+                    .as_ref()
+                    .ok_or(QueryExprError::TypeAnnotationNone)?;
                 match expr_tp {
                     Type::EntityOrRecord(EntityRecordKind::Record { .. }) => {
                         Ok(QueryExpr::HasAttrRecord {
                             expr: Box::new(QueryExpr::try_from(expr.as_ref())?),
                             attr: attr.to_owned(),
                         })
-                    },
+                    }
                     Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => {
                         Ok(QueryExpr::IsNotNull(Box::new(QueryExpr::GetAttrEntity {
                             expr: Box::new(QueryExpr::try_from(expr.as_ref())?),
                             expr_type: entity_lub_to_typename(lub)?.to_owned(),
                             attr: AttrOrId::Attr(attr.to_owned()),
                         })))
-                    },
-                    Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) =>
-                        Err(QueryExprError::ActionAttribute { action: name.clone(), attr: attr.clone() }),
+                    }
+                    Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) => {
+                        Err(QueryExprError::ActionAttribute {
+                            action: name.clone(),
+                            attr: attr.clone(),
+                        })
+                    }
                     _ => Err(QueryExprError::TypecheckError),
                 }
-            },
-            ExprKind::Like { expr, pattern } => {
-                Ok(QueryExpr::Like {
-                    expr: Box::new(QueryExpr::try_from(expr.as_ref())?),
-                    pattern: pattern.to_owned(),
-                })
-            },
+            }
+            ExprKind::Like { expr, pattern } => Ok(QueryExpr::Like {
+                expr: Box::new(QueryExpr::try_from(expr.as_ref())?),
+                pattern: pattern.to_owned(),
+            }),
             ExprKind::Set(s) => {
-                QueryType::try_from(value.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?)?;
-                Ok(QueryExpr::Set(s.iter().map(|e| QueryExpr::try_from(e)).collect::<Result<Vec<_>>>()?))
-            },
-            ExprKind::Record { pairs } =>  Ok(QueryExpr::Record {
-                pairs: pairs.iter().map(|(k, v)| Ok((k.to_owned(), QueryExpr::try_from(v)?))).collect::<Result<Vec<_>>>()?
-            })
+                QueryType::try_from(
+                    value
+                        .data()
+                        .as_ref()
+                        .ok_or(QueryExprError::TypeAnnotationNone)?,
+                )?;
+                Ok(QueryExpr::Set(
+                    s.iter()
+                        .map(|e| QueryExpr::try_from(e))
+                        .collect::<Result<Vec<_>>>()?,
+                ))
+            }
+            ExprKind::Record { pairs } => Ok(QueryExpr::Record {
+                pairs: pairs
+                    .iter()
+                    .map(|(k, v)| Ok((k.to_owned(), QueryExpr::try_from(v)?)))
+                    .collect::<Result<Vec<_>>>()?,
+            }),
         }
     }
 }
@@ -484,20 +605,20 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
 pub enum UnknownType {
     EntityType {
         ty: EntityTypeName,
-        name: SmolStr
+        name: SmolStr,
     },
     /// Escape hatch for non-entity variables
     NonEntityType {
         pfx: Option<SmolStr>,
-        name: SmolStr
-    }
+        name: SmolStr,
+    },
 }
 
 impl UnknownType {
     pub fn of_name_and_type(name: SmolStr, ty: Option<EntityTypeName>) -> Self {
         match ty {
             Some(ty) => UnknownType::EntityType { ty, name },
-            None => UnknownType::NonEntityType { pfx: None, name }
+            None => UnknownType::NonEntityType { pfx: None, name },
         }
     }
 
@@ -511,7 +632,7 @@ impl UnknownType {
     pub fn get_pfx(&self) -> Option<&str> {
         match self {
             UnknownType::NonEntityType { pfx: Some(pfx), .. } => Some(pfx.as_str()),
-            _ => None
+            _ => None,
         }
     }
 
@@ -519,15 +640,19 @@ impl UnknownType {
     /// Used in the conversion and also to collect free variables
     pub fn from_expr<T>(e: &Expr<T>) -> Option<Self> {
         match e.expr_kind() {
-            ExprKind::Unknown { name, type_annotation } => {
-                Some(UnknownType::of_name_and_type(name.to_owned(),
-                    match type_annotation {
-                        Some(SchemaType::Entity { ty: EntityType::Concrete(n) }) => Some(EntityTypeName::ref_cast(n).to_owned()),
-                        _ => None,
-                    }
-                ))
-            },
-            _ => None
+            ExprKind::Unknown {
+                name,
+                type_annotation,
+            } => Some(UnknownType::of_name_and_type(
+                name.to_owned(),
+                match type_annotation {
+                    Some(SchemaType::Entity {
+                        ty: EntityType::Concrete(n),
+                    }) => Some(EntityTypeName::ref_cast(n).to_owned()),
+                    _ => None,
+                },
+            )),
+            _ => None,
         }
     }
 }
@@ -539,7 +664,9 @@ impl From<UnknownType> for QueryExpr {
 }
 
 impl QueryExpr {
-    pub fn subexpressions_with_parents(&self) -> impl Iterator<Item = (&QueryExpr, Option<QueryExprParentType>)> {
+    pub fn subexpressions_with_parents(
+        &self,
+    ) -> impl Iterator<Item = (&QueryExpr, Option<QueryExprParentType>)> {
         QueryExprIterator::new(self).into_iter()
     }
 
@@ -549,11 +676,10 @@ impl QueryExpr {
 
     /// Retrieve all the unknowns as well as their types.
     pub fn get_unknowns(&self) -> impl Iterator<Item = &UnknownType> {
-        self.subexpressions()
-            .filter_map(|e| match e {
-                QueryExpr::Unknown(u) => Some(u),
-                _ => None
-            })
+        self.subexpressions().filter_map(|e| match e {
+            QueryExpr::Unknown(u) => Some(u),
+            _ => None,
+        })
     }
 }
 
@@ -561,14 +687,14 @@ pub struct QueryExprWithVars {
     pub(crate) expr: QueryExpr,
     /// The set of unknowns in the *original* expression
     /// We guarantee that the unknowns in the expression are a subset of this set
-    pub(crate) vars: Vec<UnknownType>
+    pub(crate) vars: Vec<UnknownType>,
 }
 
 impl QueryExprWithVars {
     pub fn from_expr(e: &Expr<Option<Type>>, vars: Vec<UnknownType>) -> Result<Self> {
         Ok(QueryExprWithVars {
             expr: QueryExpr::try_from(e)?,
-            vars: vars
+            vars: vars,
         })
     }
 
@@ -588,19 +714,22 @@ impl QueryExprWithVars {
 pub struct BindingValue {
     insertion_order: usize,
     pub(crate) name: SmolStr,
-    pub(crate) ty: EntityTypeName
+    pub(crate) ty: EntityTypeName,
 }
 
 impl BindingValue {
     pub fn into_unknown(self) -> UnknownType {
-        UnknownType::EntityType { ty: self.ty, name: self.name }
+        UnknownType::EntityType {
+            ty: self.ty,
+            name: self.name,
+        }
     }
 }
 
 /// Used to construct bindings -- we keep the expressions in a hash map but also remember the insertion order
 #[derive(Debug, Clone, Default)]
 pub struct BindingsBuilder {
-    bindings: HashMap<Box<QueryExpr>, BindingValue>
+    bindings: HashMap<Box<QueryExpr>, BindingValue>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -623,15 +752,21 @@ impl BindingsBuilder {
         Bindings(result)
     }
 
-    pub fn insert(&mut self, q: Box<QueryExpr>, ty: EntityTypeName, id_gen: &mut IdGen) -> BindingValue {
+    pub fn insert(
+        &mut self,
+        q: Box<QueryExpr>,
+        ty: EntityTypeName,
+        id_gen: &mut IdGen,
+    ) -> BindingValue {
         let size = self.bindings.len();
-        self.bindings.entry(q).or_insert_with(|| {
-            BindingValue {
+        self.bindings
+            .entry(q)
+            .or_insert_with(|| BindingValue {
                 name: id_gen.next(),
                 ty,
-                insertion_order: size
-            }
-        }).clone()
+                insertion_order: size,
+            })
+            .clone()
     }
 }
 
@@ -665,7 +800,7 @@ impl From<QueryExprWithVars> for ExprWithBindings {
 }
 
 pub struct IdGen {
-    next_id: usize
+    next_id: usize,
 }
 
 const ID_GEN_PREFIX: &str = "temp__";
@@ -704,8 +839,12 @@ impl QueryExpr {
     pub fn reduce_attrs(&mut self, id_gen: &mut IdGen) -> Bindings {
         let mut builder = BindingsBuilder::default();
         self.mut_subexpressions(&mut |expr, _| {
-            if let QueryExpr::GetAttrEntity { expr, expr_type, .. } = expr {
-                if expr.is_unknown_entity_deref() { // if it is already attr-reduced, skip
+            if let QueryExpr::GetAttrEntity {
+                expr, expr_type, ..
+            } = expr
+            {
+                if expr.is_unknown_entity_deref() {
+                    // if it is already attr-reduced, skip
                     return;
                 }
 
@@ -733,7 +872,7 @@ impl QueryExpr {
                     *expr = QueryExpr::GetAttrEntity {
                         expr: Box::new(expr.clone()),
                         expr_type: tp.clone(),
-                        attr: AttrOrId::Id("uid".into())  // we use a default id value of "uid"
+                        attr: AttrOrId::Id("uid".into()), // we use a default id value of "uid"
                     };
                 }
             }
@@ -753,7 +892,10 @@ impl QueryExpr {
     /// Rename all the attributes in this expression using the given map.
     pub fn rename_attrs(&mut self, map: impl Fn(&EntityTypeName, &mut AttrOrId) -> ()) {
         self.mut_subexpressions(&mut |expr, _| {
-            if let QueryExpr::GetAttrEntity { attr, expr_type, .. } = expr {
+            if let QueryExpr::GetAttrEntity {
+                attr, expr_type, ..
+            } = expr
+            {
                 map(expr_type, attr);
             }
         });
@@ -764,14 +906,14 @@ impl QueryExpr {
     pub fn get_unknown_entity_deref_name(&self) -> Option<SmolStr> {
         match self {
             QueryExpr::Unknown(UnknownType::EntityType { name, .. }) => Some(name.clone()),
-            _ => None
+            _ => None,
         }
     }
 
     pub fn get_unknown_entity_type(&self) -> Option<&EntityTypeName> {
         match self {
             QueryExpr::Unknown(UnknownType::EntityType { ty, .. }) => Some(ty),
-            _ => None
+            _ => None,
         }
     }
 
@@ -780,7 +922,6 @@ impl QueryExpr {
         matches!(self, QueryExpr::Unknown(UnknownType::EntityType { .. }))
     }
 }
-
 
 impl ExprWithBindings {
     /// Turn the expression with bindings into an attr-reduced form.

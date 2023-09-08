@@ -551,8 +551,13 @@ impl<'a> Typechecker<'a> {
         }
     }
 
-    pub fn typecheck_expr_strict(&self, request_env: &RequestEnv, e: &Expr,
-        expected_type: Type, type_errors: &mut Vec<TypeError>) -> Option<Expr<Option<Type>>> {
+    pub fn typecheck_expr_strict(
+        &self,
+        request_env: &RequestEnv,
+        e: &Expr,
+        expected_type: Type,
+        type_errors: &mut Vec<TypeError>,
+    ) -> Option<Expr<Option<Type>>> {
         let result = self.typecheck_strict(request_env, e, expected_type, type_errors);
         if result.typechecked() {
             result.into_typed_expr()
@@ -1190,7 +1195,7 @@ impl<'a> Typechecker<'a> {
                 None => TypecheckAnswer::fail(
                     ExprBuilder::with_data(None)
                         .with_same_source_info(e)
-                        .unknown(name.clone(), None)
+                        .unknown(name.clone(), None),
                 ),
                 Some(t) => TypecheckAnswer::success(
                     ExprBuilder::with_data(Some(t.clone().into()))

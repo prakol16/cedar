@@ -60,7 +60,7 @@ pub struct Evaluator<'e, T: EntityAttrDatabase> {
     /// could create multiple `Evaluator`s without copying the `Entities`.
     entities: &'e T,
     /// Extensions which are active for this evaluation
-    extensions: &'e Extensions<'e>
+    extensions: &'e Extensions<'e>,
 }
 
 /// Evaluator for "restricted" expressions. See notes on `RestrictedExpr`.
@@ -87,40 +87,50 @@ impl<'e> RestrictedEvaluator<'e> {
     }
 
     /// Evaluates extension functions in the set `to_eval`.
-    pub fn partial_interpret_unrestricted(&self, e: &Expr, to_eval: &HashSet<Name>) -> Result<Expr> {
+    pub fn partial_interpret_unrestricted(
+        &self,
+        e: &Expr,
+        to_eval: &HashSet<Name>,
+    ) -> Result<Expr> {
         stack_size_check()?;
 
         match e.expr_kind() {
-            ExprKind::Lit(_) | ExprKind::Var(_) | ExprKind::Slot(_) | ExprKind::Unknown { .. } => Ok(e.to_owned()),
-            ExprKind::If { test_expr, then_expr, else_expr } => {
+            ExprKind::Lit(_) | ExprKind::Var(_) | ExprKind::Slot(_) | ExprKind::Unknown { .. } => {
+                Ok(e.to_owned())
+            }
+            ExprKind::If {
+                test_expr,
+                then_expr,
+                else_expr,
+            } => {
                 let test_expr = self.partial_interpret_unrestricted(test_expr, to_eval)?;
                 let then_expr = self.partial_interpret_unrestricted(then_expr, to_eval)?;
                 let else_expr = self.partial_interpret_unrestricted(else_expr, to_eval)?;
                 Ok(Expr::ite(test_expr, then_expr, else_expr))
-            },
+            }
             ExprKind::And { left, right } => {
                 let left = self.partial_interpret_unrestricted(left, to_eval)?;
                 let right = self.partial_interpret_unrestricted(right, to_eval)?;
                 Ok(Expr::and(left, right))
-            },
+            }
             ExprKind::Or { left, right } => {
                 let left = self.partial_interpret_unrestricted(left, to_eval)?;
                 let right = self.partial_interpret_unrestricted(right, to_eval)?;
                 Ok(Expr::or(left, right))
-            },
+            }
             ExprKind::UnaryApp { op, arg } => {
                 let arg = self.partial_interpret_unrestricted(arg, to_eval)?;
                 Ok(Expr::unary_app(*op, arg))
-            },
+            }
             ExprKind::BinaryApp { op, arg1, arg2 } => {
                 let arg1 = self.partial_interpret_unrestricted(arg1, to_eval)?;
                 let arg2 = self.partial_interpret_unrestricted(arg2, to_eval)?;
                 Ok(Expr::binary_app(*op, arg1, arg2))
-            },
+            }
             ExprKind::MulByConst { arg, constant } => {
                 let arg = self.partial_interpret_unrestricted(arg, to_eval)?;
                 Ok(Expr::mul(arg, *constant))
-            },
+            }
             ExprKind::ExtensionFunctionApp { fn_name, args } => {
                 if to_eval.contains(fn_name) {
                     let e_restricted = BorrowedRestrictedExpr::new(e)?;
@@ -129,32 +139,40 @@ impl<'e> RestrictedEvaluator<'e> {
                         PartialValue::Residual(r) => Ok(r),
                     }
                 } else {
-                    Ok(Expr::call_extension_fn(fn_name.clone(),
-                    args.iter()
+                    Ok(Expr::call_extension_fn(
+                        fn_name.clone(),
+                        args.iter()
                             .map(|f| self.partial_interpret_unrestricted(f, to_eval))
-                            .collect::<Result<Vec<_>>>()?))
+                            .collect::<Result<Vec<_>>>()?,
+                    ))
                 }
-            },
+            }
             ExprKind::GetAttr { expr, attr } => {
                 let expr = self.partial_interpret_unrestricted(expr, to_eval)?;
                 Ok(Expr::get_attr(expr, attr.clone()))
-            },
+            }
             ExprKind::HasAttr { expr, attr } => {
                 let expr = self.partial_interpret_unrestricted(expr, to_eval)?;
                 Ok(Expr::has_attr(expr, attr.clone()))
-            },
+            }
             ExprKind::Like { expr, pattern } => {
                 let expr = self.partial_interpret_unrestricted(expr, to_eval)?;
                 Ok(Expr::like(expr, pattern.iter().cloned()))
-            },
+            }
             ExprKind::Set(vals) => {
-                let vals = vals.iter().map(|e| self.partial_interpret_unrestricted(e, to_eval)).collect::<Result<Vec<_>>>()?;
+                let vals = vals
+                    .iter()
+                    .map(|e| self.partial_interpret_unrestricted(e, to_eval))
+                    .collect::<Result<Vec<_>>>()?;
                 Ok(Expr::set(vals))
-            },
+            }
             ExprKind::Record { pairs } => {
-                let pairs = pairs.iter().map(|(k, v)| Ok((k.clone(), self.partial_interpret_unrestricted(v, to_eval)?))).collect::<Result<Vec<_>>>()?;
+                let pairs = pairs
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), self.partial_interpret_unrestricted(v, to_eval)?)))
+                    .collect::<Result<Vec<_>>>()?;
                 Ok(Expr::record(pairs))
-            },
+            }
         }
     }
 
@@ -212,9 +230,7 @@ impl<'e> RestrictedEvaluator<'e> {
 impl Entity {
     /// Evaluate the attributes in the entity, using the given evaluator
     pub fn eval_attrs(self, eval: &RestrictedEvaluator<'_>) -> Result<Entity<PartialValue>> {
-        self.map_attrs(|v| {
-            eval.partial_interpret(v.as_borrowed())
-        })
+        self.map_attrs(|v| eval.partial_interpret(v.as_borrowed()))
     }
 }
 
@@ -223,9 +239,7 @@ impl Entities {
     /// `Entities<PartialValue>`.
     pub fn eval_attrs(self, extensions: &Extensions<'_>) -> Result<Entities<PartialValue>> {
         let eval = RestrictedEvaluator::new(extensions);
-        self.map_attrs(|v| {
-            v.eval_attrs(&eval)
-        })
+        self.map_attrs(|v| v.eval_attrs(&eval))
     }
 }
 
@@ -238,11 +252,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
     /// policies.)
     ///
     /// Does not throw errors (TODO: make this return `Self` instead of `Result<Self>`)
-    pub fn new(
-        q: &'q Request,
-        entities: &'e T,
-        extensions: &'e Extensions<'e>,
-    ) -> Result<Self> {
+    pub fn new(q: &'q Request, entities: &'e T, extensions: &'e Extensions<'e>) -> Result<Self> {
         Ok(Self {
             principal: q.principal().clone(),
             action: q.action().clone(),
@@ -260,7 +270,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                 }
             },
             entities,
-            extensions
+            extensions,
         })
     }
 
@@ -496,7 +506,11 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                         if rhs.contains(uid1) {
                             Ok(true.into())
                         } else {
-                            match self.entities.exists_entity_deref(uid1).map_err(EvaluationError::mk_request)? {
+                            match self
+                                .entities
+                                .exists_entity_deref(uid1)
+                                .map_err(EvaluationError::mk_request)?
+                            {
                                 Dereference::Residual(r) => Ok(PartialValue::Residual(
                                     Expr::binary_app(BinaryOp::In, r, arg2.into()),
                                 )),
@@ -601,7 +615,14 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
             ExprKind::HasAttr { expr, attr } => match self.partial_interpret(expr, slots)? {
                 PartialValue::Value(Value::Record(record)) => Ok(record.get(attr).is_some().into()),
                 PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
-                    match self.entities.handle_access_error(&uid, self.entities.entity_has_attr(&uid, attr.as_str())).map_err(EvaluationError::mk_request)? {
+                    match self
+                        .entities
+                        .handle_access_error(
+                            &uid,
+                            self.entities.entity_has_attr(&uid, attr.as_str()),
+                        )
+                        .map_err(EvaluationError::mk_request)?
+                    {
                         Dereference::NoSuchEntity => Ok(false.into()),
                         Dereference::Residual(r) => {
                             Ok(PartialValue::Residual(Expr::has_attr(r, attr.clone())))
@@ -664,22 +685,20 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                 .iter()
                 .map(|val| Ok(val.get_as_entity()?.clone()))
                 .collect::<Result<Vec<EntityUID>>>(),
-            _ => {
-                Err(EvaluationError::type_error(
-                    vec![Type::Set, Type::entity_type(names::ANY_ENTITY_TYPE.clone())],
-                    rhs.type_of(),
-                ))
-            }
+            _ => Err(EvaluationError::type_error(
+                vec![Type::Set, Type::entity_type(names::ANY_ENTITY_TYPE.clone())],
+                rhs.type_of(),
+            )),
         }
     }
 
-    fn eval_in(
-        &self,
-        uid1: &EntityUID,
-        rhs: Vec<EntityUID>,
-    ) -> Result<PartialValue> {
+    fn eval_in(&self, uid1: &EntityUID, rhs: Vec<EntityUID>) -> Result<PartialValue> {
         for uid2 in rhs {
-            if self.entities.entity_in(uid1, &uid2).map_err(EvaluationError::mk_request)? {
+            if self
+                .entities
+                .entity_in(uid1, &uid2)
+                .map_err(EvaluationError::mk_request)?
+            {
                 return Ok(true.into());
             }
         }
@@ -769,11 +788,15 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
             PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
                 let attr_value = match self.entities.entity_attr(&uid, attr) {
                     Ok(v) => Ok(v),
-                    Err(e) =>
-                        Err(e.handle_attr(()).err()
-                        .ok_or_else(|| EvaluationError::entity_attr_does_not_exist(uid.clone(), attr.clone()))?),
+                    Err(e) => Err(e.handle_attr(()).err().ok_or_else(|| {
+                        EvaluationError::entity_attr_does_not_exist(uid.clone(), attr.clone())
+                    })?),
                 };
-                match self.entities.handle_access_error(&uid, attr_value).map_err(EvaluationError::mk_request)? {
+                match self
+                    .entities
+                    .handle_access_error(&uid, attr_value)
+                    .map_err(EvaluationError::mk_request)?
+                {
                     Dereference::NoSuchEntity => Err(match *uid.entity_type() {
                         EntityType::Unspecified => {
                             EvaluationError::unspecified_entity_access(attr.clone())
@@ -785,7 +808,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                     Dereference::Residual(r) => {
                         Ok(PartialValue::Residual(Expr::get_attr(r, attr.clone())))
                     }
-                    Dereference::Data(v) => Ok(v)
+                    Dereference::Data(v) => Ok(v),
                 }
             }
             PartialValue::Value(v) => {
@@ -909,8 +932,8 @@ fn stack_size_check() -> Result<()> {
 
 #[cfg(test)]
 pub mod test {
-    use std::str::FromStr;
     use std::collections::HashMap;
+    use std::str::FromStr;
 
     use super::*;
 
@@ -3558,7 +3581,11 @@ pub mod test {
         let request = basic_request();
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs(&Extensions::none()).expect("empty slice");
+        let entities = eparser
+            .from_json_str("[]")
+            .expect("empty slice")
+            .eval_attrs(&Extensions::none())
+            .expect("empty slice");
         let exts = Extensions::none();
         let evaluator = Evaluator::new(&request, &entities, &exts).expect("empty slice");
 
@@ -3671,7 +3698,11 @@ pub mod test {
         let request = basic_request();
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs(&Extensions::none()).expect("empty slice");
+        let entities = eparser
+            .from_json_str("[]")
+            .expect("empty slice")
+            .eval_attrs(&Extensions::none())
+            .expect("empty slice");
         let exts = Extensions::none();
         let evaluator = Evaluator::new(&request, &entities, &exts).expect("empty slice");
         let e = Expr::slot(SlotId::principal());
@@ -3728,7 +3759,11 @@ pub mod test {
         );
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs(&Extensions::none()).expect("empty slice");
+        let entities = eparser
+            .from_json_str("[]")
+            .expect("empty slice")
+            .eval_attrs(&Extensions::none())
+            .expect("empty slice");
         let exts = Extensions::none();
         let eval = Evaluator::new(&q, &entities, &exts).unwrap();
 

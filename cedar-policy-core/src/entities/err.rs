@@ -44,7 +44,7 @@ pub enum EntityAttrAccessError<T: std::error::Error> {
     /// The entity exists but the attribute does not
     UnknownAttr,
     /// Some other error occured (e.g. network failed)
-    AccessError(T)
+    AccessError(T),
 }
 
 /// Error which is thrown when accessing an entity (e.g. to check the presence of an attribute)
@@ -53,7 +53,7 @@ pub enum EntityAccessError<T: std::error::Error> {
     /// The entity does not exist
     UnknownEntity,
     /// Some other error occured (e.g. network failed)
-    AccessError(T)
+    AccessError(T),
 }
 
 impl<T: std::error::Error> EntityAttrAccessError<T> {

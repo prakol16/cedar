@@ -1,7 +1,6 @@
 //! This file defines extra functionality that should be added to the sea_query crate.
 
-use sea_query::{DynIden, IntoTableRef, TableRef, IntoIden, ColumnRef, Query, SimpleExpr};
-
+use sea_query::{ColumnRef, DynIden, IntoIden, IntoTableRef, Query, SimpleExpr, TableRef};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StaticTableRef {
@@ -30,7 +29,9 @@ impl StaticTableRef {
     pub fn with_column(self, col: impl IntoIden) -> ColumnRef {
         match self {
             StaticTableRef::Table(t) => ColumnRef::TableColumn(t, col.into_iden()),
-            StaticTableRef::SchemaTable(s, t) => ColumnRef::SchemaTableColumn(s, t, col.into_iden())
+            StaticTableRef::SchemaTable(s, t) => {
+                ColumnRef::SchemaTableColumn(s, t, col.into_iden())
+            }
         }
     }
 
@@ -71,7 +72,10 @@ impl OptionalInsertStatement {
         self.insert.columns(cols);
     }
 
-    pub fn values<I: IntoIterator<Item = SimpleExpr>>(&mut self, vals: I) -> Result<(), sea_query::error::Error> {
+    pub fn values<I: IntoIterator<Item = SimpleExpr>>(
+        &mut self,
+        vals: I,
+    ) -> Result<(), sea_query::error::Error> {
         self.insert.values(vals)?;
         self.has_values = true;
         Ok(())
@@ -84,15 +88,14 @@ impl OptionalInsertStatement {
 
 #[cfg(test)]
 mod test {
-    use sea_query::{SimpleExpr, ArrayType, Value, PostgresQueryBuilder, Query, Expr};
+    use sea_query::{ArrayType, Expr, PostgresQueryBuilder, Query, SimpleExpr, Value};
 
     #[test]
     fn test_empty_array() {
-        let empty_array: SimpleExpr = Value::Array(ArrayType::BigInt, Some(Box::new(vec![]))).into();
+        let empty_array: SimpleExpr =
+            Value::Array(ArrayType::BigInt, Some(Box::new(vec![]))).into();
         let equality_check = empty_array.clone().eq(empty_array);
-        let query = Query::select()
-            .expr(Expr::expr(equality_check))
-            .to_owned();
+        let query = Query::select().expr(Expr::expr(equality_check)).to_owned();
         println!("query: {}", query.to_string(PostgresQueryBuilder));
     }
 
@@ -144,9 +147,7 @@ mod test {
     #[test]
     fn test_substitute_char() {
         let ch: SimpleExpr = '\u{1a}'.into();
-        let query = Query::select()
-            .expr(ch)
-            .to_owned();
+        let query = Query::select().expr(ch).to_owned();
         // Just one possible escape (other possibilities include e.g. \u001A, etc.)
         assert_eq!(query.to_string(PostgresQueryBuilder), r#"SELECT E'\x1A'"#);
     }

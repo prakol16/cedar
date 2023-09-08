@@ -313,7 +313,9 @@ impl ExtensionFunction {
     pub fn call(&self, args: &[Value]) -> evaluator::Result<PartialValue> {
         match (self.func)(args)? {
             ExtensionOutputValue::Concrete(v) => Ok(PartialValue::Value(v)),
-            ExtensionOutputValue::Unknown(name, tp) => Ok(PartialValue::Residual(Expr::unknown_with_type(name, tp))),
+            ExtensionOutputValue::Unknown(name, tp) => {
+                Ok(PartialValue::Residual(Expr::unknown_with_type(name, tp)))
+            }
         }
     }
 }

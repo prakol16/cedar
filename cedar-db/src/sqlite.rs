@@ -1,11 +1,19 @@
 use std::collections::{HashMap, HashSet};
 
-use cedar_policy::{PartialValue, EntityUid, ParsedEntity, EntityId, EntityTypeName, Value, EntityAttrAccessError};
-use rusqlite::{Connection, Row, OptionalExtension, types::{FromSql, ValueRef}};
-use sea_query::{SqliteQueryBuilder, SelectStatement};
+use cedar_policy::{
+    EntityAttrAccessError, EntityId, EntityTypeName, EntityUid, ParsedEntity, PartialValue, Value,
+};
+use rusqlite::{
+    types::{FromSql, ValueRef},
+    Connection, OptionalExtension, Row,
+};
+use sea_query::{SelectStatement, SqliteQueryBuilder};
 use smol_str::SmolStr;
 
-use crate::sql_common::{SQLValue, EntitySQLId, IsSQLDatabase, EntitySQLInfo, make_ancestors, DatabaseToCedarError, AncestorSQLInfo};
+use crate::sql_common::{
+    make_ancestors, AncestorSQLInfo, DatabaseToCedarError, EntitySQLId, EntitySQLInfo,
+    IsSQLDatabase, SQLValue,
+};
 
 impl FromSql for SQLValue {
     fn column_result(value: ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
@@ -15,9 +23,10 @@ impl FromSql for SQLValue {
             // TODO: use decimal type
             ValueRef::Real(_) => Err(rusqlite::types::FromSqlError::InvalidType),
             ValueRef::Text(s) => {
-                let decoded = std::str::from_utf8(s).map_err(|_| rusqlite::types::FromSqlError::InvalidType)?;
+                let decoded = std::str::from_utf8(s)
+                    .map_err(|_| rusqlite::types::FromSqlError::InvalidType)?;
                 Ok(SQLValue(Some(decoded.into())))
-            },
+            }
             ValueRef::Blob(_) => Err(rusqlite::types::FromSqlError::InvalidType),
         }
     }
@@ -37,104 +46,181 @@ pub struct SQLiteSQLInfo;
 impl IsSQLDatabase for SQLiteSQLInfo {}
 
 impl EntitySQLInfo<SQLiteSQLInfo> {
-    pub fn make_entity_ancestors(&self, conn: &Connection, uid: &EntityUid) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
-        self.make_entity(conn, uid, |row| {
-            match self.ancestor_attr_ind {
-                Some(ancestors_attr_ind) => {
-                    make_ancestors(serde_json::from_str(&row.get::<_, String>(ancestors_attr_ind)?)?)
-                },
-                None => panic!("make_entity_ancestors should only be called when `ancestors_attr_ind` is filled"),
-            }
+    pub fn make_entity_ancestors(
+        &self,
+        conn: &Connection,
+        uid: &EntityUid,
+    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+        self.make_entity(conn, uid, |row| match self.ancestor_attr_ind {
+            Some(ancestors_attr_ind) => make_ancestors(serde_json::from_str(
+                &row.get::<_, String>(ancestors_attr_ind)?,
+            )?),
+            None => panic!(
+                "make_entity_ancestors should only be called when `ancestors_attr_ind` is filled"
+            ),
         })
     }
 
-    pub fn make_entity(&self, conn: &Connection, uid: &EntityUid, ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>)
-        -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
-        Self::make_entity_from_table(conn, uid, &self.get_select(uid.id()),
+    pub fn make_entity(
+        &self,
+        conn: &Connection,
+        uid: &EntityUid,
+        ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
+    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+        Self::make_entity_from_table(
+            conn,
+            uid,
+            &self.get_select(uid.id()),
             |row| Self::convert_attr_names(&row, &self.attr_names_map),
-            ancestors)
+            ancestors,
+        )
     }
 
-    pub fn make_entity_extra_attrs(&self, conn: &Connection, uid: &EntityUid, ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
-        extra_attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>)
-        -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
-        Self::make_entity_from_table(conn, uid, &self.get_select(uid.id()),
+    pub fn make_entity_extra_attrs(
+        &self,
+        conn: &Connection,
+        uid: &EntityUid,
+        ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
+        extra_attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
+    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+        Self::make_entity_from_table(
+            conn,
+            uid,
+            &self.get_select(uid.id()),
             |row| {
                 let mut attrs = Self::convert_attr_names(&row, &self.attr_names_map)?;
                 attrs.extend(extra_attrs(row)?);
                 Ok(attrs)
-            }, ancestors)
+            },
+            ancestors,
+        )
     }
 
-    pub fn get_single_attr_as<T: FromSql>(&self, conn: &Connection, id: &EntityId, attr: &str) -> Result<T, EntityAttrAccessError<DatabaseToCedarError>> {
-        let query = self.get_single_attr_select(id, attr).ok_or(EntityAttrAccessError::UnknownAttr)?;
-        let query_result: T = conn.query_row(&query.to_string(SqliteQueryBuilder), [], |row| row.get(0)).optional()
+    pub fn get_single_attr_as<T: FromSql>(
+        &self,
+        conn: &Connection,
+        id: &EntityId,
+        attr: &str,
+    ) -> Result<T, EntityAttrAccessError<DatabaseToCedarError>> {
+        let query = self
+            .get_single_attr_select(id, attr)
+            .ok_or(EntityAttrAccessError::UnknownAttr)?;
+        let query_result: T = conn
+            .query_row(&query.to_string(SqliteQueryBuilder), [], |row| row.get(0))
+            .optional()
             .map_err(DatabaseToCedarError::from)?
             .ok_or(EntityAttrAccessError::UnknownEntity)?;
         Ok(query_result)
     }
 
-    pub fn get_single_attr(&self, conn: &Connection, id: &EntityId, attr: &str) -> Result<Value, EntityAttrAccessError<DatabaseToCedarError>> {
+    pub fn get_single_attr(
+        &self,
+        conn: &Connection,
+        id: &EntityId,
+        attr: &str,
+    ) -> Result<Value, EntityAttrAccessError<DatabaseToCedarError>> {
         let query_result: SQLValue = self.get_single_attr_as(conn, id, attr)?;
         match query_result {
             SQLValue(Some(v)) => Ok(v),
-            SQLValue(None) => Err(EntityAttrAccessError::UnknownAttr)
+            SQLValue(None) => Err(EntityAttrAccessError::UnknownAttr),
         }
     }
 
-    pub fn get_single_attr_as_id(&self, conn: &Connection, id: &EntityId, attr: &str, tp: EntityTypeName) -> Result<EntityUid, EntityAttrAccessError<DatabaseToCedarError>> {
+    pub fn get_single_attr_as_id(
+        &self,
+        conn: &Connection,
+        id: &EntityId,
+        attr: &str,
+        tp: EntityTypeName,
+    ) -> Result<EntityUid, EntityAttrAccessError<DatabaseToCedarError>> {
         let query_result: EntitySQLId = self.get_single_attr_as(conn, id, attr)?;
         Ok(query_result.into_uid(tp))
     }
 
-    pub fn exists_entity(&self, conn: &Connection, id: &EntityId) -> Result<bool, DatabaseToCedarError> {
+    pub fn exists_entity(
+        &self,
+        conn: &Connection,
+        id: &EntityId,
+    ) -> Result<bool, DatabaseToCedarError> {
         let query = self.get_exists_select(id);
-        Ok(conn.query_row(&query.to_string(SqliteQueryBuilder), [], |_| Ok(())).optional()?.is_some())
+        Ok(conn
+            .query_row(&query.to_string(SqliteQueryBuilder), [], |_| Ok(()))
+            .optional()?
+            .is_some())
     }
 
-    pub fn convert_attr_names(query_result: &Row, attr_names: &HashMap<SmolStr, usize>) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError> {
-        attr_names.iter()
-            .filter_map(|(nm, ind)| {
-                match query_result.get::<_, SQLValue>(*ind) {
-                    Ok(SQLValue(Some(v))) => Some(Ok((nm.to_string(), v.into()))),
-                    Ok(SQLValue(None)) => None,
-                    Err(e) => Some(Err(DatabaseToCedarError::from(e))),
-                }
+    pub fn convert_attr_names(
+        query_result: &Row,
+        attr_names: &HashMap<SmolStr, usize>,
+    ) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError> {
+        attr_names
+            .iter()
+            .filter_map(|(nm, ind)| match query_result.get::<_, SQLValue>(*ind) {
+                Ok(SQLValue(Some(v))) => Some(Ok((nm.to_string(), v.into()))),
+                Ok(SQLValue(None)) => None,
+                Err(e) => Some(Err(DatabaseToCedarError::from(e))),
             })
             .collect()
     }
 
-    pub fn make_entity_from_table(conn: &Connection, uid: &EntityUid,
+    pub fn make_entity_from_table(
+        conn: &Connection,
+        uid: &EntityUid,
         query: &SelectStatement,
         attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
-        ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+        ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
+    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
         // TODO: use `build` instead of `to_string`
         let query_string = query.to_string(SqliteQueryBuilder);
-        Ok(conn.query_row(&query_string, [], |row| {
-            Ok(ParsedEntity::new(uid.clone(),
-            attrs(&row).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-            ancestors(&row).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?))
-        }).optional()?)
+        Ok(conn
+            .query_row(&query_string, [], |row| {
+                Ok(ParsedEntity::new(
+                    uid.clone(),
+                    attrs(&row)
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+                    ancestors(&row)
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+                ))
+            })
+            .optional()?)
     }
-
 }
 
 impl AncestorSQLInfo<SQLiteSQLInfo> {
-    pub fn get_ancestors(&self, conn: &Connection, id: &EntityId, tp: &EntityTypeName) -> Result<HashSet<EntityUid>, DatabaseToCedarError> {
+    pub fn get_ancestors(
+        &self,
+        conn: &Connection,
+        id: &EntityId,
+        tp: &EntityTypeName,
+    ) -> Result<HashSet<EntityUid>, DatabaseToCedarError> {
         let mut stmt = conn.prepare(&self.query_all_parents(id).to_string(SqliteQueryBuilder))?;
-        let result = stmt.query_map([], |row| {
-            let parent_id: EntitySQLId = row.get(0)?;
-            Ok(parent_id.into_uid(tp.clone()))
-        })?
-        .collect::<Result<HashSet<EntityUid>, _>>()?;
+        let result = stmt
+            .query_map([], |row| {
+                let parent_id: EntitySQLId = row.get(0)?;
+                Ok(parent_id.into_uid(tp.clone()))
+            })?
+            .collect::<Result<HashSet<EntityUid>, _>>()?;
         Ok(result)
     }
 
-    pub fn is_ancestor(&self, conn: &Connection, child_id: &EntityId, parent_id: &EntityId) -> Result<bool, DatabaseToCedarError> {
-        Ok(conn.query_row(&self.query_is_parent(child_id, parent_id).to_string(SqliteQueryBuilder), [], |_| Ok(())).optional()?.is_some())
+    pub fn is_ancestor(
+        &self,
+        conn: &Connection,
+        child_id: &EntityId,
+        parent_id: &EntityId,
+    ) -> Result<bool, DatabaseToCedarError> {
+        Ok(conn
+            .query_row(
+                &self
+                    .query_is_parent(child_id, parent_id)
+                    .to_string(SqliteQueryBuilder),
+                [],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
     }
 }
-
 
 /*
 pub struct EntitySQLInfo<'e> {

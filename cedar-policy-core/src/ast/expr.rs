@@ -16,8 +16,9 @@
 
 use crate::{
     ast::*,
+    entities::SchemaType,
     extensions::Extensions,
-    parser::{err::ParseErrors, SourceInfo}, entities::SchemaType,
+    parser::{err::ParseErrors, SourceInfo},
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};

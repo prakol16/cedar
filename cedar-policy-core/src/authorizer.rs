@@ -161,22 +161,30 @@ impl Authorizer {
 
     /// Returns an authorization response for `q` with respect to the given `Slice`.
     /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
-    pub fn is_authorized_parsed<T: EntityAttrDatabase>(&self, q: &Request, pset: &PolicySet, entities: &T) -> Response {
+    pub fn is_authorized_parsed<T: EntityAttrDatabase>(
+        &self,
+        q: &Request,
+        pset: &PolicySet,
+        entities: &T,
+    ) -> Response {
         self.handle_response(pset, self.is_authorized_core_parsed(q, pset, entities))
     }
 
     /// Returns an authorization response for `q` with respect to the given `Slice`.
-    pub fn is_authorized_core(&self, q: &Request, pset: &PolicySet, entities: &Entities) -> ResponseKind {
+    pub fn is_authorized_core(
+        &self,
+        q: &Request,
+        pset: &PolicySet,
+        entities: &Entities,
+    ) -> ResponseKind {
         let entities_parsed = entities.clone().eval_attrs(&self.extensions);
         match entities_parsed {
             Ok(entities_parsed) => self.is_authorized_core_parsed(q, pset, &entities_parsed),
-            Err(e) => {
-                ResponseKind::FullyEvaluated(Response::new(
-                    Decision::Deny,
-                    HashSet::new(),
-                    vec![AuthorizationError::AttributeEvaluationError(e)],
-                ))
-            }
+            Err(e) => ResponseKind::FullyEvaluated(Response::new(
+                Decision::Deny,
+                HashSet::new(),
+                vec![AuthorizationError::AttributeEvaluationError(e)],
+            )),
         }
     }
 
@@ -327,7 +335,11 @@ impl Authorizer {
                     )),
                 },
                 Err(e) => {
-                    let error_handling = if e.is_global_deny_error() { ErrorHandling::Deny } else { self.error_handling };
+                    let error_handling = if e.is_global_deny_error() {
+                        ErrorHandling::Deny
+                    } else {
+                        self.error_handling
+                    };
                     results.errors.push((p.id().clone(), e));
                     let satisfied = match error_handling {
                         ErrorHandling::Deny => {
