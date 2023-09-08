@@ -290,8 +290,8 @@ pub trait EntityAttrDatabase {
 
     /// Get the attribute of an entity given the attribute string, if both the entity and attr exist
     /// Should return None if the entity does not exist or attr is not present on the entity
-    fn entity_attr<'e>(
-        &'e self,
+    fn entity_attr(
+        & self,
         uid: &EntityUID,
         attr: &str,
     ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>>;
@@ -369,8 +369,8 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
         Ok(self.get(uid).is_some())
     }
 
-    fn entity_attr<'e>(
-        &'e self,
+    fn entity_attr(
+        &self,
         uid: &EntityUID,
         attr: &str,
     ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {

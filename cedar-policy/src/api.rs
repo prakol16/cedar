@@ -245,8 +245,8 @@ pub trait EntityAttrDatabase {
 
     /// Get the attribute of an entity given the attribute string
     /// Should return None if the attr is not present on the entity; the entity is guaranteed to exist
-    fn entity_attr<'e>(
-        &'e self,
+    fn entity_attr(
+        &self,
         uid: &EntityUid,
         attr: &str,
     ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>>;
@@ -279,8 +279,8 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
         Ok(self.get(uid)?.is_some())
     }
 
-    fn entity_attr<'e>(
-        &'e self,
+    fn entity_attr(
+        &self,
         uid: &EntityUid,
         attr: &str,
     ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
@@ -295,10 +295,11 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
     }
 
     fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, Self::Error> {
-        match self.get(u1)? {
-            Some(e) => Ok(e.as_ref().is_descendant_of(u2)),
-            None => Ok(false),
-        }
+        self.get(u1)?
+        .map_or_else(
+            || Ok(false),
+            |e| Ok(e.as_ref().is_descendant_of(u2))
+        )
     }
 
     fn partial_mode(&self) -> Mode {
@@ -677,7 +678,7 @@ impl<'e, T: EntityDatabase> CachedEntities<'e, T> {
     pub fn cache_request(db: &'e T, r: &Request) -> Self {
         let entities: Vec<&EntityUid> = vec![r.principal(), r.resource()]
             .into_iter()
-            .filter_map(|x| x)
+            .flatten()
             .collect();
         Self::new(db, &entities)
     }
@@ -839,7 +840,7 @@ impl Authorizer {
         p: &PolicySet,
         e: &T,
     ) -> PartialResponse {
-        Authorizer::handle_partial_response(self.0.is_authorized_core_parsed(
+        Self::handle_partial_response(self.0.is_authorized_core_parsed(
             &r.0,
             &p.ast,
             EntityDatabaseWrapper::ref_cast(e),
@@ -873,7 +874,7 @@ impl Authorizer {
         let response = self
             .0
             .is_authorized_core(&query.0, &policy_set.ast, &entities.0);
-        Authorizer::handle_partial_response(response)
+        Self::handle_partial_response(response)
     }
 
     // #[cfg(feature = "partial-eval")]
@@ -1639,12 +1640,6 @@ impl EntityUid {
         ))
     }
 
-    /// Convert this `EntityUid` to a JSON value, which will have the implicit encoding
-    pub fn to_json_implicit(&self) -> serde_json::Value {
-        let euid_json = entities::EntityUidJSON::from_euid_implicit_escape(&self.0);
-        serde_json::to_value(euid_json).unwrap()
-    }
-
     /// Testing utility for creating `EntityUids` a bit easier
     #[cfg(test)]
     pub(crate) fn from_strs(typename: &str, id: &str) -> Self {
@@ -1679,7 +1674,7 @@ impl std::fmt::Display for EntityUid {
 
 impl From<EntityUid> for Value {
     fn from(value: EntityUid) -> Self {
-        Value::Lit(value.0.into())
+        Self::Lit(value.0.into())
     }
 }
 
