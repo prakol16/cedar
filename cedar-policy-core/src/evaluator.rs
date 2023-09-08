@@ -705,7 +705,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                     self.partial_interpret(alternative, slots)
                 }
             }
-            PartialValue::Residual(_) => {
+            PartialValue::Residual(guard) => {
                 let (consequent, consequent_errored) = self.run_to_error(consequent, slots);
                 let (alternative, alternative_errored) = self.run_to_error(alternative, slots);
                 // If both branches errored, the expression will always error
