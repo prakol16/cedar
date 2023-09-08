@@ -44,7 +44,7 @@ use crate::{
     types::{
         AttributeType, Effect, EffectSet, EntityRecordKind, OpenTag, Primitive, RequestEnv, Type,
     },
-    ValidationMode,
+    AttributeAccess, ValidationMode,
 };
 
 use super::type_error::TypeError;
@@ -1625,7 +1625,7 @@ impl<'a> Typechecker<'a> {
                                 } else {
                                     type_errors.push(TypeError::unsafe_optional_attribute_access(
                                         e.clone(),
-                                        attr.to_string(),
+                                        AttributeAccess::from_expr(request_env, &annot_expr),
                                     ));
                                     TypecheckAnswer::fail(annot_expr)
                                 }
@@ -1636,7 +1636,7 @@ impl<'a> Typechecker<'a> {
                                 let suggestion = fuzzy_search(attr, &borrowed);
                                 type_errors.push(TypeError::unsafe_attribute_access(
                                     e.clone(),
-                                    attr.to_string(),
+                                    AttributeAccess::from_expr(request_env, &annot_expr),
                                     suggestion,
                                     Type::may_have_attr(self.schema, typ_actual, attr),
                                 ));
