@@ -21,6 +21,19 @@ use crate::{
     evaluator::{self, EvaluationError},
 };
 
+use self::names::EXTENSION_NAME;
+
+
+// PANIC SAFETY All the names are valid names
+#[allow(clippy::expect_used)]
+mod names {
+    use crate::ast::Name;
+
+    lazy_static::lazy_static! {
+        pub static ref EXTENSION_NAME : Name = Name::parse_unqualified_name("partial_evaluation").expect("should be a valid identifier");
+    }
+}
+
 fn create_new_unknown(v: Value) -> evaluator::Result<ExtensionOutputValue> {
     let s = v.get_as_string()?.to_string();
     // Dirty hack to identify types
@@ -28,7 +41,10 @@ fn create_new_unknown(v: Value) -> evaluator::Result<ExtensionOutputValue> {
         Some((s1, s2)) => Ok(ExtensionOutputValue::Unknown(
             s1.into(),
             Some(SchemaType::Entity {
-                ty: EntityType::Concrete(s2.parse().unwrap()),
+                ty: EntityType::Concrete(
+                    s2.parse()
+                    .map_err(|_| EvaluationError::failed_extension_function_application(EXTENSION_NAME.clone(), format!("Failed to parse entity type name {}", s2)))?
+                ),
             }),
         )),
         None => Ok(ExtensionOutputValue::Unknown(s.into(), None)),
@@ -37,10 +53,8 @@ fn create_new_unknown(v: Value) -> evaluator::Result<ExtensionOutputValue> {
 
 fn throw_error(v: Value) -> evaluator::Result<ExtensionOutputValue> {
     let msg = v.get_as_string()?;
-    // PANIC SAFETY: This name is fully static, and is a valid extension name
-    #[allow(clippy::unwrap_used)]
     let err = EvaluationError::failed_extension_function_application(
-        "partial_evaluation".parse().unwrap(),
+        EXTENSION_NAME.clone(),
         msg.to_string(),
     );
     Err(err)

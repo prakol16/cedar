@@ -10,17 +10,18 @@ use crate::{
 
 use self::names::{BOOL_SQL_ID, LONG_SQL_ID, RAWSQL_ID, RAWSQL_NAME, STR_SQL_ID};
 
+#[allow(clippy::expect_used)]
 mod names {
     use crate::ast::{Id, Name};
 
     // PANIC SAFETY all of the names here are valid names
     lazy_static::lazy_static! {
-        pub static ref RAWSQL_ID : Id = "rawsql".parse().unwrap();
+        pub static ref RAWSQL_ID : Id = "rawsql".parse().expect("rawsql is a valid identifier");
         pub static ref RAWSQL_NAME : Name = Name::new(RAWSQL_ID.clone(), []);
 
-        pub static ref BOOL_SQL_ID : Id = "bool".parse().unwrap();
-        pub static ref LONG_SQL_ID : Id = "long".parse().unwrap();
-        pub static ref STR_SQL_ID : Id = "str".parse().unwrap();
+        pub static ref BOOL_SQL_ID : Id = "bool".parse().expect("bool is a valid identifier");
+        pub static ref LONG_SQL_ID : Id = "long".parse().expect("long is a valid identifier");
+        pub static ref STR_SQL_ID : Id = "str".parse().expect("str is a valid identifier");
     }
 }
 

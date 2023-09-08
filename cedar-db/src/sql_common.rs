@@ -237,7 +237,7 @@ impl<U: IsSQLDatabase> EntitySQLInfo<U> {
             .map(|s| Alias::new(*s).into_column_ref())
             .collect::<Vec<_>>();
         if let Some(ancestor_attr_val) = ancestor_attr.clone() {
-            sql_attr_names.push(ancestor_attr_val.clone());
+            sql_attr_names.push(ancestor_attr_val);
         }
 
         let len = attr_names.len();

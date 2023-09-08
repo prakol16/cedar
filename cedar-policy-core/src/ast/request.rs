@@ -73,7 +73,7 @@ impl EntityUIDEntry {
     pub fn type_name(&self) -> Option<EntityType> {
         match self {
             EntityUIDEntry::Concrete(euid) => Some(euid.entity_type().clone()),
-            EntityUIDEntry::Unknown(name) => name.clone().map(|n| EntityType::Concrete(n)),
+            EntityUIDEntry::Unknown(name) => name.clone().map(EntityType::Concrete),
         }
     }
 

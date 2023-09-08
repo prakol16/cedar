@@ -284,14 +284,15 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
         uid: &EntityUid,
         attr: &str,
     ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
-        match self.get(uid)? {
-            Some(e) => e
-                .as_ref()
-                .attr(attr)
-                .cloned()
-                .ok_or(EntityAttrAccessError::UnknownAttr),
-            None => Err(EntityAttrAccessError::UnknownEntity),
-        }
+        self.get(uid)?.map_or_else(
+            || Err(EntityAttrAccessError::UnknownEntity),
+            |e| {
+                e.as_ref()
+                    .attr(attr)
+                    .cloned()
+                    .ok_or(EntityAttrAccessError::UnknownAttr)
+            },
+        )
     }
 
     fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, Self::Error> {
@@ -616,8 +617,8 @@ impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapp
         self.0.exists_entity(EntityUid::ref_cast(uid))
     }
 
-    fn entity_attr<'e>(
-        &'e self,
+    fn entity_attr(
+        &self,
         uid: &ast::EntityUID,
         attr: &str,
     ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
