@@ -59,7 +59,7 @@ pub struct Evaluator<'e, T: EntityAttrDatabase> {
     /// could create multiple `Evaluator`s without copying the `Entities`.
     entities: &'e T,
     /// Extensions which are active for this evaluation
-    extensions: &'e Extensions<'e>
+    extensions: &'e Extensions<'e>,
 }
 
 /// Evaluator for "restricted" expressions. See notes on `RestrictedExpr`.
@@ -139,9 +139,7 @@ impl<'e> RestrictedEvaluator<'e> {
 impl Entity {
     /// Evaluate the attributes in the entity, using the given evaluator
     pub fn eval_attrs(self, eval: &RestrictedEvaluator<'_>) -> Result<Entity<PartialValue>> {
-        self.map_attrs(|v| {
-            eval.partial_interpret(v.as_borrowed())
-        })
+        self.map_attrs(|v| eval.partial_interpret(v.as_borrowed()))
     }
 }
 
@@ -150,9 +148,7 @@ impl Entities {
     /// `Entities<PartialValue>`.
     pub fn eval_attrs(self, extensions: &Extensions<'_>) -> Result<Entities<PartialValue>> {
         let eval = RestrictedEvaluator::new(extensions);
-        self.map_attrs(|v| {
-            v.eval_attrs(&eval)
-        })
+        self.map_attrs(|v| v.eval_attrs(&eval))
     }
 }
 
@@ -165,11 +161,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
     /// policies.)
     ///
     /// Does not throw errors (TODO: make this return `Self` instead of `Result<Self>`)
-    pub fn new(
-        q: &'q Request,
-        entities: &'e T,
-        extensions: &'e Extensions<'e>,
-    ) -> Result<Self> {
+    pub fn new(q: &'q Request, entities: &'e T, extensions: &'e Extensions<'e>) -> Result<Self> {
         Ok(Self {
             principal: q.principal().clone(),
             action: q.action().clone(),
@@ -187,7 +179,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                 }
             },
             entities,
-            extensions
+            extensions,
         })
     }
 
@@ -423,7 +415,11 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                         if rhs.contains(uid1) {
                             Ok(true.into())
                         } else {
-                            match self.entities.exists_entity_deref(uid1).map_err(EvaluationError::mk_request)? {
+                            match self
+                                .entities
+                                .exists_entity_deref(uid1)
+                                .map_err(EvaluationError::mk_request)?
+                            {
                                 Dereference::Residual(r) => Ok(PartialValue::Residual(
                                     Expr::binary_app(BinaryOp::In, r, arg2.into()),
                                 )),
@@ -528,7 +524,14 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
             ExprKind::HasAttr { expr, attr } => match self.partial_interpret(expr, slots)? {
                 PartialValue::Value(Value::Record(record)) => Ok(record.get(attr).is_some().into()),
                 PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
-                    match self.entities.handle_access_error(&uid, self.entities.entity_has_attr(&uid, attr.as_str())).map_err(EvaluationError::mk_request)? {
+                    match self
+                        .entities
+                        .handle_access_error(
+                            &uid,
+                            self.entities.entity_has_attr(&uid, attr.as_str()),
+                        )
+                        .map_err(EvaluationError::mk_request)?
+                    {
                         Dereference::NoSuchEntity => Ok(false.into()),
                         Dereference::Residual(r) => {
                             Ok(PartialValue::Residual(Expr::has_attr(r, attr.clone())))
@@ -591,22 +594,20 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                 .iter()
                 .map(|val| Ok(val.get_as_entity()?.clone()))
                 .collect::<Result<Vec<EntityUID>>>(),
-            _ => {
-                Err(EvaluationError::type_error(
-                    vec![Type::Set, Type::entity_type(names::ANY_ENTITY_TYPE.clone())],
-                    rhs.type_of(),
-                ))
-            }
+            _ => Err(EvaluationError::type_error(
+                vec![Type::Set, Type::entity_type(names::ANY_ENTITY_TYPE.clone())],
+                rhs.type_of(),
+            )),
         }
     }
 
-    fn eval_in(
-        &self,
-        uid1: &EntityUID,
-        rhs: Vec<EntityUID>,
-    ) -> Result<PartialValue> {
+    fn eval_in(&self, uid1: &EntityUID, rhs: Vec<EntityUID>) -> Result<PartialValue> {
         for uid2 in rhs {
-            if self.entities.entity_in(uid1, &uid2).map_err(EvaluationError::mk_request)? {
+            if self
+                .entities
+                .entity_in(uid1, &uid2)
+                .map_err(EvaluationError::mk_request)?
+            {
                 return Ok(true.into());
             }
         }
@@ -696,11 +697,15 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
             PartialValue::Value(Value::Lit(Literal::EntityUID(uid))) => {
                 let attr_value = match self.entities.entity_attr(&uid, attr) {
                     Ok(v) => Ok(v),
-                    Err(e) =>
-                        Err(e.handle_attr(()).err()
-                        .ok_or_else(|| EvaluationError::entity_attr_does_not_exist(uid.clone(), attr.clone()))?),
+                    Err(e) => Err(e.handle_attr(()).err().ok_or_else(|| {
+                        EvaluationError::entity_attr_does_not_exist(uid.clone(), attr.clone())
+                    })?),
                 };
-                match self.entities.handle_access_error(&uid, attr_value).map_err(EvaluationError::mk_request)? {
+                match self
+                    .entities
+                    .handle_access_error(&uid, attr_value)
+                    .map_err(EvaluationError::mk_request)?
+                {
                     Dereference::NoSuchEntity => Err(match *uid.entity_type() {
                         EntityType::Unspecified => {
                             EvaluationError::unspecified_entity_access(attr.clone())
@@ -712,7 +717,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
                     Dereference::Residual(r) => {
                         Ok(PartialValue::Residual(Expr::get_attr(r, attr.clone())))
                     }
-                    Dereference::Data(v) => Ok(v)
+                    Dereference::Data(v) => Ok(v),
                 }
             }
             PartialValue::Value(v) => {
@@ -836,8 +841,8 @@ fn stack_size_check() -> Result<()> {
 
 #[cfg(test)]
 pub mod test {
-    use std::str::FromStr;
     use std::collections::HashMap;
+    use std::str::FromStr;
 
     use super::*;
 
@@ -3485,7 +3490,11 @@ pub mod test {
         let request = basic_request();
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs(&Extensions::none()).expect("empty slice");
+        let entities = eparser
+            .from_json_str("[]")
+            .expect("empty slice")
+            .eval_attrs(&Extensions::none())
+            .expect("empty slice");
         let exts = Extensions::none();
         let evaluator = Evaluator::new(&request, &entities, &exts).expect("empty slice");
 
@@ -3598,7 +3607,11 @@ pub mod test {
         let request = basic_request();
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs(&Extensions::none()).expect("empty slice");
+        let entities = eparser
+            .from_json_str("[]")
+            .expect("empty slice")
+            .eval_attrs(&Extensions::none())
+            .expect("empty slice");
         let exts = Extensions::none();
         let evaluator = Evaluator::new(&request, &entities, &exts).expect("empty slice");
         let e = Expr::slot(SlotId::principal());
@@ -3655,7 +3668,11 @@ pub mod test {
         );
         let eparser: EntityJsonParser<'_> =
             EntityJsonParser::new(None, Extensions::none(), TCComputation::ComputeNow);
-        let entities = eparser.from_json_str("[]").expect("empty slice").eval_attrs(&Extensions::none()).expect("empty slice");
+        let entities = eparser
+            .from_json_str("[]")
+            .expect("empty slice")
+            .eval_attrs(&Extensions::none())
+            .expect("empty slice");
         let exts = Extensions::none();
         let eval = Evaluator::new(&q, &entities, &exts).unwrap();
 

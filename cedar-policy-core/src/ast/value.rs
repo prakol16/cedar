@@ -398,9 +398,12 @@ where
 /// will be interpreted as (field, value) pairs for a first-class record
 impl<S> From<Vec<(S, Value)>> for Value
 where
-    S: Into<SmolStr> {
+    S: Into<SmolStr>,
+{
     fn from(v: Vec<(S, Value)>) -> Self {
-        Self::Record(Arc::new(v.into_iter().map(|(k, v)| (k.into(), v)).collect()))
+        Self::Record(Arc::new(
+            v.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+        ))
     }
 }
 
@@ -506,10 +509,7 @@ mod test {
         rec2.insert("hi".into(), "ham".into());
         rec2.insert("eggs".into(), "hickory".into());
         assert_eq!(
-            Value::from(vec![
-                ("hi", "ham".into()),
-                ("eggs", "hickory".into())
-            ]),
+            Value::from(vec![("hi", "ham".into()), ("eggs", "hickory".into())]),
             Value::Record(Arc::new(rec2))
         );
 

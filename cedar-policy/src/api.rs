@@ -23,8 +23,8 @@
 pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
-use cedar_policy_core::ast::RestrictedExprError;
 pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for PartialValue
+use cedar_policy_core::ast::RestrictedExprError;
 pub use cedar_policy_core::ast::Value; // TODO: add API for Value
 use cedar_policy_core::authorizer;
 pub use cedar_policy_core::authorizer::AuthorizationError;
@@ -238,13 +238,21 @@ pub trait EntityAttrDatabase {
 
     /// Get the attribute of an entity given the attribute string
     /// Should return None if the attr is not present on the entity; the entity is guaranteed to exist
-    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>>;
+    fn entity_attr<'e>(
+        &'e self,
+        uid: &EntityUid,
+        attr: &str,
+    ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>>;
 
     /// Decide if an entity exists and has a given attribute.
     /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
-    fn entity_has_attr(&self, uid: &EntityUid, attr: &str) -> Result<bool, EntityAccessError<Self::Error>> {
+    fn entity_has_attr(
+        &self,
+        uid: &EntityUid,
+        attr: &str,
+    ) -> Result<bool, EntityAccessError<Self::Error>> {
         self.entity_attr(uid, attr)
             .map_or_else(|e| e.handle_attr(false), |_| Ok(true))
     }
@@ -255,7 +263,6 @@ pub trait EntityAttrDatabase {
 
     /// Determine if this is a partial store
     fn partial_mode(&self) -> Mode;
-
 }
 
 impl<T: EntityDatabase> EntityAttrDatabase for T {
@@ -265,10 +272,17 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
         Ok(self.get(uid)?.is_some())
     }
 
-    fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) ->
-        std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
+    fn entity_attr<'e>(
+        &'e self,
+        uid: &EntityUid,
+        attr: &str,
+    ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
         match self.get(uid)? {
-            Some(e) => e.as_ref().attr(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr),
+            Some(e) => e
+                .as_ref()
+                .attr(attr)
+                .cloned()
+                .ok_or(EntityAttrAccessError::UnknownAttr),
             None => Err(EntityAttrAccessError::UnknownEntity),
         }
     }
@@ -579,7 +593,6 @@ impl ParsedEntities {
         }?;
         Some(entity.ancestors().map(EntityUid::ref_cast))
     }
-
 }
 
 /// Wrapper for entity database object (needed to implement foreign trait)
@@ -598,12 +611,21 @@ impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapp
         self.0.exists_entity(EntityUid::ref_cast(uid))
     }
 
-    fn entity_attr<'e>(&'e self, uid: &ast::EntityUID, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
+    fn entity_attr<'e>(
+        &'e self,
+        uid: &ast::EntityUID,
+        attr: &str,
+    ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
         self.0.entity_attr(EntityUid::ref_cast(uid), attr)
     }
 
-    fn entity_in(&self, u1: &ast::EntityUID, u2: &ast::EntityUID) -> std::result::Result<bool, Self::Error> {
-        self.0.entity_in(EntityUid::ref_cast(u1), EntityUid::ref_cast(u2))
+    fn entity_in(
+        &self,
+        u1: &ast::EntityUID,
+        u2: &ast::EntityUID,
+    ) -> std::result::Result<bool, Self::Error> {
+        self.0
+            .entity_in(EntityUid::ref_cast(u1), EntityUid::ref_cast(u2))
     }
 }
 
@@ -803,16 +825,30 @@ impl Authorizer {
     /// Returns an authorization response for `q` with respect to the given `Slice`.
     /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
     #[cfg(feature = "partial-eval")]
-    pub fn is_authorized_parsed<T: EntityAttrDatabase>(&self, r: &Request, p: &PolicySet, e: &T) -> PartialResponse {
-        Authorizer::handle_partial_response(
-            self.0.is_authorized_core_parsed(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e))
-        )
+    pub fn is_authorized_parsed<T: EntityAttrDatabase>(
+        &self,
+        r: &Request,
+        p: &PolicySet,
+        e: &T,
+    ) -> PartialResponse {
+        Authorizer::handle_partial_response(self.0.is_authorized_core_parsed(
+            &r.0,
+            &p.ast,
+            EntityDatabaseWrapper::ref_cast(e),
+        ))
     }
 
     /// Return an authorization response for `q` with respect to the given `Slice`.
     /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
-    pub fn is_authorized_full_parsed<T: EntityAttrDatabase>(&self, r: &Request, p: &PolicySet, e: &T) -> Response {
-        self.0.is_authorized_parsed(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e)).into()
+    pub fn is_authorized_full_parsed<T: EntityAttrDatabase>(
+        &self,
+        r: &Request,
+        p: &PolicySet,
+        e: &T,
+    ) -> Response {
+        self.0
+            .is_authorized_parsed(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e))
+            .into()
     }
 
     /// A partially evaluated authorization request.
@@ -833,7 +869,6 @@ impl Authorizer {
     }
 
     // #[cfg(feature = "partial-eval")]
-
 }
 
 /// Authorization response returned from the `Authorizer`

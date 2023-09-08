@@ -11,15 +11,15 @@ mod idens {
     #[derive(sea_query::Iden)]
     pub(crate) enum Idens {
         Users,
-            Ancestors,
+        Ancestors,
         Photos,
         Assignments,
-            Owner,
+        Owner,
         TeamMemberships,
-            UserId,
-            TeamId,
-            User,
-            Team
+        UserId,
+        TeamId,
+        User,
+        Team,
     }
 }
 
@@ -28,10 +28,17 @@ mod idens {
 mod test_postgres {
     use std::borrow::Cow;
 
-    use cedar_policy::{EntityUid, EntityTypeName, Authorizer, Request, Context, EntityDatabase, EntityAttrDatabase, PartialValue, EntityAttrAccessError, CachedEntities, Decision};
+    use cedar_policy::{
+        Authorizer, CachedEntities, Context, Decision, EntityAttrAccessError, EntityAttrDatabase,
+        EntityDatabase, EntityTypeName, EntityUid, PartialValue, Request,
+    };
     use postgres::{Client, NoTls};
 
-    use crate::{postgres::*, sql_common::{EntitySQLInfo, AncestorSQLInfo, DatabaseToCedarError}, idens::Idens};
+    use crate::{
+        idens::Idens,
+        postgres::*,
+        sql_common::{AncestorSQLInfo, DatabaseToCedarError, EntitySQLInfo},
+    };
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "host=localhost user=postgres dbname=example_postgres password=postgres";
@@ -48,15 +55,14 @@ mod test_postgres {
         static ref USERS_TEAMS_MEMBERSHIP_INFO: AncestorSQLInfo<PostgresSQLInfo> = AncestorSQLInfo::new(Idens::TeamMemberships, Idens::UserId, Idens::TeamId);
     }
 
-
     #[test]
     fn test_basic() {
-        let mut conn = Client::connect(&*DB_PATH, NoTls)
-            .expect("Connection failed");
+        let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
 
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
 
-        let entity = USERS_TABLE_INFO.make_entity_ancestors(&mut conn, &euid)
+        let entity = USERS_TABLE_INFO
+            .make_entity_ancestors(&mut conn, &euid)
             .expect("Failed to make entity");
         println!("Result: {:?}", entity); // should be Users::"0" named "Alice" with parent Users::"1"
     }
@@ -70,30 +76,47 @@ mod test_postgres {
             fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error> {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.exists_entity(&mut conn, uid.id())?),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.exists_entity(&mut conn, uid.id())?),
-                    t if *t == *ASSIGNMENTS_TYPE => Ok(ASSIGNMENTS_TABLE_INFO.exists_entity(&mut conn, uid.id())?),
-                    _ => Ok(false)
+                    t if *t == *USERS_TYPE => {
+                        Ok(USERS_TABLE_INFO.exists_entity(&mut conn, uid.id())?)
+                    }
+                    t if *t == *PHOTOS_TYPE => {
+                        Ok(PHOTOS_TABLE_INFO.exists_entity(&mut conn, uid.id())?)
+                    }
+                    t if *t == *ASSIGNMENTS_TYPE => {
+                        Ok(ASSIGNMENTS_TABLE_INFO.exists_entity(&mut conn, uid.id())?)
+                    }
+                    _ => Ok(false),
                 }
             }
 
-            fn entity_attr<'e>(&'e self, uid: &EntityUid, attr: &str) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
+            fn entity_attr<'e>(
+                &'e self,
+                uid: &EntityUid,
+                attr: &str,
+            ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.get_single_attr(&mut conn, uid.id(), attr)?.into()),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.get_single_attr(&mut conn, uid.id(), attr)?.into()),
-                    t if *t == *ASSIGNMENTS_TYPE => Ok(ASSIGNMENTS_TABLE_INFO.get_single_attr(&mut conn, uid.id(), attr)?.into()),
-                    _ => Err(EntityAttrAccessError::UnknownEntity)
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO
+                        .get_single_attr(&mut conn, uid.id(), attr)?
+                        .into()),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO
+                        .get_single_attr(&mut conn, uid.id(), attr)?
+                        .into()),
+                    t if *t == *ASSIGNMENTS_TYPE => Ok(ASSIGNMENTS_TABLE_INFO
+                        .get_single_attr(&mut conn, uid.id(), attr)?
+                        .into()),
+                    _ => Err(EntityAttrAccessError::UnknownEntity),
                 }
             }
 
             fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, Self::Error> {
                 match (u1.type_name(), u2.type_name()) {
                     (t1, t2) if *t1 == *USERS_TYPE && *t2 == *TEAMS_TYPE => {
-                        let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
+                        let mut conn =
+                            Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                         USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&mut conn, u1.id(), u2.id())
-                    },
-                    _ => Ok(false)
+                    }
+                    _ => Ok(false),
                 }
             }
 
@@ -108,8 +131,18 @@ mod test_postgres {
     #[test]
     fn test_entity_attr_database() {
         let table = make_entity_attr_database();
-        assert!(table.entity_in(&"Users::\"1\"".parse().unwrap(), &"Teams::\"0\"".parse().unwrap()).expect("Failed to check entity in"));
-        assert!(!table.entity_in(&"Users::\"0\"".parse().unwrap(), &"Teams::\"0\"".parse().unwrap()).expect("Failed to check entity in"));
+        assert!(table
+            .entity_in(
+                &"Users::\"1\"".parse().unwrap(),
+                &"Teams::\"0\"".parse().unwrap()
+            )
+            .expect("Failed to check entity in"));
+        assert!(!table
+            .entity_in(
+                &"Users::\"0\"".parse().unwrap(),
+                &"Teams::\"0\"".parse().unwrap()
+            )
+            .expect("Failed to check entity in"));
     }
 
     #[test]
@@ -133,12 +166,20 @@ mod test_postgres {
         impl EntityDatabase for Table {
             type Error = DatabaseToCedarError;
 
-            fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error> {
+            fn get<'e>(
+                &'e self,
+                uid: &EntityUid,
+            ) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error>
+            {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&mut conn, uid)?.map(Cow::Owned)),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&mut conn, uid)?.map(Cow::Owned)),
-                    _ => Ok(None)
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO
+                        .make_entity_ancestors(&mut conn, uid)?
+                        .map(Cow::Owned)),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO
+                        .make_entity_ancestors(&mut conn, uid)?
+                        .map(Cow::Owned)),
+                    _ => Ok(None),
                 }
             }
 
@@ -149,9 +190,12 @@ mod test_postgres {
 
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
-        let request = Request::new(Some(euid.clone()),
+        let request = Request::new(
+            Some(euid.clone()),
             Some("Actions::\"view\"".parse().unwrap()),
-            Some("Photos::\"2\"".parse().unwrap()), Context::empty());
+            Some("Photos::\"2\"".parse().unwrap()),
+            Context::empty(),
+        );
 
         let result = auth.is_authorized_full_parsed(
             &request,
@@ -167,11 +211,17 @@ mod test_postgres {
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"1\"".parse().unwrap();
         let result1 = auth.is_authorized_full_parsed(
-            &Request::new(Some(euid.clone()),
+            &Request::new(
+                Some(euid.clone()),
                 Some("Actions::\"view\"".parse().unwrap()),
-                Some("Assignments::\"0\"".parse().unwrap()), Context::empty())
-            , &r#"permit(principal, action, resource) when { principal == resource.owner };"#.parse().unwrap(),
-            &table);
+                Some("Assignments::\"0\"".parse().unwrap()),
+                Context::empty(),
+            ),
+            &r#"permit(principal, action, resource) when { principal == resource.owner };"#
+                .parse()
+                .unwrap(),
+            &table,
+        );
         assert!(result1.decision() == Decision::Deny);
 
         let result2 = auth.is_authorized_full_parsed(
@@ -189,11 +239,17 @@ mod test_postgres {
 mod test_sqlite {
     use std::borrow::Cow;
 
-    use cedar_policy::{Authorizer, EntityUid, Request, Context, EntityDatabase, EntityTypeName, Decision};
+    use cedar_policy::{
+        Authorizer, Context, Decision, EntityDatabase, EntityTypeName, EntityUid, Request,
+    };
 
     use rusqlite::Connection;
 
-    use crate::{sqlite::*, sql_common::{EntitySQLInfo, AncestorSQLInfo, DatabaseToCedarError}, idens::Idens};
+    use crate::{
+        idens::Idens,
+        sql_common::{AncestorSQLInfo, DatabaseToCedarError, EntitySQLInfo},
+        sqlite::*,
+    };
 
     lazy_static::lazy_static! {
         static ref DB_PATH: &'static str = "test/example_sqlite.db";
@@ -210,22 +266,33 @@ mod test_sqlite {
 
     fn get_conn() -> Connection {
         let conn = Connection::open(&*DB_PATH).expect("Connection failed");
-        conn.pragma_update(None, "case_sensitive_like", true).expect("Failed to set case_sensitive_like");
+        conn.pragma_update(None, "case_sensitive_like", true)
+            .expect("Failed to set case_sensitive_like");
         conn
     }
 
     fn get_sqlite_table() -> impl EntityDatabase {
         let conn = get_conn();
-        struct Table { conn: Connection }
+        struct Table {
+            conn: Connection,
+        }
 
         impl EntityDatabase for Table {
             type Error = DatabaseToCedarError;
 
-            fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error> {
+            fn get<'e>(
+                &'e self,
+                uid: &EntityUid,
+            ) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error>
+            {
                 match uid.type_name() {
-                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO.make_entity_ancestors(&self.conn, uid)?.map(Cow::Owned)),
-                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO.make_entity_ancestors(&self.conn, uid)?.map(Cow::Owned)),
-                    _ => Ok(None)
+                    t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO
+                        .make_entity_ancestors(&self.conn, uid)?
+                        .map(Cow::Owned)),
+                    t if *t == *PHOTOS_TYPE => Ok(PHOTOS_TABLE_INFO
+                        .make_entity_ancestors(&self.conn, uid)?
+                        .map(Cow::Owned)),
+                    _ => Ok(None),
                 }
             }
 
@@ -241,13 +308,18 @@ mod test_sqlite {
     fn test_ancestors() {
         let conn = Connection::open(&*DB_PATH).expect("Connection failed");
 
-        let ancestors = USERS_TEAMS_MEMBERSHIP_INFO.get_ancestors(&conn, &"1".parse().unwrap(), &TEAMS_TYPE)
+        let ancestors = USERS_TEAMS_MEMBERSHIP_INFO
+            .get_ancestors(&conn, &"1".parse().unwrap(), &TEAMS_TYPE)
             .expect("Failed to get ancestors");
         assert!(ancestors.contains(&"Teams::\"0\"".parse().unwrap()));
 
-        assert!(USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&conn, &"1".parse().unwrap(), &"0".parse().unwrap()).expect("Failed to check ancestor"));
+        assert!(USERS_TEAMS_MEMBERSHIP_INFO
+            .is_ancestor(&conn, &"1".parse().unwrap(), &"0".parse().unwrap())
+            .expect("Failed to check ancestor"));
 
-        assert!(!USERS_TEAMS_MEMBERSHIP_INFO.is_ancestor(&conn, &"0".parse().unwrap(), &"1".parse().unwrap()).expect("Failed to check ancestor"));
+        assert!(!USERS_TEAMS_MEMBERSHIP_INFO
+            .is_ancestor(&conn, &"0".parse().unwrap(), &"1".parse().unwrap())
+            .expect("Failed to check ancestor"));
     }
 
     #[test]

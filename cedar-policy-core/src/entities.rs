@@ -64,11 +64,19 @@ pub struct Entities<T = RestrictedExpr> {
 
 impl<T> Entities<T> {
     /// Map the attributes of the entities in this store.
-    pub fn map_attrs<U, E>(self, f: impl Fn(Entity<T>) -> std::result::Result<Entity<U>, E>) -> std::result::Result<Entities<U>, E> {
-        let result: std::result::Result<HashMap<EntityUID, Entity<U>>, E> = self.entities.into_iter()
+    pub fn map_attrs<U, E>(
+        self,
+        f: impl Fn(Entity<T>) -> std::result::Result<Entity<U>, E>,
+    ) -> std::result::Result<Entities<U>, E> {
+        let result: std::result::Result<HashMap<EntityUID, Entity<U>>, E> = self
+            .entities
+            .into_iter()
             .map(|(k, entity)| Ok((k, f(entity)?)))
             .collect();
-        Ok(Entities { entities: result?, mode: self.mode })
+        Ok(Entities {
+            entities: result?,
+            mode: self.mode,
+        })
     }
 
     /// Create a fresh `Entities` with no entities
@@ -282,13 +290,21 @@ pub trait EntityAttrDatabase {
 
     /// Get the attribute of an entity given the attribute string, if both the entity and attr exist
     /// Should return None if the entity does not exist or attr is not present on the entity
-    fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>>;
+    fn entity_attr<'e>(
+        &'e self,
+        uid: &EntityUID,
+        attr: &str,
+    ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>>;
 
     /// Decide if an entity exists and has a given attribute.
     /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
-    fn entity_has_attr(&self, uid: &EntityUID, attr: &str) -> std::result::Result<bool, EntityAccessError<Self::Error>> {
+    fn entity_has_attr(
+        &self,
+        uid: &EntityUID,
+        attr: &str,
+    ) -> std::result::Result<bool, EntityAccessError<Self::Error>> {
         self.entity_attr(uid, attr)
             .map_or_else(|e| e.handle_attr(false), |_| Ok(true))
     }
@@ -301,19 +317,26 @@ pub trait EntityAttrDatabase {
     fn partial_mode(&self) -> Mode;
 
     /// Check whether the entity exists as a `Dereference` based on `mode` and `exists_entity`
-    fn exists_entity_deref(&self, uid: &EntityUID) -> std::result::Result<Dereference<()>, Self::Error> {
+    fn exists_entity_deref(
+        &self,
+        uid: &EntityUID,
+    ) -> std::result::Result<Dereference<()>, Self::Error> {
         match self.exists_entity(uid)? {
             true => Ok(Dereference::Data(())),
             false => match self.partial_mode() {
                 Mode::Concrete => Ok(Dereference::NoSuchEntity),
                 #[cfg(feature = "partial-eval")]
                 Mode::Partial => Ok(Dereference::Residual(Expr::unknown(format!("{uid}")))),
-            }
+            },
         }
     }
 
     /// Internal function to handle an access error given the `uid` based on the `partial_mode()`
-    fn handle_access_error<T>(&self, uid: &EntityUID, t: std::result::Result<T, EntityAccessError<Self::Error>>) -> std::result::Result<Dereference<T>, Self::Error> {
+    fn handle_access_error<T>(
+        &self,
+        uid: &EntityUID,
+        t: std::result::Result<T, EntityAccessError<Self::Error>>,
+    ) -> std::result::Result<Dereference<T>, Self::Error> {
         match t {
             Ok(v) => Ok(Dereference::Data(v)),
             Err(EntityAccessError::UnknownEntity) => match self.partial_mode() {
@@ -321,11 +344,10 @@ pub trait EntityAttrDatabase {
                 #[cfg(feature = "partial-eval")]
                 Mode::Partial => Ok(Dereference::Residual(Expr::unknown(format!("{uid}")))),
             },
-            Err(EntityAccessError::AccessError(e)) => Err(e)
+            Err(EntityAccessError::AccessError(e)) => Err(e),
         }
     }
 }
-
 
 /// Something that implements an `EntityDatabase` is something that can act in place of `Entities`
 /// It fetches whole entities given a `uid`
@@ -347,10 +369,18 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
         Ok(self.get(uid).is_some())
     }
 
-    fn entity_attr<'e>(&'e self, uid: &EntityUID, attr: &str) ->
-        std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
+    fn entity_attr<'e>(
+        &'e self,
+        uid: &EntityUID,
+        attr: &str,
+    ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
         match self.get(uid) {
-            Some(e) => e.as_ref().attrs_map().get(attr).cloned().ok_or(EntityAttrAccessError::UnknownAttr),
+            Some(e) => e
+                .as_ref()
+                .attrs_map()
+                .get(attr)
+                .cloned()
+                .ok_or(EntityAttrAccessError::UnknownAttr),
             None => Err(EntityAttrAccessError::UnknownEntity),
         }
     }
@@ -371,7 +401,6 @@ impl EntityDatabase for Entities<PartialValue> {
     fn get<'e>(&'e self, uid: &EntityUID) -> Option<Cow<'e, Entity<PartialValue>>> {
         self.entities.get(uid).map(Cow::Borrowed)
     }
-
 
     fn partial_mode(&self) -> Mode {
         self.mode

@@ -16,7 +16,7 @@
 
 use crate::ast::*;
 use smol_str::SmolStr;
-use std::{fmt::Display, sync::Arc, error::Error};
+use std::{error::Error, fmt::Display, sync::Arc};
 use thiserror::Error;
 
 /// An error generated while evaluating an expression
@@ -284,7 +284,10 @@ impl EvaluationError {
     /// rather than use the default error handling behavior
     pub fn is_global_deny_error(&self) -> bool {
         // An `EntityRequestError` is an external error, unlike an ordinary evaluation error
-        matches!(self.error_kind(), EvaluationErrorKind::EntityRequestError(_))
+        matches!(
+            self.error_kind(),
+            EvaluationErrorKind::EntityRequestError(_)
+        )
     }
 }
 

@@ -1,9 +1,19 @@
-use std::{collections::{HashSet, HashMap}, marker::PhantomData};
+use std::{
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+};
 
-use cedar_policy::{Value, EntityUid, EntityId, EntityTypeName};
-use cedar_policy_core::{entities::{JsonDeserializationError, JSONValue}, ast::NotValue, extensions::Extensions, evaluator::RestrictedEvaluator};
+use cedar_policy::{EntityId, EntityTypeName, EntityUid, Value};
+use cedar_policy_core::{
+    ast::NotValue,
+    entities::{JSONValue, JsonDeserializationError},
+    evaluator::RestrictedEvaluator,
+    extensions::Extensions,
+};
 use ref_cast::RefCast;
-use sea_query::{TableRef, ColumnRef, SelectStatement, Query, Alias, IntoColumnRef, Expr, IntoTableRef};
+use sea_query::{
+    Alias, ColumnRef, Expr, IntoColumnRef, IntoTableRef, Query, SelectStatement, TableRef,
+};
 use smol_str::SmolStr;
 use thiserror::Error;
 
@@ -20,7 +30,9 @@ pub struct EntitySQLId(pub(crate) EntityId);
 
 impl EntitySQLId {
     /// Get the underlying EntityId of the EntitySQLId
-    pub fn id(self) -> EntityId { self.0 }
+    pub fn id(self) -> EntityId {
+        self.0
+    }
 
     pub fn into_uid(self, tp: EntityTypeName) -> EntityUid {
         EntityUid::from_type_name_and_id(tp, self.id())
@@ -48,7 +60,7 @@ pub enum DatabaseToCedarError {
     ExpressionEvaluationError(#[from] cedar_policy_core::evaluator::EvaluationError),
 
     #[error("Attribute evaluation resulted in residual")]
-    NotValue(#[from] NotValue)
+    NotValue(#[from] NotValue),
 }
 
 type Result<T> = std::result::Result<T, DatabaseToCedarError>;
@@ -113,25 +125,35 @@ pub struct EntitySQLInfo<U: IsSQLDatabase> {
     /// If this is not how ancestry information is stored, leave this as `None`
     pub ancestor_attr_ind: Option<usize>,
 
-    phantom: PhantomData<U>
+    phantom: PhantomData<U>,
 }
 
 pub trait IsSQLDatabase {}
 
 impl<U: IsSQLDatabase> EntitySQLInfo<U> {
     /// Construct a new EntitySQLInfo from the given information
-    pub fn new(table: TableRef, id_attr: ColumnRef, sql_attr_names: Vec<ColumnRef>, attr_names_map: HashMap<SmolStr, usize>, ancestor_attr_ind: Option<usize>) -> Self {
+    pub fn new(
+        table: TableRef,
+        id_attr: ColumnRef,
+        sql_attr_names: Vec<ColumnRef>,
+        attr_names_map: HashMap<SmolStr, usize>,
+        ancestor_attr_ind: Option<usize>,
+    ) -> Self {
         Self {
             table,
             id_attr,
             sql_attr_names,
             attr_names_map,
             ancestor_attr_ind,
-            phantom: PhantomData
+            phantom: PhantomData,
         }
     }
 
-    pub fn simple(table: impl IntoTableRef, attr_names: Vec<&str>, ancestor_attr: Option<impl IntoColumnRef>) -> Self {
+    pub fn simple(
+        table: impl IntoTableRef,
+        attr_names: Vec<&str>,
+        ancestor_attr: Option<impl IntoColumnRef>,
+    ) -> Self {
         let table = table.into_table_ref();
         let ancestor_attr = ancestor_attr.map(|x| x.into_column_ref());
 
@@ -144,12 +166,19 @@ impl<U: IsSQLDatabase> EntitySQLInfo<U> {
         }
 
         let len = attr_names.len();
-        let attr_names = attr_names.into_iter()
+        let attr_names = attr_names
+            .into_iter()
             .enumerate()
             .map(|(k, v)| (SmolStr::from(v), k))
             .collect::<HashMap<SmolStr, usize>>();
 
-        Self::new(table, Alias::new("uid").into_column_ref(), sql_attr_names, attr_names, ancestor_attr.map(|_| len))
+        Self::new(
+            table,
+            Alias::new("uid").into_column_ref(),
+            sql_attr_names,
+            attr_names,
+            ancestor_attr.map(|_| len),
+        )
     }
 
     fn select_all_cols(&self, select: &mut SelectStatement) {
@@ -194,15 +223,13 @@ impl<U: IsSQLDatabase> EntitySQLInfo<U> {
     }
 }
 
-
 // Make the ancestor set given the JSON representing the ancestors
 pub(crate) fn make_ancestors(ancestors: serde_json::Value) -> Result<HashSet<EntityUid>> {
     ancestors
-        .as_array().ok_or(DatabaseToCedarError::AncestorNotJsonArray)? // TODO: make an error type
+        .as_array()
+        .ok_or(DatabaseToCedarError::AncestorNotJsonArray)? // TODO: make an error type
         .iter()
-        .map(|x| {
-            Ok(EntityUid::from_json(x.clone())?)
-        })
+        .map(|x| Ok(EntityUid::from_json(x.clone())?))
         .collect()
 }
 
@@ -210,16 +237,20 @@ pub struct AncestorSQLInfo<U: IsSQLDatabase> {
     pub table: TableRef,
     pub child_id: ColumnRef,
     pub parent_id: ColumnRef,
-    phantom: PhantomData<U>
+    phantom: PhantomData<U>,
 }
 
 impl<U: IsSQLDatabase> AncestorSQLInfo<U> {
-    pub fn new(table: impl IntoTableRef, child_id: impl IntoColumnRef, parent_id: impl IntoColumnRef) -> Self {
+    pub fn new(
+        table: impl IntoTableRef,
+        child_id: impl IntoColumnRef,
+        parent_id: impl IntoColumnRef,
+    ) -> Self {
         Self {
             table: table.into_table_ref(),
             child_id: child_id.into_column_ref(),
             parent_id: parent_id.into_column_ref(),
-            phantom: PhantomData
+            phantom: PhantomData,
         }
     }
 
