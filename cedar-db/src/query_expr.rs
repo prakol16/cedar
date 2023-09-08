@@ -762,7 +762,7 @@ impl BindingsBuilder {
         self.bindings
             .entry(q)
             .or_insert_with(|| BindingValue {
-                name: id_gen.next(),
+                name: id_gen.gen_id(),
                 ty,
                 insertion_order: size,
             })
@@ -826,7 +826,7 @@ impl IdGen {
         self
     }
 
-    pub fn next(&mut self) -> SmolStr {
+    pub fn gen_id(&mut self) -> SmolStr {
         let id = self.next_id;
         self.next_id += 1;
         SmolStr::new(format!("{}{}", ID_GEN_PREFIX, id))
