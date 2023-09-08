@@ -30,6 +30,8 @@ pub enum DumpEntitiesError {
     UnknownEntityType,
     #[error("Sea query error: {0}")]
     SeaQueryError(#[from] sea_query::error::Error),
+    #[error("Identifier {0} is too long")]
+    IdentifierTooLong(String),
 }
 
 type Result<T> = std::result::Result<T, DumpEntitiesError>;
@@ -312,16 +314,49 @@ pub fn populate_ancestry_tables(entities: &Entities<PartialValue>, schema: &Sche
 
     for entity in entities.iter() {
         for parent in entity.ancestors() {
-            add_relationship(&mut inserts, &entity.uid(), parent)?;
+            let child_uid = entity.uid();
+            if &child_uid != parent {
+                add_relationship(&mut inserts, &entity.uid(), parent)?;
+            }
         }
     }
     Ok(inserts.into_values().collect())
 }
 
+const fn max(a: usize, b: usize) -> usize {
+    [a, b][(a < b) as usize]
+}
+
+const MAX_IDEN_LEN: usize = 63;
+
+const MAX_ENTITY_TYPE_LEN: usize = (
+    MAX_IDEN_LEN -  // 63 starting bytes
+    max("entity_".len(), "ancestry__,_".len()) // remove potential additions (in bytes)
+) / 2 // divide by 2 since ancestry tables have two identifiers
+;
+
+fn constrain_lens(schema: &Schema) -> Result<()> {
+    for (name, ty) in schema.0.entity_types() {
+        // we want to get the length of the entity type name in bytes because
+        // postgres has limitation on the max byte length of an identifier
+        let name_len = name.to_string().len();
+        if name_len > MAX_ENTITY_TYPE_LEN {
+            return Err(DumpEntitiesError::IdentifierTooLong(name.to_string()));
+        }
+        for (attr, _) in ty.attributes() {
+            let attr_len = attr.len();
+            if attr_len > MAX_IDEN_LEN {
+                return Err(DumpEntitiesError::IdentifierTooLong(attr.to_string()));
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Create all the tables necessary in `schema`, including the foreign key constraints
 /// as postgresql statements; also returns the id map
 pub fn create_tables_postgres(entities: &Entities<PartialValue>, schema: &Schema) -> Result<(Vec<String>, HashMap<EntityTypeName, SmolStr>)> {
+    constrain_lens(&schema)?;
     let (tables, fks, inserts, id_map) = create_tables(entities, schema)?;
     let result = tables.into_iter()
         .map(|t| t.to_string(PostgresQueryBuilder))
