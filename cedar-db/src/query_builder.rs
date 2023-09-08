@@ -407,15 +407,6 @@ mod test {
         assert_eq!(result, r#"SELECT "principal"."uid" FROM "Users" AS "principal" WHERE '0' = ANY("principal"."allowedPhotos") OR '0' IN (SELECT "Photos_in_Photos"."Photos" FROM "Photos_in_Photos" WHERE "Photos_in_Photos"."Photos" = ANY("principal"."allowedPhotos"))"#)
     }
 
-    // #[test]
-    // fn test_in_action() {
-    //     let result: String = translate_expr_test(
-    //         r#"(if Photos::"arbitrary".owner == Users::"0" then Photos::"arbitrary" else Photos::"1") in Action::"view""#.parse().unwrap(),
-    //         &get_schema()
-    //     );
-    //     println!("{}", result);
-    // }
-
     #[test]
     fn test_record_attr() {
         let result: String = translate_expr_test(

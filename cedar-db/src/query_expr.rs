@@ -42,6 +42,10 @@ pub enum QueryExprError {
     NestedSetsError,
     #[error("Incomparable types: comparing sets or comparing records with incomparable values is not supprted")]
     IncomparableTypes,
+    #[error("Cannot convert action {action} attributes to SQL (getting attribute {attr})")]
+    ActionAttribute { action: Name, attr: SmolStr },
+    #[error("Action hierarchy is not supported for conversion to SQL (on action {0})")]
+    ActionTypeAppears(Name),
 }
 
 type Result<T> = std::result::Result<T, QueryExprError>;
@@ -113,6 +117,7 @@ fn entity_lub_to_typename(lub: &EntityLUB) -> Result<&EntityTypeName> {
 fn type_to_entity_typename(tp: Option<&Type>) -> Result<&EntityTypeName> {
     match tp.ok_or(QueryExprError::TypeAnnotationNone)? {
         Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => entity_lub_to_typename(&lub),
+        Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) => Err(QueryExprError::ActionTypeAppears(name.clone())),
         _ => Err(QueryExprError::TypecheckError),
     }
 }
@@ -336,13 +341,13 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
             ExprKind::BinaryApp { op, arg1, arg2 } => {
                 if matches!(op, BinaryOp::In) {
                     let arg1_tp_entity = type_to_entity_typename(arg1.data().as_ref())?;
-
-                    match arg2.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)? {
-                        Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => Ok(QueryExpr::eq_or_in_entity(
+                    let arg2_tp = arg2.data().as_ref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                    match arg2_tp {
+                        Type::EntityOrRecord(_) => Ok(QueryExpr::eq_or_in_entity(
                             QueryExpr::try_from(arg1.as_ref())?,
                             QueryExpr::try_from(arg2.as_ref())?,
                             arg1_tp_entity.to_owned(),
-                            entity_lub_to_typename(lub)?.to_owned(),
+                            type_to_entity_typename(Some(arg2_tp))?.to_owned(),
                         )),
                         Type::Set { element_type } => Ok(QueryExpr::contains_or_in_set(
                             QueryExpr::try_from(arg1.as_ref())?,
@@ -431,6 +436,8 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                             attr: AttrOrId::Attr(attr.to_owned()),
                         })
                     },
+                    Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) =>
+                        Err(QueryExprError::ActionAttribute { action: name.clone(), attr: attr.clone() }),
                     _ => Err(QueryExprError::TypecheckError),
                 }
             },
@@ -450,6 +457,8 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                             attr: AttrOrId::Attr(attr.to_owned()),
                         })))
                     },
+                    Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) =>
+                        Err(QueryExprError::ActionAttribute { action: name.clone(), attr: attr.clone() }),
                     _ => Err(QueryExprError::TypecheckError),
                 }
             },
