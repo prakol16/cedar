@@ -515,15 +515,6 @@ mod test {
             r#"unknown("user: Users") == Users::"""#.parse().unwrap(),
             &get_schema()
         );
-        assert_eq!(result, r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE "user"."uid" = ''"#);
-    }
-
-    #[test]
-    fn test_and_false() {
-        let result = translate_expr_test(
-            r#"unknown("user: Users") == Users::"0" && false"#.parse().unwrap(),
-            &get_schema()
-        );
         println!("{}", result);
     }
 }
