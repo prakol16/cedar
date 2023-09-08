@@ -289,10 +289,7 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
 
     fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, Self::Error> {
         self.get(u1)?
-        .map_or_else(
-            || Ok(false),
-            |e| Ok(e.as_ref().is_descendant_of(u2))
-        )
+            .map_or_else(|| Ok(false), |e| Ok(e.as_ref().is_descendant_of(u2)))
     }
 
     fn partial_mode(&self) -> Mode {
