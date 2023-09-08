@@ -277,14 +277,15 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
         uid: &EntityUid,
         attr: &str,
     ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
-        match self.get(uid)? {
-            Some(e) => e
-                .as_ref()
-                .attr(attr)
-                .cloned()
-                .ok_or(EntityAttrAccessError::UnknownAttr),
-            None => Err(EntityAttrAccessError::UnknownEntity),
-        }
+        self.get(uid)?.map_or_else(
+            || Err(EntityAttrAccessError::UnknownEntity),
+            |e| {
+                e.as_ref()
+                    .attr(attr)
+                    .cloned()
+                    .ok_or(EntityAttrAccessError::UnknownAttr)
+            },
+        )
     }
 
     fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, Self::Error> {
@@ -609,8 +610,8 @@ impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapp
         self.0.exists_entity(EntityUid::ref_cast(uid))
     }
 
-    fn entity_attr<'e>(
-        &'e self,
+    fn entity_attr(
+        &self,
         uid: &ast::EntityUID,
         attr: &str,
     ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
@@ -677,11 +678,10 @@ impl<'a, T: EntityDatabase> EntityDatabase for CachedEntities<'a, T> {
     type Error = T::Error;
 
     fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, Self::Error> {
-        if let Some(entity) = self.cache.get(uid) {
-            Ok(Some(Cow::Borrowed(entity)))
-        } else {
-            self.db.get(uid)
-        }
+        self.cache.get(uid).map_or_else(
+            || self.db.get(uid),
+            |entity| Ok(Some(Cow::Borrowed(entity))),
+        )
     }
 
     fn partial_mode(&self) -> Mode {
@@ -2733,18 +2733,9 @@ impl RequestBuilder {
 
     /// Create the [`Request`]
     pub fn build(self) -> Request {
-        let p = match self.principal {
-            Some(p) => p,
-            None => ast::EntityUIDEntry::Unknown,
-        };
-        let a = match self.action {
-            Some(a) => a,
-            None => ast::EntityUIDEntry::Unknown,
-        };
-        let r = match self.resource {
-            Some(r) => r,
-            None => ast::EntityUIDEntry::Unknown,
-        };
+        let p = self.principal.unwrap_or(ast::EntityUIDEntry::Unknown);
+        let a = self.action.unwrap_or(ast::EntityUIDEntry::Unknown);
+        let r = self.resource.unwrap_or(ast::EntityUIDEntry::Unknown);
         Request(ast::Request::new_with_unknowns(p, a, r, self.context))
     }
 }
