@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use cedar_policy::EntityTypeName;
 use cedar_policy_core::{ast::{Expr, Literal, UnaryOp, BinaryOp, Pattern, ExprKind, SlotId, Var, Name, EntityType}, entities::SchemaType};
-use cedar_policy_validator::types::{Type, Primitive, EntityRecordKind, EntityLUB, OpenTag};
+use cedar_policy_validator::{types::{Type, Primitive, EntityRecordKind, EntityLUB, OpenTag}, TypeError};
 use ref_cast::RefCast;
 use smol_str::SmolStr;
 use thiserror::Error;
@@ -28,7 +28,9 @@ pub enum QueryExprError {
     RawSQLDynamic,
     #[error("Typecheck error: Type annotation `None` on expression.")]
     TypeAnnotationNone,
-    #[error("Type error: does not have correctly inferred types. Make sure to do `typecheck` or `strict_transform` before calling this function.")]
+    #[error("Validation error: the following type errors occured during strict validation: {0:?}")]
+    ValidationError(Vec<TypeError>),
+    #[error("Type error: does not have correctly inferred types. Make sure to do strict validation (`typecheck` or `strict_transform`) before conversion.")]
     TypecheckError,
     #[error("Cannot get attribute when the type of the entity is not one particular entity. You can reduce if statements to ensure that no expression can be multiple different entity types.")]
     GetAttrLUBNotSingle,

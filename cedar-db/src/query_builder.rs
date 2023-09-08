@@ -152,8 +152,9 @@ pub fn translate_expr_with_renames<T: IntoTableRef>(expr: &Expr, schema: &Schema
     // The request environment should no longer matter, so this is a dirty hack to
     // allocate memory for a request environment that we know will actually never be used.
     let req_env = RandomRequestEnv::new();
-    let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut Vec::new())
-        .ok_or(QueryExprError::TypecheckError)?;
+    let mut errors = Vec::new();
+    let typed_expr = typechecker.typecheck_expr_strict(&(&req_env).into(), expr, cedar_policy_validator::types::Type::primitive_boolean(), &mut errors)
+        .ok_or_else(|| QueryExprError::ValidationError(errors))?;
     let mut query_expr = QueryExprWithVars::from_expr(&typed_expr, vars)?;
     // Rename any unknowns that appear in the query
     if !unknown_map.is_empty() {
@@ -283,7 +284,8 @@ mod test {
                                     }
                                 }
                             }
-                        }
+                        },
+                        "memberOfTypes": ["Photos"]
                     },
                     "Photos": {
                         "shape": {
@@ -299,7 +301,7 @@ mod test {
                                 }
                             }
                         },
-                        "memberOfTypes": ["Photos"]
+                        "memberOfTypes": ["Photos", "Users"]
                     }
                 },
                 "actions": {
