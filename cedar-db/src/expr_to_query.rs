@@ -233,7 +233,7 @@ impl QueryExpr {
                 .as_str(),
         );
         result.push(']');
-        sea_query::Expr::cust(result).into()
+        sea_query::Expr::cust(result)
     }
 
     fn mk_postgres_record(elems: Vec<(SmolStr, SimpleExpr)>) -> SimpleExpr {

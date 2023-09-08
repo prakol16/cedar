@@ -46,7 +46,7 @@ impl StaticTableRef {
 /// An optional insert statement is an insert statement
 /// which also keeps track of whether it has any values or not
 /// This is because an insert statement with no values is a syntax error
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct OptionalInsertStatement {
     insert: sea_query::InsertStatement,
     has_values: bool,

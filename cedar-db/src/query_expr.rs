@@ -131,12 +131,12 @@ impl TryFrom<&Type> for QueryType {
 fn entity_lub_to_typename(lub: &EntityLUB) -> Result<&EntityTypeName> {
     lub.get_single_entity()
         .ok_or(QueryExprError::GetAttrLUBNotSingle)
-        .map(|e| EntityTypeName::ref_cast(e))
+        .map( EntityTypeName::ref_cast)
 }
 
 fn type_to_entity_typename(tp: Option<&Type>) -> Result<&EntityTypeName> {
     match tp.ok_or(QueryExprError::TypeAnnotationNone)? {
-        Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => entity_lub_to_typename(&lub),
+        Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => entity_lub_to_typename(lub),
         Type::EntityOrRecord(EntityRecordKind::ActionEntity { name, .. }) => {
             Err(QueryExprError::ActionTypeAppears(name.clone()))
         }
@@ -343,7 +343,7 @@ impl QueryExpr {
                             }
                         }
                     }
-                    return Ok(ComparableResult::ComparableAsEq);
+                    Ok(ComparableResult::ComparableAsEq)
                 }
             }
             (Type::Set { element_type: e1 }, Type::Set { element_type: e2 }) => {
@@ -505,7 +505,7 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                         _ => return Err(QueryExprError::TypecheckError),
                     };
                     let args = args_iter
-                        .map(|e| QueryExpr::try_from(e))
+                        .map(QueryExpr::try_from)
                         .collect::<Result<Vec<_>>>()?;
                     Ok(QueryExpr::RawSQL { sql, args })
                 } else {
@@ -586,7 +586,7 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
                 )?;
                 Ok(QueryExpr::Set(
                     s.iter()
-                        .map(|e| QueryExpr::try_from(e))
+                        .map(QueryExpr::try_from)
                         .collect::<Result<Vec<_>>>()?,
                 ))
             }
@@ -667,7 +667,7 @@ impl QueryExpr {
     pub fn subexpressions_with_parents(
         &self,
     ) -> impl Iterator<Item = (&QueryExpr, Option<QueryExprParentType>)> {
-        QueryExprIterator::new(self).into_iter()
+        QueryExprIterator::new(self)
     }
 
     pub fn subexpressions(&self) -> impl Iterator<Item = &QueryExpr> {
@@ -799,6 +799,7 @@ impl From<QueryExprWithVars> for ExprWithBindings {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
 pub struct IdGen {
     next_id: usize,
 }

@@ -251,7 +251,7 @@ pub fn create_ancestry_table(
             .ok_or_else(|| DumpEntitiesError::MissingIdInMap(echild.clone()))?
             .as_str();
         let parent_fk = id_map
-            .get(&eparent)
+            .get(eparent)
             .ok_or_else(|| DumpEntitiesError::MissingIdInMap(eparent.clone()))?
             .as_str();
         table.foreign_key(
@@ -378,7 +378,7 @@ pub fn populate_attr_tables(
         insert.into_table(EntityTableIden(ty.clone()));
 
         let id_col_name = id_map
-            .get(&ty)
+            .get(ty)
             .ok_or_else(|| DumpEntitiesError::MissingIdInMap(ty.clone()))?;
         insert.columns(
             std::iter::once(Alias::new(id_col_name.as_str()))
@@ -400,8 +400,8 @@ pub fn populate_attr_tables(
             .get_entity_type(entity_type_name)
             .ok_or_else(|| DumpEntitiesError::EntityTypeNotFound(eentity_type_name.clone()))?;
         let insert = inserts
-            .get_mut(&eentity_type_name)
-            .expect("Existence of entity type checked should have been checked above");
+            .get_mut(eentity_type_name)
+            .ok_or_else(|| DumpEntitiesError::EntityTypeNotFound(eentity_type_name.clone()))?;
         add_entity_attrs_to_insert(entity, insert, entity_type.attributes())?;
     }
     Ok(inserts.into_values().collect())
@@ -439,6 +439,9 @@ pub fn populate_ancestry_tables(
     Ok(inserts.into_values().collect())
 }
 
+/// Const-fun max
+/// Workaround from https://stackoverflow.com/a/53646925
+#[allow(clippy::indexing_slicing)]
 const fn max(a: usize, b: usize) -> usize {
     [a, b][(a < b) as usize]
 }
@@ -475,7 +478,7 @@ pub fn create_tables_postgres(
     entities: &Entities<PartialValue>,
     schema: &Schema,
 ) -> Result<(Vec<String>, HashMap<EntityTypeName, SmolStr>)> {
-    constrain_lens(&schema)?;
+    constrain_lens(schema)?;
     let (tables, fks, inserts, id_map) = create_tables(entities, schema)?;
     let result = tables
         .into_iter()

@@ -177,7 +177,7 @@ pub fn translate_expr_with_renames<T: IntoTableRef>(
     // Get the free variables in the original expression
     let vars = expr
         .subexpressions()
-        .filter_map(|u| UnknownType::from_expr(u))
+        .filter_map(UnknownType::from_expr)
         .collect::<Vec<_>>();
 
     let typechecker = Typechecker::new(&schema.0, ValidationMode::Strict);
@@ -286,7 +286,7 @@ pub fn translate_response_core<T: IntoTableRef>(
     );
     let mut query = translate_expr(&expr, schema, ein, &table_names)?;
     if let Some((unk, ty)) = ensure_unknown {
-        let (tbl, id) = table_names(&ty);
+        let (tbl, id) = table_names(ty);
         query
             .table_names
             .insert(unk.into(), (false, tbl.into_table_ref(), id));
