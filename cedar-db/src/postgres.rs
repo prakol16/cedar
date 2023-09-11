@@ -1,3 +1,21 @@
+/*
+ * Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Integration between Postgresql and Cedar entity stores
+
 use std::collections::{HashMap, HashSet};
 
 use cedar_policy::{
@@ -88,11 +106,14 @@ impl<'a> FromSql<'a> for EntitySQLId {
     }
 }
 
+/// Postgres-specific SQL info
+#[allow(missing_debug_implementations)]
 pub struct PostgresSQLInfo;
 
 impl IsSQLDatabase for PostgresSQLInfo {}
 
 impl EntitySQLInfo<PostgresSQLInfo> {
+    /// Get all ancestors of an entity when the ancestors are stored in a column of the entity table
     pub fn make_entity_ancestors(
         &self,
         conn: &mut Client,
@@ -106,6 +127,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         })
     }
 
+    /// Get entity given a function which determines how to get ancestors given the information in the row
     pub fn make_entity(
         &self,
         conn: &mut Client,
@@ -121,6 +143,8 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         )
     }
 
+    /// Create an entity using `make_entity` and supply extra attributes that can depend on the row
+    /// Useful for when some attributes are nontrivial functions of the data stored in the table
     pub fn make_entity_extra_attrs(
         &self,
         conn: &mut Client,
@@ -141,6 +165,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         )
     }
 
+    /// Get a single attribute of an entity
     pub fn get_single_attr_as<'a, T: FromSqlOwned>(
         &self,
         conn: &mut Client,
@@ -158,6 +183,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         Ok(query_result)
     }
 
+    /// Get a single attribute of an entity as a cedar `Value`
     pub fn get_single_attr(
         &self,
         conn: &mut Client,
@@ -171,6 +197,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         }
     }
 
+    /// Get a single attribute of an entity as a cedar `EntityUid`
     pub fn get_single_attr_as_id(
         &self,
         conn: &mut Client,
@@ -182,6 +209,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         Ok(query_result.into_uid(tp))
     }
 
+    /// Check whether the given entity exists
     pub fn exists_entity(
         &self,
         conn: &mut Client,
@@ -193,6 +221,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
             .is_some())
     }
 
+    /// Convert a row into a map of attribute names to values
     pub fn convert_attr_names(
         query_result: &Row,
         attr_names: &HashMap<SmolStr, usize>,
@@ -206,6 +235,9 @@ impl EntitySQLInfo<PostgresSQLInfo> {
             .collect()
     }
 
+    /// Construct an entity from a row in the entity table given a
+    /// function which determines how to get ancestors given the information in the row
+    /// and how to get attributes given the information in the row
     pub fn make_entity_from_table(
         conn: &mut Client,
         uid: &EntityUid,
@@ -228,6 +260,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
 }
 
 impl AncestorSQLInfo<PostgresSQLInfo> {
+    /// Get all ancestors of an entity when the ancestry information is stored in a separate table
     pub fn get_ancestors(
         &self,
         conn: &mut Client,
@@ -247,6 +280,7 @@ impl AncestorSQLInfo<PostgresSQLInfo> {
             .collect())
     }
 
+    /// Check whether the given entity is a descendant of the given entity
     pub fn is_ancestor(
         &self,
         conn: &mut Client,

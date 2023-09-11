@@ -1,3 +1,21 @@
+/*
+ * Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! This module builds queries for Cedar entities using the sea-query crate
+//! It also contains utilities for converting between Cedar data and database data
 use std::{
     collections::{HashMap, HashSet},
     marker::PhantomData,
@@ -109,6 +127,7 @@ impl EntitySQLId {
         self.0
     }
 
+    /// Convenience method to convert a uid into an EntityUid given a type name
     pub fn into_uid(self, tp: EntityTypeName) -> EntityUid {
         EntityUid::from_type_name_and_id(tp, self.id())
     }
@@ -117,23 +136,30 @@ impl EntitySQLId {
 /// An error occurs while trying to convert database data to Cedar data
 #[derive(Debug, Error)]
 pub enum DatabaseToCedarError {
+    /// Occurs when database returns an ancestor field that is not a json array
     #[error("Ancestor field is not a json array")]
     AncestorNotJsonArray,
 
+    /// Miscellaneous database error (e.g. connection error)
     #[cfg(feature = "postgres")]
     #[error("Database had error: {0}")]
     PostgresError(#[from] postgres::Error),
 
+    /// Miscellaneous database error (e.g. connection error)
     #[cfg(feature = "rusqlite")]
     #[error("Database had error: {0}")]
     SqliteError(#[from] rusqlite::Error),
 
+    /// Error when deserializing JSON to entity attribute data
     #[error("Json deserialization error: {0}")]
     JsonDeserializationError(#[from] JsonDeserializationError),
 
+
+    /// Error when evaluating the restricted expression for entity attribute data fails
     #[error("Error when evaluating expression attributes in JSON: {0}")]
     ExpressionEvaluationError(#[from] cedar_policy_core::evaluator::EvaluationError),
 
+    /// Error when evaluating the restricted expression for entity attribute data results in partial value
     #[error("Attribute evaluation resulted in residual")]
     NotValue(#[from] NotValue),
 }
@@ -175,6 +201,7 @@ impl SQLValue {
 /// This structure stores information about a particular entity type stored in some table in the database
 /// We assume that the table has a column corresponding to the id of the entity
 /// and that the table has columns corresponding to the attributes of the entity
+#[derive(Debug, Clone)]
 pub struct EntitySQLInfo<U: IsSQLDatabase> {
     /// The table that the entities are stored in
     pub table: TableRef,
@@ -203,6 +230,8 @@ pub struct EntitySQLInfo<U: IsSQLDatabase> {
     phantom: PhantomData<U>,
 }
 
+/// This trait is used to indicate that a type is used for SQL database information
+/// It helps keep track of which information is relevant to which kind of database
 pub trait IsSQLDatabase {}
 
 impl<U: IsSQLDatabase> EntitySQLInfo<U> {
@@ -224,6 +253,9 @@ impl<U: IsSQLDatabase> EntitySQLInfo<U> {
         }
     }
 
+    /// Construct a new EntitySQLInfo from the given information
+    /// This is a convenience method for when the attribute names are the same as the column names
+    /// and the id column is "uid"
     pub fn simple(
         table: impl IntoTableRef,
         attr_names: Vec<&str>,
@@ -308,14 +340,22 @@ pub(crate) fn make_ancestors(ancestors: serde_json::Value) -> Result<HashSet<Ent
         .collect()
 }
 
+/// This structure stores information about how ancestor information is stored in a database
+/// Specifically, it assumes that there is a table with two columns such that each row is an edge
+/// in the ancestor graph (i.e. each row is of the form (a, b) where a is a descendant of b)
+#[derive(Debug, Clone)]
 pub struct AncestorSQLInfo<U: IsSQLDatabase> {
+    /// The table containing the ancestry information
     pub table: TableRef,
+    /// The column containing the child id
     pub child_id: ColumnRef,
+    /// The column containing the parent id
     pub parent_id: ColumnRef,
     phantom: PhantomData<U>,
 }
 
 impl<U: IsSQLDatabase> AncestorSQLInfo<U> {
+    /// Construct a new AncestorSQLInfo from the given information
     pub fn new(
         table: impl IntoTableRef,
         child_id: impl IntoColumnRef,
@@ -329,6 +369,7 @@ impl<U: IsSQLDatabase> AncestorSQLInfo<U> {
         }
     }
 
+    /// Get the select statement which returns all of the parents of the given child
     pub fn query_all_parents(&self, child_id: &EntityId) -> SelectStatement {
         let mut select = Query::select();
         select.column(self.parent_id.clone());
@@ -337,6 +378,7 @@ impl<U: IsSQLDatabase> AncestorSQLInfo<U> {
         select
     }
 
+    /// Get the select statement which returns a single row with no data iff the child is a descendant of the parent
     pub fn query_is_parent(&self, child_id: &EntityId, parent_id: &EntityId) -> SelectStatement {
         let mut select = Query::select();
         select.expr(Expr::value(1));
