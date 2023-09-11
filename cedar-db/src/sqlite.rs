@@ -59,11 +59,15 @@ impl FromSql for EntitySQLId {
         }
     }
 }
+
+/// SQLite-specific SQL info
+#[allow(missing_debug_implementations)]
 pub struct SQLiteSQLInfo;
 
 impl IsSQLDatabase for SQLiteSQLInfo {}
 
 impl EntitySQLInfo<SQLiteSQLInfo> {
+    /// Get all ancestors of an entity when the ancestors are stored in a column of the entity table
     pub fn make_entity_ancestors(
         &self,
         conn: &Connection,
@@ -79,11 +83,12 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         })
     }
 
+    /// Get entity given a function which determines how to get ancestors given the information in the row
     pub fn make_entity(
         &self,
         conn: &Connection,
         uid: &EntityUid,
-        ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
+        ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
     ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
         Self::make_entity_from_table(
             conn,
@@ -94,12 +99,14 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         )
     }
 
+    /// Create an entity using `make_entity` and supply extra attributes that can depend on the row
+    /// Useful for when some attributes are nontrivial functions of the data stored in the table
     pub fn make_entity_extra_attrs(
         &self,
         conn: &Connection,
         uid: &EntityUid,
-        ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
-        extra_attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
+        ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
+        extra_attrs: impl FnOnce(&Row<'_>) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
     ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
         Self::make_entity_from_table(
             conn,
@@ -114,6 +121,7 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         )
     }
 
+    /// Get a single attribute of an entity
     pub fn get_single_attr_as<T: FromSql>(
         &self,
         conn: &Connection,
@@ -131,6 +139,7 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         Ok(query_result)
     }
 
+    /// Get a single attribute of an entity as a cedar `Value`
     pub fn get_single_attr(
         &self,
         conn: &Connection,
@@ -144,6 +153,7 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         }
     }
 
+    /// Get a single attribute of an entity as a cedar `EntityUid`
     pub fn get_single_attr_as_id(
         &self,
         conn: &Connection,
@@ -155,6 +165,7 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         Ok(query_result.into_uid(tp))
     }
 
+    /// Check whether the given entity exists
     pub fn exists_entity(
         &self,
         conn: &Connection,
@@ -167,8 +178,9 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
             .is_some())
     }
 
+    /// Convert a row into a map of attribute names to values
     pub fn convert_attr_names(
-        query_result: &Row,
+        query_result: &Row<'_>,
         attr_names: &HashMap<SmolStr, usize>,
     ) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError> {
         attr_names
@@ -181,12 +193,15 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
             .collect()
     }
 
+    /// Construct an entity from a row in the entity table given a
+    /// function which determines how to get ancestors given the information in the row
+    /// and how to get attributes given the information in the row
     pub fn make_entity_from_table(
         conn: &Connection,
         uid: &EntityUid,
         query: &SelectStatement,
-        attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
-        ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
+        attrs: impl FnOnce(&Row<'_>) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
+        ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
     ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
         // TODO: use `build` instead of `to_string`
         let query_string = query.to_string(SqliteQueryBuilder);
@@ -205,6 +220,7 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
 }
 
 impl AncestorSQLInfo<SQLiteSQLInfo> {
+    /// Get all ancestors of an entity when the ancestry information is stored in a separate table
     pub fn get_ancestors(
         &self,
         conn: &Connection,
@@ -221,6 +237,7 @@ impl AncestorSQLInfo<SQLiteSQLInfo> {
         Ok(result)
     }
 
+    /// Check whether the given entity is a descendant of the given entity
     pub fn is_ancestor(
         &self,
         conn: &Connection,
