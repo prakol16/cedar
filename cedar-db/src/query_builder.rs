@@ -764,7 +764,7 @@ mod test {
         );
         assert_eq!(
             result,
-            r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE FALSE"#
+            r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE "user"."uid" = '0' AND FALSE"#
         );
     }
 }

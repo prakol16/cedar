@@ -508,7 +508,7 @@ mod test_sqlite {
                 let query = query.to_string_sqlite();
                 assert_eq!(
                     query,
-                    r#"SELECT "resource"."title" FROM "photos" AS "resource" LEFT JOIN "users" AS "temp__0" ON "resource"."user_id" = "temp__0"."uid" WHERE TRUE AND (TRUE AND "temp__0"."name" = 'Alice') AND TRUE"#
+                    r#"SELECT "resource"."title" FROM "photos" AS "resource" LEFT JOIN "users" AS "temp__0" ON "resource"."user_id" = "temp__0"."uid" WHERE TRUE AND (TRUE AND "temp__0"."name" = 'Alice') AND (NOT FALSE)"#
                 );
 
                 let conn = Connection::open(&*DB_PATH).expect("Connection failed");
