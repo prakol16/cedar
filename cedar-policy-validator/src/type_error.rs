@@ -195,6 +195,15 @@ impl TypeError {
             kind: TypeErrorKind::HierarchyNotRespected(HierarchyNotRespected { in_lhs, in_rhs }),
         }
     }
+
+    /// Construct a type error for when an unknown occurs without a type annotation
+    pub(crate) fn unknown_not_type_annotated<T>(on_expr: Expr<T>, unknown: SmolStr) -> Self {
+        Self {
+            on_expr: None,
+            source_location: on_expr.into_source_info(),
+            kind: TypeErrorKind::UnknownNotTypeAnnotated(unknown),
+        }
+    }
 }
 
 impl Display for TypeError {
@@ -276,6 +285,9 @@ pub enum TypeErrorKind {
             _ => "".to_string(),
         })]
     HierarchyNotRespected(HierarchyNotRespected),
+    /// To pass validation, unknowns must be annotated with types
+    #[error("unknown {0} type not annotated")]
+    UnknownNotTypeAnnotated(SmolStr),
 }
 
 /// Structure containing details about an unexpected type error.

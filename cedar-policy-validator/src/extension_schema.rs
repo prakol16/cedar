@@ -73,6 +73,10 @@ pub struct ExtensionFunctionType {
     return_type: Type,
     /// Custom argument validation (optional)
     check_arguments: Option<ArgumentCheckFn>,
+    /// Whether extra (variadic) arguments can be supplied
+    /// These are not typechecked, so they must be checked by the `check_arguments` function
+    /// if there should be requirements on them.
+    is_variadic: bool,
 }
 
 impl ExtensionFunctionType {
@@ -85,9 +89,26 @@ impl ExtensionFunctionType {
     ) -> Self {
         Self {
             name,
+            argument_types: argument_types,
+            return_type,
+            check_arguments,
+            is_variadic: false
+        }
+    }
+
+    /// Create a new variadic `ExtensionFunctionType`
+    pub fn new_variadic(
+        name: Name,
+        argument_types: Vec<Type>,
+        return_type: Type,
+        check_arguments: Option<ArgumentCheckFn>,
+    ) -> Self {
+        Self {
+            name,
             argument_types,
             return_type,
             check_arguments,
+            is_variadic: true
         }
     }
 
@@ -118,6 +139,11 @@ impl ExtensionFunctionType {
     /// function defined.
     pub fn has_argument_check(&self) -> bool {
         self.check_arguments.is_some()
+    }
+
+    /// Returns true if this is a variadic function
+    pub fn is_variadic_fun(&self) -> bool {
+        self.is_variadic
     }
 }
 

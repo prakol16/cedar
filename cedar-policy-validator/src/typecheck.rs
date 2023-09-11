@@ -583,11 +583,14 @@ impl<'a> Typechecker<'a> {
                 name,
                 type_annotation,
             } => match type_annotation {
-                None => TypecheckAnswer::fail(
+                None => {
+                    type_errors.push(TypeError::unknown_not_type_annotated(e.clone(), name.clone()));
+                    TypecheckAnswer::fail(
                     ExprBuilder::with_data(None)
                         .with_same_source_info(e)
                         .unknown(name.clone(), None),
-                ),
+                    )
+                },
                 Some(t) => TypecheckAnswer::success(
                     ExprBuilder::with_data(Some(t.clone().into()))
                         .with_same_source_info(e)
@@ -2183,7 +2186,7 @@ impl<'a> Typechecker<'a> {
                 let arg_tys = efunc.argument_types();
                 let ret_ty = efunc.return_type();
                 let mut failed = false;
-                if args.len() != arg_tys.len() {
+                if args.len() < arg_tys.len() || (!efunc.is_variadic_fun() && args.len() != arg_tys.len()) {
                     type_errors.push(TypeError::wrong_number_args(
                         ext_expr.clone(),
                         arg_tys.len(),

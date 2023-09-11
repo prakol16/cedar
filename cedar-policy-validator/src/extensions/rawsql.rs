@@ -16,7 +16,7 @@ pub fn extension_schema() -> ExtensionSchema {
                 .return_type()
                 .map(|ty| ty.clone().into())
                 .unwrap_or(Type::Never);
-            ExtensionFunctionType::new(
+            ExtensionFunctionType::new_variadic(
                 f.name().clone(),
                 f.arg_types()
                     .iter()
