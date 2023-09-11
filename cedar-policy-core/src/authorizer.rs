@@ -199,11 +199,16 @@ impl Authorizer {
         pset: &PolicySet,
         entities: &T,
     ) -> ResponseKind {
-        // PANIC SAFETY Evaluator::new returning a `Result` is a relic
-        // of the old `Evaluator` API. It is now guaranteed to return an Ok value
-        // TODO: Evaluator::new should always return an Evaluator object (not wrapped in a Result)
-        #[allow(clippy::unwrap_used)]
-        let eval = Evaluator::new(q, entities, &self.extensions).unwrap();
+        let eval = match Evaluator::new(q, entities, &self.extensions) {
+            Ok(eval) => eval,
+            Err(e) => {
+                return ResponseKind::FullyEvaluated(Response::new(
+                    Decision::Deny,
+                    HashSet::new(),
+                    vec![AuthorizationError::ContextAttributeEvaluationError(e)],
+                ));
+            }
+        };
 
         let results = self.evaluate_policies(pset, eval);
 
