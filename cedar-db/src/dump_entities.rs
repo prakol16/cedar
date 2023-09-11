@@ -519,9 +519,10 @@ mod test {
 
     use cedar_policy::{PartialValue, Schema};
     use cedar_policy_core::{ast::Entity, entities::Entities};
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::{PostgresQueryBuilder, Alias};
+    use serde_json::json;
 
-    use crate::dump_entities::create_tables_postgres;
+    use crate::{dump_entities::create_tables_postgres, sea_query_extra::OptionalInsertStatement};
 
     use super::create_tables;
 
@@ -617,5 +618,31 @@ mod test {
             // .expect_err("Should fail to create table with unicode zero");
             .expect("It actually ends up working");
         println!("{}", result.0.join("\n"));
+    }
+
+    #[test]
+    fn test_empty_array() {
+        let mut insert = OptionalInsertStatement::new();
+        insert.into_table(Alias::new("tbl"));
+        insert.columns([Alias::new("col")]);
+        let values: Vec<i64> = Vec::new();
+        insert.values([values.into()]).unwrap();
+        assert_eq!(
+            insert.into_insert_statement().to_string(PostgresQueryBuilder),
+            r#"INSERT INTO "tbl" ("col") VALUES (ARRAY []::bigint[])"#,
+        );
+    }
+
+    #[test]
+    fn test_json_array() {
+        let mut insert = OptionalInsertStatement::new();
+        insert.into_table(Alias::new("tbl"));
+        insert.columns([Alias::new("col")]);
+        let values: Vec<serde_json::Value> = vec![json!({})];
+        insert.values([values.into()]).unwrap();
+        assert_eq!(
+            insert.into_insert_statement().to_string(PostgresQueryBuilder),
+            r#"INSERT INTO "tbl" ("col") VALUES (ARRAY ['{}']::jsonb[])"#,
+        );
     }
 }
