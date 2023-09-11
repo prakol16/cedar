@@ -225,7 +225,6 @@ pub fn translate_expr_with_renames<T: IntoTableRef>(
         .typecheck_expr_strict(
             &(&req_env).into(),
             expr,
-            cedar_policy_validator::types::Type::primitive_boolean(),
             &mut errors,
         )
         .ok_or_else(|| QueryExprError::ValidationError(errors))?;
