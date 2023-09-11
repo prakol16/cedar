@@ -878,7 +878,8 @@ impl QueryExpr {
     /// If true, then the conversion to ExprWithBindings has slightly different behavior
     /// because the unknown __RAWSQL is removed from the free variable set
     pub fn has_rawsql(&self) -> bool {
-        self.subexpressions().any(|e| matches!(e, QueryExpr::RawSQL { .. }))
+        self.subexpressions()
+            .any(|e| matches!(e, QueryExpr::RawSQL { .. }))
     }
 }
 
@@ -1008,7 +1009,8 @@ impl From<QueryExpr> for ExprWithBindings {
 impl From<QueryExprWithVars> for ExprWithBindings {
     fn from(value: QueryExprWithVars) -> Self {
         let free_vars: HashSet<UnknownType> = if value.expr.has_rawsql() {
-            value.vars
+            value
+                .vars
                 .iter()
                 .filter(|v| v.get_name() != "__RAWSQL")
                 .cloned()

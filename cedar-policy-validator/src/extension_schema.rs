@@ -15,7 +15,7 @@
  */
 
 use crate::types::Type;
-use cedar_policy_core::ast::{Expr, Name, ExtensionFunction};
+use cedar_policy_core::ast::{Expr, ExtensionFunction, Name};
 use std::collections::HashMap;
 
 /// Type information for a Cedar extension.
@@ -55,7 +55,6 @@ impl ExtensionSchema {
     pub fn get_function_type(&self, name: &Name) -> Option<&ExtensionFunctionType> {
         self.function_types.get(name)
     }
-
 
     pub fn from_extn(extn: cedar_policy_core::ast::Extension, is_variadic: bool) -> Self {
         let fun_tys: Vec<ExtensionFunctionType> = extn
@@ -101,7 +100,7 @@ impl ExtensionFunctionType {
             argument_types: argument_types,
             return_type,
             check_arguments,
-            is_variadic: false
+            is_variadic: false,
         }
     }
 
@@ -111,14 +110,14 @@ impl ExtensionFunctionType {
         argument_types: Vec<Type>,
         return_type: Type,
         check_arguments: Option<ArgumentCheckFn>,
-        is_variadic: bool
+        is_variadic: bool,
     ) -> Self {
         Self {
             name,
             argument_types,
             return_type,
             check_arguments,
-            is_variadic
+            is_variadic,
         }
     }
 
@@ -173,7 +172,7 @@ impl ExtensionFunctionType {
                 .collect(),
             return_type,
             None,
-            is_variadic
+            is_variadic,
         )
     }
 }

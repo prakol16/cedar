@@ -180,7 +180,9 @@ impl<'e> RestrictedEvaluator<'e> {
     /// This is useful for constructing AST expressions with unknowns, which
     /// cannot be done by parsing
     pub fn interpret_unknowns(&self, e: &Expr) -> Result<Expr> {
-        self.partial_interpret_unrestricted(e, &|n| n.namespace() == "unknown" || n.basename().as_ref() == "unknown")
+        self.partial_interpret_unrestricted(e, &|n| {
+            n.namespace() == "unknown" || n.basename().as_ref() == "unknown"
+        })
     }
 
     /// Interpret a `RestrictedExpr` into a `Value` in this evaluation environment.

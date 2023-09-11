@@ -584,13 +584,16 @@ impl<'a> Typechecker<'a> {
                 type_annotation,
             } => match type_annotation {
                 None => {
-                    type_errors.push(TypeError::unknown_not_type_annotated(e.clone(), name.clone()));
+                    type_errors.push(TypeError::unknown_not_type_annotated(
+                        e.clone(),
+                        name.clone(),
+                    ));
                     TypecheckAnswer::fail(
-                    ExprBuilder::with_data(None)
-                        .with_same_source_info(e)
-                        .unknown(name.clone(), None),
+                        ExprBuilder::with_data(None)
+                            .with_same_source_info(e)
+                            .unknown(name.clone(), None),
                     )
-                },
+                }
                 Some(t) => TypecheckAnswer::success(
                     ExprBuilder::with_data(Some(t.clone().into()))
                         .with_same_source_info(e)
@@ -2186,7 +2189,9 @@ impl<'a> Typechecker<'a> {
                 let arg_tys = efunc.argument_types();
                 let ret_ty = efunc.return_type();
                 let mut failed = false;
-                if args.len() < arg_tys.len() || (!efunc.is_variadic_fun() && args.len() != arg_tys.len()) {
+                if args.len() < arg_tys.len()
+                    || (!efunc.is_variadic_fun() && args.len() != arg_tys.len())
+                {
                     type_errors.push(TypeError::wrong_number_args(
                         ext_expr.clone(),
                         arg_tys.len(),
@@ -2227,7 +2232,13 @@ impl<'a> Typechecker<'a> {
                         .chain(std::iter::repeat(None));
                     let typechecked_args = zip(args.as_ref(), arg_tys_padded).map(|(arg, ty)| {
                         match ty {
-                            Some(ty) => self.expect_type(request_env, prior_eff, arg, ty.clone(), type_errors),
+                            Some(ty) => self.expect_type(
+                                request_env,
+                                prior_eff,
+                                arg,
+                                ty.clone(),
+                                type_errors,
+                            ),
                             // We just typecheck the expression but do not care what type it has.
                             None => self.typecheck(request_env, prior_eff, arg, type_errors),
                         }

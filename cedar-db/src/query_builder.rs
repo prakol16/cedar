@@ -222,11 +222,7 @@ pub fn translate_expr_with_renames<T: IntoTableRef>(
     let req_env = RandomRequestEnv::new();
     let mut errors = Vec::new();
     let typed_expr = typechecker
-        .typecheck_expr_strict(
-            &(&req_env).into(),
-            expr,
-            &mut errors,
-        )
+        .typecheck_expr_strict(&(&req_env).into(), expr, &mut errors)
         .ok_or_else(|| QueryExprError::ValidationError(errors))?;
     let mut query_expr = QueryExprWithVars::from_expr(&typed_expr, vars)?;
     // Rename any unknowns that appear in the query
@@ -349,9 +345,7 @@ mod test {
     pub fn translate_expr_test(expr: ast::Expr, schema: &Schema) -> String {
         let ext = Extensions::all_available();
         let eval = RestrictedEvaluator::new(&ext);
-        let expr = eval
-            .interpret_unknowns(&expr)
-            .unwrap();
+        let expr = eval.interpret_unknowns(&expr).unwrap();
 
         let mut query = translate_expr(
             &expr,
@@ -465,7 +459,9 @@ mod test {
     #[test]
     fn test_entity_deref_id() {
         let result = translate_expr_test(
-            r#"unknown::entity("resource", "Photos") == Photos::"0""#.parse().unwrap(),
+            r#"unknown::entity("resource", "Photos") == Photos::"0""#
+                .parse()
+                .unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -489,7 +485,9 @@ mod test {
     #[test]
     fn test_nested_getattr() {
         let result = translate_expr_test(
-            r#"5 <= unknown::entity("resource", "Photos").owner.level"#.parse().unwrap(),
+            r#"5 <= unknown::entity("resource", "Photos").owner.level"#
+                .parse()
+                .unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -539,7 +537,9 @@ mod test {
     #[test]
     fn test_in() {
         let result: String = translate_expr_test(
-            r#"unknown::entity("resource", "Photos") in Users::"0""#.parse().unwrap(),
+            r#"unknown::entity("resource", "Photos") in Users::"0""#
+                .parse()
+                .unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -551,7 +551,9 @@ mod test {
     #[test]
     fn test_in2() {
         let result: String = translate_expr_test(
-            r#"Users::"0" in unknown::entity("resource", "Photos")"#.parse().unwrap(),
+            r#"Users::"0" in unknown::entity("resource", "Photos")"#
+                .parse()
+                .unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -596,9 +598,7 @@ mod test {
 
         let ext = Extensions::all_available();
         let eval = RestrictedEvaluator::new(&ext);
-        let expr = eval
-            .interpret_unknowns(&expr)
-            .unwrap();
+        let expr = eval.interpret_unknowns(&expr).unwrap();
 
         let mut query = translate_expr_with_renames(
             &expr,
@@ -639,7 +639,9 @@ mod test {
     #[test]
     fn test_name_collision() {
         let result = translate_expr_test(
-            r#"5 <= unknown::entity("temp__0", "Photos").owner.level"#.parse().unwrap(),
+            r#"5 <= unknown::entity("temp__0", "Photos").owner.level"#
+                .parse()
+                .unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -657,9 +659,7 @@ mod test {
 
         let ext = Extensions::all_available();
         let eval = RestrictedEvaluator::new(&ext);
-        let expr = eval
-            .interpret_unknowns(&expr)
-            .unwrap();
+        let expr = eval.interpret_unknowns(&expr).unwrap();
 
         let mut query = translate_expr(
             &expr,
@@ -759,7 +759,9 @@ mod test {
     fn test_free_vars_in_and_false() {
         let result = translate_expr_test(
             // This expression gets reduced to `false` during strict typechecking
-            r#"unknown::entity("user", "Users") == Users::"0" && false"#.parse().unwrap(),
+            r#"unknown::entity("user", "Users") == Users::"0" && false"#
+                .parse()
+                .unwrap(),
             &get_schema(),
         );
         assert_eq!(

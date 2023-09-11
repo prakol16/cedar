@@ -16,17 +16,17 @@
 
 //! This module contains the extension for including unknown values
 use crate::{
-    ast::{CallStyle, EntityType, Extension, ExtensionFunction, ExtensionOutputValue, Value, Name},
+    ast::{CallStyle, EntityType, Extension, ExtensionFunction, ExtensionOutputValue, Name, Value},
     entities::SchemaType,
     evaluator::{self, EvaluationError},
 };
 
-use self::names::{EXTENSION_NAME, UNKNOWN_FUN_NAME, ERROR_FUN_NAME};
+use self::names::{ERROR_FUN_NAME, EXTENSION_NAME, UNKNOWN_FUN_NAME};
 
 // PANIC SAFETY All the names are valid names
 #[allow(clippy::expect_used)]
 mod names {
-    use crate::ast::{Name, Id};
+    use crate::ast::{Id, Name};
 
     lazy_static::lazy_static! {
         pub static ref EXTENSION_NAME : Name = Name::parse_unqualified_name("partial_evaluation").expect("should be a valid identifier");
@@ -42,7 +42,10 @@ mod names {
 }
 
 fn create_new_unknown(v: Value) -> evaluator::Result<ExtensionOutputValue> {
-    Ok(ExtensionOutputValue::Unknown(v.get_as_string()?.to_owned(), None))
+    Ok(ExtensionOutputValue::Unknown(
+        v.get_as_string()?.to_owned(),
+        None,
+    ))
     // let s = v.get_as_string()?.to_string();
     // Dirty hack to identify types
     // match s.split_once(": ") {
@@ -100,7 +103,10 @@ pub fn extension() -> Extension {
                 Some(SchemaType::String),
             ),
             ExtensionFunction::binary_never(
-                Name::type_in_namespace(names::ENTITY_TYPE_ID.clone(), names::UNKNOWN_FUN_NAME.clone()),
+                Name::type_in_namespace(
+                    names::ENTITY_TYPE_ID.clone(),
+                    names::UNKNOWN_FUN_NAME.clone(),
+                ),
                 CallStyle::FunctionStyle,
                 Box::new(create_new_unknown_entity),
                 (Some(SchemaType::String), Some(SchemaType::String)),
@@ -111,23 +117,25 @@ pub fn extension() -> Extension {
                 Box::new(throw_error),
                 Some(SchemaType::String),
             ),
-        ].into_iter().chain(
+        ]
+        .into_iter()
+        .chain(
             [
                 (names::BOOL_TYPE_ID.clone(), SchemaType::Bool),
                 (names::LONG_TYPE_ID.clone(), SchemaType::Long),
                 (names::STR_TYPE_ID.clone(), SchemaType::String),
-            ].into_iter().map(|(tp, schtp)| {
+            ]
+            .into_iter()
+            .map(|(tp, schtp)| {
                 let schtp_clone = schtp.clone();
                 ExtensionFunction::unary(
                     Name::type_in_namespace(tp, names::UNKNOWN_FUN_NAME.clone()),
                     CallStyle::FunctionStyle,
-                    Box::new(move |v| {
-                        create_new_unknown_typed(v, schtp.clone())
-                    }),
+                    Box::new(move |v| create_new_unknown_typed(v, schtp.clone())),
                     schtp_clone,
                     Some(SchemaType::String),
                 )
-            })
+            }),
         ),
     )
 }
