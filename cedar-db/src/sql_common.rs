@@ -79,7 +79,6 @@ pub enum DatabaseToCedarError {
     #[error("Json deserialization error: {0}")]
     JsonDeserializationError(#[from] JsonDeserializationError),
 
-
     /// Error when evaluating the restricted expression for entity attribute data fails
     #[error("Error when evaluating expression attributes in JSON: {0}")]
     ExpressionEvaluationError(#[from] cedar_policy_core::evaluator::EvaluationError),

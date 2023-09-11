@@ -106,7 +106,9 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         conn: &Connection,
         uid: &EntityUid,
         ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
-        extra_attrs: impl FnOnce(&Row<'_>) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
+        extra_attrs: impl FnOnce(
+            &Row<'_>,
+        ) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
     ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
         Self::make_entity_from_table(
             conn,
