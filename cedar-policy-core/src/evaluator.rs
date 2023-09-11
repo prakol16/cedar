@@ -19,7 +19,7 @@
 use crate::ast::*;
 use crate::entities::{Dereference, Entities, EntityAttrDatabase};
 use crate::extensions::Extensions;
-use std::collections::HashSet;
+
 use std::sync::Arc;
 
 mod err;
@@ -90,7 +90,7 @@ impl<'e> RestrictedEvaluator<'e> {
     pub fn partial_interpret_unrestricted(
         &self,
         e: &Expr,
-        to_eval: &HashSet<Name>,
+        to_eval: &impl Fn(&Name) -> bool,
     ) -> Result<Expr> {
         stack_size_check()?;
 
@@ -132,7 +132,7 @@ impl<'e> RestrictedEvaluator<'e> {
                 Ok(Expr::mul(arg, *constant))
             }
             ExprKind::ExtensionFunctionApp { fn_name, args } => {
-                if to_eval.contains(fn_name) {
+                if to_eval(fn_name) {
                     let e_restricted = BorrowedRestrictedExpr::new(e)?;
                     match self.partial_interpret(e_restricted)? {
                         PartialValue::Value(v) => Ok(v.into()),
@@ -174,6 +174,13 @@ impl<'e> RestrictedEvaluator<'e> {
                 Ok(Expr::record(pairs))
             }
         }
+    }
+
+    /// Interpret specifically the unknowns in the expression
+    /// This is useful for constructing AST expressions with unknowns, which
+    /// cannot be done by parsing
+    pub fn interpret_unknowns(&self, e: &Expr) -> Result<Expr> {
+        self.partial_interpret_unrestricted(e, &|n| n.namespace() == "unknown" || n.basename().as_ref() == "unknown")
     }
 
     /// Interpret a `RestrictedExpr` into a `Value` in this evaluation environment.

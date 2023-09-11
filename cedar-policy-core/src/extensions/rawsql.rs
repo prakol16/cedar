@@ -10,11 +10,11 @@ use crate::{
 
 use self::names::{BOOL_SQL_ID, LONG_SQL_ID, RAWSQL_ID, RAWSQL_NAME, STR_SQL_ID};
 
+// PANIC SAFETY all of the names here are valid names
 #[allow(clippy::expect_used)]
 mod names {
     use crate::ast::{Id, Name};
 
-    // PANIC SAFETY all of the names here are valid names
     lazy_static::lazy_static! {
         pub static ref RAWSQL_ID : Id = "rawsql".parse().expect("rawsql is a valid identifier");
         pub static ref RAWSQL_NAME : Name = Name::new(RAWSQL_ID.clone(), []);
@@ -25,11 +25,14 @@ mod names {
     }
 }
 
-fn make_error(_: &[Value]) -> Result<ExtensionOutputValue, EvaluationError> {
-    Err(EvaluationError::failed_extension_function_application(
+fn get_first_arg(args: &[Value]) -> Result<ExtensionOutputValue, EvaluationError> {
+    args.get(0).map_or_else(
+        || Err(EvaluationError::failed_extension_function_application(
         RAWSQL_NAME.clone(),
-        "The first argument of `rawsql` must be a dummy unknown with name __RAWSQL. rawsql cannot be evaluated directly".to_string(),
-    ))
+        "The first argument of `rawsql` must be a dummy unknown with name __RAWSQL or a fallback Cedar expression".to_string(),
+        )),
+        |v| Ok(ExtensionOutputValue::Concrete(v.to_owned()))
+    )
 }
 
 /// Construct the extension
@@ -46,9 +49,9 @@ pub fn extension() -> Extension {
             ExtensionFunction::new(
                 Name::new(tp, [RAWSQL_ID.clone()]),
                 crate::ast::CallStyle::FunctionStyle,
-                Box::new(make_error),
-                Some(schtp),
-                vec![None, Some(SchemaType::String)],
+                Box::new(get_first_arg),
+                Some(schtp.clone()),
+                vec![Some(schtp), Some(SchemaType::String)],
             )
         }),
     )

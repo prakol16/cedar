@@ -243,6 +243,31 @@ impl ExtensionFunction {
         )
     }
 
+    /// Create a new `ExtensionFunction` taking two arguments that never returns a value
+    pub fn binary_never(
+        name: Name,
+        style: CallStyle,
+        func: Box<
+            dyn Fn(Value, Value) -> evaluator::Result<ExtensionOutputValue> + Sync + Send + 'static,
+        >,
+        arg_types: (Option<SchemaType>, Option<SchemaType>),
+    ) -> Self {
+        Self::new(
+            name.clone(),
+            style,
+            Box::new(move |args: &[Value]| match &args {
+                &[first, second] => func(first.clone(), second.clone()),
+                _ => Err(evaluator::EvaluationError::wrong_num_arguments(
+                    name.clone(),
+                    2,
+                    args.len(),
+                )),
+            }),
+            None,
+            vec![arg_types.0, arg_types.1],
+        )
+    }
+
     /// Create a new `ExtensionFunction` taking three arguments
     pub fn ternary(
         name: Name,

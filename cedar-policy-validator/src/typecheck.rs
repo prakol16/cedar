@@ -2219,8 +2219,18 @@ impl<'a> Typechecker<'a> {
                         None => TypecheckAnswer::RecursionLimit,
                     }
                 } else {
-                    let typechecked_args = zip(args.as_ref(), arg_tys).map(|(arg, ty)| {
-                        self.expect_type(request_env, prior_eff, arg, ty.clone(), type_errors)
+                    // Since due to variadic arguments, args may be longer than arg_tys, we need to
+                    // pad arg_tys with Nones
+                    let arg_tys_padded = arg_tys
+                        .iter()
+                        .map(Option::Some)
+                        .chain(std::iter::repeat(None));
+                    let typechecked_args = zip(args.as_ref(), arg_tys_padded).map(|(arg, ty)| {
+                        match ty {
+                            Some(ty) => self.expect_type(request_env, prior_eff, arg, ty.clone(), type_errors),
+                            // We just typecheck the expression but do not care what type it has.
+                            None => self.typecheck(request_env, prior_eff, arg, type_errors),
+                        }
                     });
                     TypecheckAnswer::sequence_all_then_typecheck(
                         typechecked_args,

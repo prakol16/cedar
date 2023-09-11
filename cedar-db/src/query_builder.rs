@@ -350,7 +350,7 @@ mod test {
         let ext = Extensions::all_available();
         let eval = RestrictedEvaluator::new(&ext);
         let expr = eval
-            .partial_interpret_unrestricted(&expr, &["unknown".parse().unwrap()].into())
+            .interpret_unknowns(&expr)
             .unwrap();
 
         let mut query = translate_expr(
@@ -451,7 +451,7 @@ mod test {
     #[test]
     fn test_basic() {
         let result = translate_expr_test(
-            r#"unknown("resource: Photos").owner == Users::"0""#
+            r#"unknown::entity("resource", "Photos").owner == Users::"0""#
                 .parse()
                 .unwrap(),
             &get_schema(),
@@ -465,7 +465,7 @@ mod test {
     #[test]
     fn test_entity_deref_id() {
         let result = translate_expr_test(
-            r#"unknown("resource: Photos") == Photos::"0""#.parse().unwrap(),
+            r#"unknown::entity("resource", "Photos") == Photos::"0""#.parse().unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -477,7 +477,7 @@ mod test {
     #[test]
     fn test_if() {
         let result = translate_expr_test(
-            r#"(if unknown("resource: Photos").owner == Users::"0" then Photos::"beach" else Photos::"carnival") == unknown("resource: Photos").nextPhoto"#.parse().unwrap(),
+            r#"(if unknown::entity("resource", "Photos").owner == Users::"0" then Photos::"beach" else Photos::"carnival") == unknown::entity("resource", "Photos").nextPhoto"#.parse().unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -489,7 +489,7 @@ mod test {
     #[test]
     fn test_nested_getattr() {
         let result = translate_expr_test(
-            r#"5 <= unknown("resource: Photos").owner.level"#.parse().unwrap(),
+            r#"5 <= unknown::entity("resource", "Photos").owner.level"#.parse().unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -501,7 +501,7 @@ mod test {
     #[test]
     fn test_deeply_nested_getattr() {
         let result = translate_expr_test(
-            r#"unknown("resource: Photos").nextPhoto.nextPhoto.nextPhoto.owner.level == 3"#
+            r#"unknown::entity("resource", "Photos").nextPhoto.nextPhoto.nextPhoto.owner.level == 3"#
                 .parse()
                 .unwrap(),
             &get_schema(),
@@ -515,7 +515,7 @@ mod test {
     #[test]
     fn test_double_getattr() {
         let result = translate_expr_test(
-            r#"5 <= unknown("resource: Photos").owner.level && unknown("resource: Photos").owner.level <= 10"#.parse().unwrap(),
+            r#"5 <= unknown::entity("resource", "Photos").owner.level && unknown::entity("resource", "Photos").owner.level <= 10"#.parse().unwrap(),
             &get_schema()
         );
         assert_eq!(
@@ -527,7 +527,7 @@ mod test {
     #[test]
     fn test_if_getattr() {
         let result = translate_expr_test(
-            r#"(if unknown("resource: Photos") == Photos::"0" || unknown("resource: Photos") == Photos::"1" then unknown("resource: Photos") else unknown("resource: Photos").nextPhoto).owner == Users::"2""#.parse().unwrap(),
+            r#"(if unknown::entity("resource", "Photos") == Photos::"0" || unknown::entity("resource", "Photos") == Photos::"1" then unknown::entity("resource", "Photos") else unknown::entity("resource", "Photos").nextPhoto).owner == Users::"2""#.parse().unwrap(),
             &get_schema()
         );
         assert_eq!(
@@ -539,7 +539,7 @@ mod test {
     #[test]
     fn test_in() {
         let result: String = translate_expr_test(
-            r#"unknown("resource: Photos") in Users::"0""#.parse().unwrap(),
+            r#"unknown::entity("resource", "Photos") in Users::"0""#.parse().unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -551,7 +551,7 @@ mod test {
     #[test]
     fn test_in2() {
         let result: String = translate_expr_test(
-            r#"Users::"0" in unknown("resource: Photos")"#.parse().unwrap(),
+            r#"Users::"0" in unknown::entity("resource", "Photos")"#.parse().unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -563,7 +563,7 @@ mod test {
     #[test]
     fn test_inset() {
         let result: String = translate_expr_test(
-            r#"Photos::"0" in unknown("principal: Users").allowedPhotos"#
+            r#"Photos::"0" in unknown::entity("principal", "Users").allowedPhotos"#
                 .parse()
                 .unwrap(),
             &get_schema(),
@@ -577,7 +577,7 @@ mod test {
     #[test]
     fn test_record_attr() {
         let result: String = translate_expr_test(
-            r#"unknown("resource: Photos").owner.info.name == "Bob""#
+            r#"unknown::entity("resource", "Photos").owner.info.name == "Bob""#
                 .parse()
                 .unwrap(),
             &get_schema(),
@@ -590,14 +590,14 @@ mod test {
 
     #[test]
     fn test_rename() {
-        let expr: ast::Expr = r#"unknown("resource: Photos").owner == Users::"bob""#
+        let expr: ast::Expr = r#"unknown::entity("resource", "Photos").owner == Users::"bob""#
             .parse()
             .unwrap();
 
         let ext = Extensions::all_available();
         let eval = RestrictedEvaluator::new(&ext);
         let expr = eval
-            .partial_interpret_unrestricted(&expr, &["unknown".parse().unwrap()].into())
+            .interpret_unknowns(&expr)
             .unwrap();
 
         let mut query = translate_expr_with_renames(
@@ -639,7 +639,7 @@ mod test {
     #[test]
     fn test_name_collision() {
         let result = translate_expr_test(
-            r#"5 <= unknown("temp__0: Photos").owner.level"#.parse().unwrap(),
+            r#"5 <= unknown::entity("temp__0", "Photos").owner.level"#.parse().unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -650,7 +650,7 @@ mod test {
 
     #[test]
     fn test_build() {
-        let expr = r#"10 * unknown("user: Users").level + unknown("user: Users").info.age >= 50"#
+        let expr = r#"10 * unknown::entity("user", "Users").level + unknown::entity("user", "Users").info.age >= 50"#
             .parse()
             .unwrap();
         let schema = &get_schema();
@@ -658,7 +658,7 @@ mod test {
         let ext = Extensions::all_available();
         let eval = RestrictedEvaluator::new(&ext);
         let expr = eval
-            .partial_interpret_unrestricted(&expr, &["unknown".parse().unwrap()].into())
+            .interpret_unknowns(&expr)
             .unwrap();
 
         let mut query = translate_expr(
@@ -693,7 +693,7 @@ mod test {
     #[test]
     fn test_json_array_cast() {
         let result = translate_expr_test(
-            r#"unknown("user: Users").info.setAttr.containsAll([6, 10, 11])"#
+            r#"unknown::entity("user", "Users").info.setAttr.containsAll([6, 10, 11])"#
                 .parse()
                 .unwrap(),
             &get_schema(),
@@ -708,7 +708,7 @@ mod test {
     #[test]
     fn test_json_array_eq() {
         let result = translate_expr_test(
-            r#"unknown("user: Users").info.setAttr == [6, 10, 11]"#
+            r#"unknown::entity("user", "Users").info.setAttr == [6, 10, 11]"#
                 .parse()
                 .unwrap(),
             &get_schema(),
@@ -722,7 +722,7 @@ mod test {
     #[test]
     fn test_rawsql() {
         let result = translate_expr_test(
-            r#"unknown("user: Users").level >= rawsql::long(unknown("__RAWSQL"), "SELECT AVG(level) FROM Users")"#.parse().unwrap(),
+            r#"unknown::entity("user", "Users").level >= rawsql::long(unknown::long("__RAWSQL"), "SELECT AVG(level) FROM Users")"#.parse().unwrap(),
             &get_schema()
         );
         assert_eq!(
@@ -734,7 +734,7 @@ mod test {
     #[test]
     fn test_rawsql_with_params() {
         let result = translate_expr_test(
-            r#"unknown("user: Users").level >= rawsql::long(unknown("__RAWSQL"), "SELECT (AVG(level) * $) FROM Users", unknown("user: Users").info.age)"#.parse().unwrap(),
+            r#"unknown::entity("user", "Users").level >= rawsql::long(unknown::long("__RAWSQL"), "SELECT (AVG(level) * $) FROM Users", unknown::entity("user", "Users").info.age)"#.parse().unwrap(),
             &get_schema()
         );
         assert_eq!(
@@ -746,7 +746,7 @@ mod test {
     #[test]
     fn test_escape_sub_char() {
         let result = translate_expr_test(
-            r#"unknown("user: Users") == Users::"""#.parse().unwrap(),
+            r#"unknown::entity("user", "Users") == Users::"""#.parse().unwrap(),
             &get_schema(),
         );
         assert_eq!(
@@ -759,7 +759,7 @@ mod test {
     fn test_free_vars_in_and_false() {
         let result = translate_expr_test(
             // This expression gets reduced to `false` during strict typechecking
-            r#"unknown("user: Users") == Users::"0" && false"#.parse().unwrap(),
+            r#"unknown::entity("user", "Users") == Users::"0" && false"#.parse().unwrap(),
             &get_schema(),
         );
         assert_eq!(

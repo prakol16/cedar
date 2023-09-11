@@ -15,7 +15,7 @@
  */
 
 use crate::types::Type;
-use cedar_policy_core::ast::{Expr, Name};
+use cedar_policy_core::ast::{Expr, Name, ExtensionFunction};
 use std::collections::HashMap;
 
 /// Type information for a Cedar extension.
@@ -54,6 +54,15 @@ impl ExtensionSchema {
 
     pub fn get_function_type(&self, name: &Name) -> Option<&ExtensionFunctionType> {
         self.function_types.get(name)
+    }
+
+
+    pub fn from_extn(extn: cedar_policy_core::ast::Extension, is_variadic: bool) -> Self {
+        let fun_tys: Vec<ExtensionFunctionType> = extn
+            .funcs()
+            .map(|f| ExtensionFunctionType::from_extn_fun(f, is_variadic))
+            .collect();
+        Self::new(extn.name().clone(), fun_tys)
     }
 }
 
@@ -102,13 +111,14 @@ impl ExtensionFunctionType {
         argument_types: Vec<Type>,
         return_type: Type,
         check_arguments: Option<ArgumentCheckFn>,
+        is_variadic: bool
     ) -> Self {
         Self {
             name,
             argument_types,
             return_type,
             check_arguments,
-            is_variadic: true
+            is_variadic
         }
     }
 
@@ -144,6 +154,27 @@ impl ExtensionFunctionType {
     /// Returns true if this is a variadic function
     pub fn is_variadic_fun(&self) -> bool {
         self.is_variadic
+    }
+
+    pub fn from_extn_fun(f: &ExtensionFunction, is_variadic: bool) -> Self {
+        let return_type = f
+            .return_type()
+            .map(|ty| ty.clone().into())
+            .unwrap_or(Type::Never);
+        ExtensionFunctionType::new_variadic(
+            f.name().clone(),
+            f.arg_types()
+                .iter()
+                .map(|ty| {
+                    ty.as_ref()
+                        .map(|tp| tp.clone().into())
+                        .unwrap_or(Type::Never)
+                })
+                .collect(),
+            return_type,
+            None,
+            is_variadic
+        )
     }
 }
 
