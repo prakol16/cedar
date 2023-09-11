@@ -29,27 +29,36 @@ use crate::{
     sql_common::{null_value_of_type, value_to_sea_query_value},
 };
 
+/// Errors that can occur when writing entities to a SQL database
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DumpEntitiesError {
+    /// Occurs when an entity type is not found in the schema
     #[error("Entity type {0} not found in schema")]
     EntityTypeNotFound(EntityTypeName),
+    /// Occurs when an entity type is not found in the schema
     #[error("Entity type {0} or {1} not found in schema")]
     EntityTypeNotFound2(EntityTypeName, EntityTypeName),
+    /// A QueryExprError (e.g. a type error when an entity attribute in the schema has no corresponding SQL formulation, e.g. could be multiple entities)
     #[error("Error in type conversion: {0}")]
     QueryExprError(#[from] QueryExprError),
+    /// Occurs when an entity type is not found in the id map, which maps entity types to the name of the column containing the id
     #[error("Missing entity type {0} in id map")]
     MissingIdInMap(EntityTypeName),
+    /// Occurs when an entity type is 'unknown' rather than 'concrete'
     #[error("Entity supplied with unknown entity type")]
     UnknownEntityType,
+    /// Some sea query error occurs
     #[error("Sea query error: {0}")]
     SeaQueryError(#[from] sea_query::error::Error),
+    /// Occurs when an identifier is too long (for postgres, this is 63 bytes)
     #[error("Identifier {0} is too long")]
     IdentifierTooLong(String),
 }
 
 type Result<T> = std::result::Result<T, DumpEntitiesError>;
 
-#[derive(Iden)]
+/// 'cedar' namespace for the tables
+#[derive(Iden, Debug, Clone, Copy)]
 #[iden = "cedar"]
 pub struct CedarSQLSchemaName;
 
@@ -82,6 +91,8 @@ impl IntoTableRef for EntityTableIden {
     }
 }
 
+
+/// The name of the ancestry table for two given entity types
 #[derive(Debug, Clone)]
 pub struct EntityAncestryTableIden {
     child: EntityTypeName,
@@ -149,6 +160,7 @@ impl From<QueryType> for ColumnType {
     }
 }
 
+/// Create a map from entity type to the name of the column containing the id
 pub fn create_id_map(schema: &Schema) -> HashMap<EntityTypeName, SmolStr> {
     let uid_smolstr = SmolStr::from("uid");
     schema
@@ -219,10 +231,13 @@ pub fn create_table_from_entity_type(
     Ok(())
 }
 
-#[derive(Iden)]
+/// The columns of the ancestry table
+#[derive(Iden, Debug, Clone, Copy)]
 pub enum AncestryCols {
+    /// The column containing the descendant in this (descendant, ancestor) relation
     #[iden = "child_uid"]
     Descendant,
+    /// The column containing the ancestor in this (descendant, ancestor) relation
     #[iden = "parent_uid"]
     Ancestor,
 }

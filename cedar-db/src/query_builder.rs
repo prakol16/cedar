@@ -1,3 +1,20 @@
+/*
+ * Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Customizer for queries -- can customize the tables and the columns that are queried
 use cedar_policy::{Effect, EntityTypeName, RandomRequestEnv, ResidualResponse, Schema};
 use cedar_policy_core::{
     ast::{Expr, ExprBuilder},
@@ -26,14 +43,22 @@ pub struct QueryBuilder {
     table_names: HashMap<SmolStr, (bool, TableRef, SmolStr)>,
 }
 
+/// Error that can occur when building a query
 #[derive(Debug, Error)]
 pub enum QueryBuilderError {
+    /// Occurs when query_for is called on a variable that is not present in the query
     #[error("Variable {0} not present or not free in query")]
     UnknownVariable(String),
+
+    /// Occurs when the query expression cannot be translated to a query
     #[error("Error occured translating expression to query: {0}")]
     QueryExprError(#[from] QueryExprError),
+
+    /// Occurs when there are multiple unknowns in the query and query_default() is called
     #[error("Unknown is not unique")]
     MultipleUnknowns,
+
+    /// Occurs when there are no unknowns in the query and query_default() is called
     #[error("No entity typed unknown in query; build the query manually")]
     NoEntityTypedUnknown,
 }
@@ -87,10 +112,12 @@ impl QueryBuilder {
         self.query_for_id_or_alias(unknown, None)
     }
 
+    /// Add an unknown to the query with the given attribute rather than the id. This will ensure that the corresponding table is added to the query.
     pub fn query_for_attr(&mut self, unknown: &str, attr: &str) -> Result<()> {
         self.query_for_id_or_alias(unknown, Some(attr))
     }
 
+    /// Get the only unknown in the query. If there are multiple or no unknowns, this will return an error.
     pub fn get_unique_unknown(&self) -> Result<SmolStr> {
         let len = self.table_names.len();
         if len > 1 {
@@ -117,20 +144,27 @@ impl QueryBuilder {
         self.query_for_attr(unknown.as_str(), attr)
     }
 
+    /// Get the query as a string
     pub fn to_string<T: sea_query::QueryBuilder>(&self, builder: T) -> String {
         self.query.to_string(builder)
     }
 
+    /// Get the query as a SQLite query
+    /// TODO: Use build() instead
     pub fn to_string_sqlite(&self) -> String {
         self.to_string(SqliteQueryBuilder)
     }
 
+    /// Get the query as a Postgres query
+    /// TODO: Use build() instead
     pub fn to_string_postgres(&self) -> String {
         self.to_string(PostgresQueryBuilder)
     }
 }
 
 impl ExprWithBindings {
+    /// Convert the given expression to a QueryBuilder which has the inner joins filled in
+    /// All that is left to fill is the table name and column names that will be fetched
     pub fn to_sql_query<T: IntoTableRef>(
         &self,
         ein: impl InConfig,

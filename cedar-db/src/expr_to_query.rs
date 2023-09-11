@@ -1,3 +1,21 @@
+/*
+ * Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! This module contains methods to convert the QueryExpr IR to
+//! sea query abstract syntax trees for SQL queries.
 use cedar_policy::EntityTypeName;
 use cedar_policy_core::ast::{BinaryOp, Literal, Pattern, PatternElem, UnaryOp};
 use sea_query::{
@@ -14,7 +32,13 @@ use crate::{
 
 type Result<T> = std::result::Result<T, QueryExprError>;
 
+/// A trait for configuring the `ein` and `ein_set` functions
+/// See `InByTable` for a reasonable default implementation that implements these by assuming
+/// there is a table that stores all ancestry information.
 pub trait InConfig {
+    /// `ein` determines how to translate the Cedar `in` statement. It takes in two entity types,
+    /// and two sea query expressions e1 and e2, where e1 and e2, when evaluated, will produce the ids
+    /// of the corresponding entities. It should return an expression determining whether e1 is a descendant of e2.
     fn ein(
         &self,
         tp1: &EntityTypeName,
@@ -23,6 +47,9 @@ pub trait InConfig {
         e2: SimpleExpr,
     ) -> Result<SimpleExpr>;
 
+
+    /// `ein_set` determines how to translate the Cedar `in` statement when the right hand side is a set.
+    /// It works the same way as `ein`, except the expression `e2` will evaluate to a postgres array.
     fn ein_set(
         &self,
         tp1: &EntityTypeName,
@@ -54,12 +81,16 @@ impl<T: InConfig> InConfig for &T {
     }
 }
 
+/// Construct an `InConfig` from two lambda functions `ein` and `ein_set`
+#[derive(Debug, Clone)]
 pub struct InByLambda<S, T>
 where
     S: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
     T: Fn(&EntityTypeName, &EntityTypeName, SimpleExpr, SimpleExpr) -> Result<SimpleExpr>,
 {
+    /// `ein` corresponds to InConfig::ein
     pub ein: S,
+    /// `ein_set` corresponds to InConfig::ein_set
     pub ein_set: T,
 }
 
@@ -89,6 +120,12 @@ where
     }
 }
 
+/// Construct an `InConfig` from a function that takes in two entity types and returns an optional
+/// tuple of (table, column1, column2) where table is the table that stores ancestry information,
+/// column1 is the column that stores the descendant, and column2 is the column that stores the ancestor.
+/// If the result is None, then the translation of the expression is "false" (e.g. because it is impossible
+/// for one entity to be a descendant of the other)
+#[derive(Debug, Clone)]
 pub struct InByTable<A, B, T>(pub T)
 where
     A: Into<StaticTableRef>,

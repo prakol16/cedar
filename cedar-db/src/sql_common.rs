@@ -89,6 +89,7 @@ pub fn value_to_json_value(v: &Value) -> serde_json::Value {
     }
 }
 
+/// Given a Cedar value and its type as a QueryType, convert it to a sea_query value
 pub fn value_to_sea_query_value(v: &Value, ty: QueryType) -> sea_query::Value {
     match v {
         Value::Lit(Literal::Bool(b)) => (*b).into(),

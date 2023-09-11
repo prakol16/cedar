@@ -1,7 +1,25 @@
+/*
+ * Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! We provide immutable and mutable iterators over the subexpressions of a QueryExpr.
 use cedar_policy_core::ast::{BinaryOp, UnaryOp};
 
 use crate::query_expr::QueryExpr;
 
+/// Immutable iterator over the subexpressions of a QueryExpr.
 #[derive(Debug, Clone)]
 pub struct QueryExprIterator<'a> {
     /// Stack of expressions for query expression traversal
@@ -17,23 +35,42 @@ impl<'a> QueryExprIterator<'a> {
     }
 }
 
+/// The type of a query expression
+/// We use this specifically to track the parent type of a subexpression
+/// when we create a subexpression iterator
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum QueryExprParentType {
+    /// If expression
     If,
+    /// And expression
     And,
+    /// Or expression
     Or,
+    /// Unary application
     UnaryApp(UnaryOp),
+    /// Binary application
     BinaryApp(BinaryOp),
+    /// Multiplication by constant
     MulByConst,
+    /// In entity
     InEntity,
+    /// In set
     InSet,
+    /// Get attribute from entity
     GetAttrEntity,
+    /// Get attribute from record
     GetAttrRecord,
+    /// Has attribute from record
     HasAttrRecord,
+    /// Is not null
     IsNotNull,
+    /// Like
     Like,
+    /// Set
     Set,
+    /// Record
     Record,
+    /// Raw SQL
     RawSQL,
 }
 
@@ -217,6 +254,9 @@ impl QueryExpr {
         f(self, parent);
     }
 
+    /// Iterate over the subexpressions of a query expression
+    /// in post-order (from leaves to root)
+    /// and apply a function to each subexpression
     pub fn mut_subexpressions(
         &mut self,
         f: &mut impl FnMut(&mut QueryExpr, Option<QueryExprParentType>),

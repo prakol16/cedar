@@ -1,3 +1,32 @@
+/*
+ * Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! The QueryExpr IR is an intermediate representation as we compile Cedar expressions to
+//! SQL queries. We try to only include features that are easy to convert to SQL, and we focus
+//! especially on Postgresql while still trying to abstract away the features that are too specific
+//! to Postgres.
+//!
+//! In particular, we have the following changes from Cedar:
+//!     - We do not support sets. Instead, we use arrays to represent sets.
+//!     - Because of this, we have a restricted equality operator. Certain types (e.g. nested sets) are not comparable.
+//!     - All ambiguous functions are annotated with their types (e.g. `GetAttr`
+//!         splits into `GetAttrEntity` or `GetAttrRecord` depending on the type, and
+//!         each is annotated with the type of the entity/type of the record field).
+//!     - We do not support `HasAttr` on entities. Instead, we use `IsNotNull` on the result of `GetAttrEntity`.
+//!     - We do not currently support extension functions, except for `rawsql` which is handled as a special case.
 use std::collections::{HashMap, HashSet};
 
 use cedar_policy::EntityTypeName;
@@ -15,63 +44,121 @@ use thiserror::Error;
 
 use crate::query_expr_iterator::{QueryExprIterator, QueryExprParentType};
 
+/// Errors that can occur when converting a Cedar expression to a QueryExpr
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum QueryExprError {
-    #[error("Variable {0} appears in the expression. Consider calling `partial_eval` first.")]
+    /// This error occurs when a variable appears in the expression. This should never occur after partial evaluation.
+    #[error("Variable {0} appears in the expression. Consider doing partial evaluation first.")]
     VariableAppears(Var),
+
+    /// This error occurs when a slot appears in the expression. This should never occur on non-template policies after partial evaluation.
     #[error("Slot {0} appears in the expression. Consider instantiating the policy first.")]
     SlotAppears(SlotId),
+
+    /// This error occurs when an unknown is not annotated with its type. We need to keep track of what the unknown's type is
+    /// so that we know which table its attributes come from, if we need to fetch its attributes.
     #[error("Unknown {0} is not annotated with a type.")]
     UnknownNotAnnotated(SmolStr),
+
+    /// Extension functions are not currently supported.
     #[error("Found extension function call {0}. Extension functions are not currently supported.")]
     ExtensionFunctionAppears(Name),
+
+    /// `rawsql`'s first argument must be an unknown named __RAWSQL. This may change in the future
+    /// It is currently a workaround so that the Cedar partial evaluation engine does not try to evaluate raw sql.
     #[error("Extension function `rawsql` called with unknown named {0}; name should be __RAWSQL")]
     RawSQLFirstArgIncorrect(SmolStr),
+
+    /// `rawsql`'s first argument must be an unknown named __RAWSQL. This may change in the future
+    /// It is currently a workaround so that the Cedar partial evaluation engine does not try to evaluate raw sql.
     #[error("Extension function `rawsql` not called with unknown as first argument")]
     RawSQLFirstArgNotUnknown,
+
+    /// `rawsql`'s argument cannot be an expression. Instead it should be a string literal.
     #[error("Cannot construct dynamic SQL queries")]
     RawSQLDynamic,
+
+    /// This error occurs when a type annotation is `None`. This should never occur after successful typechecking.
     #[error("Typecheck error: Type annotation `None` on expression.")]
     TypeAnnotationNone,
+
+    /// This error occurs when there is a validation error. It is not thrown by the query translator itself, which does not validate,
+    /// but by `translate_expr` which does validation before calling the query translator.
     #[error("Validation error: the following type errors occured during strict validation: {0:?}")]
     ValidationError(Vec<TypeError>),
+
+    /// This error occurs when during translation, there is a type error that should never occur on a correctly validated
+    /// Cedar expression. This should never occur after successful typechecking.
     #[error("Type error: does not have correctly inferred types. Make sure to do strict validation (`typecheck` or `strict_transform`) before conversion.")]
     TypecheckError,
+
+    /// This error occurs when subexpression can be multiple entity types. This should never occur after successful strict validation.
     #[error("Cannot get attribute when the type of the entity is not one particular entity. You can reduce if statements to ensure that no expression can be multiple different entity types.")]
     GetAttrLUBNotSingle,
+
+    /// This error occurs when a QueryExpr is not attr-reduced and is converted to a QueryBuilder.
+    /// A QueryExpr is attr_reduced when the argument to each GetAttryEntity is an entity-typed unknowns,
+    /// and this is the only location where entity-typed unknowns appear.
+    /// This error is thrown when an unknown appears in the expression that is not an argument to GetAttrEntity.
     #[error("Not attr-reduced. Entity deref unknown {0} found but not as argument of GetAttrEntity. Consider calling `reduce_attrs()`.")]
     NotAttrReduced(SmolStr),
+
+    /// This error occurs when a QueryExpr is not attr-reduced and is converted to a QueryBuilder.
+    /// A QueryExpr is attr_reduced when the argument to each GetAttryEntity is an entity-typed unknowns,
+    /// and this is the only location where entity-typed unknowns appear.
+    /// This error is thrown when the argument to a GetAttrEntity is not an entity-typed unknown.
     #[error("Not attr-reduced. Argument of GetAttrEntity is not an entity deref unknown. Consider calling `reduce_attrs()`.")]
     NotAttrReducedGetAttrEntity,
+
+    /// This error occurs when an intermediate expression is a nested set.
     #[error("Nested sets are not supported.")]
     NestedSetsError,
+
+    /// This error occurs when a comparison is made between two incomparable types (e.g. records containing sets).
     #[error("Incomparable types: comparing sets or comparing records with incomparable values is not supprted")]
     IncomparableTypes,
+
+    /// Action attributes are not supported. This should never occur after partial evaluation since action attributes are always known statically
     #[error("Cannot convert action {action} attributes to SQL (getting attribute {attr})")]
-    ActionAttribute { action: Name, attr: SmolStr },
+    ActionAttribute {
+        /// The action name
+        action: Name,
+        /// The attribute name that was attempted to be accessed
+        attr: SmolStr
+    },
+
+    /// This error occurs when an action type appears in the expression
     #[error("Action hierarchy is not supported for conversion to SQL (on action {0})")]
     ActionTypeAppears(Name),
 }
 
 type Result<T> = std::result::Result<T, QueryExprError>;
 
-// This is the type information needed to cast a non-set Cedar value to a non-array SQL value
-// Note that `String` and `EntityId` are unified because both are represented as SQL strings
+/// This is the type information needed to cast a non-set Cedar value to a non-array SQL value
+/// Note that `String` and `EntityId` are unified because both are represented as SQL strings
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryPrimitiveType {
+    /// Boolean type
     Bool,
+    /// Long type
     Long,
+    /// String or EntityId type (both are represented as strings)
     StringOrEntity,
+    /// Record type (represented as Postgres json)
     Record,
 }
 
+/// The type of values and expressions in the QueryExpr IR
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryType {
+    /// A primitive (non-array) type, which includes bools, longs, strings, entity ids, and records
     Primitive(QueryPrimitiveType),
+    /// An array of primitives. Note that we do not supported nested sets/nested arrays.
     Array(QueryPrimitiveType),
 }
 
 impl QueryType {
+    /// Returns the primitive type of this array QueryType. If it is already a primitive type, just returns itself
     pub fn get_type(self) -> QueryPrimitiveType {
         match self {
             QueryType::Primitive(t) => t,
@@ -79,6 +166,8 @@ impl QueryType {
         }
     }
 
+    /// Convert a primitive type to an array of this primitive type.
+    /// If this is already an array, it returns an error.
     pub fn promote(self) -> Result<Self> {
         match self {
             QueryType::Primitive(t) => Ok(QueryType::Array(t)),
@@ -144,10 +233,14 @@ fn type_to_entity_typename(tp: Option<&Type>) -> Result<&EntityTypeName> {
     }
 }
 
+/// The kind of attribute that can be retrieved from an entity.
+/// It is either an attribute or the id of the entity.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum AttrOrId {
+    /// Retrieve the attribute with this name
     Attr(SmolStr),
     /// This attribute is the ID of the entity
+    /// We keep track of what the corresponding column name in the actual SQL table will be
     Id(SmolStr),
 }
 
@@ -156,74 +249,136 @@ pub enum AttrOrId {
 /// `GetAttr` and `HasAttr`. Here, `U` is the type of unknowns
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum QueryExpr {
+    /// A literal value
     Lit(Literal),
     // Skipped: Var, Slot; these should be removed by partial evaluation/policy instantiation
-    Unknown(UnknownType), // type annotation is mandatory
+    /// An unknown value
+    Unknown(UnknownType),
+    /// An if expression
     If {
+        /// The condition
         test_expr: Box<QueryExpr>,
+        /// The then branch if the condition is true
         then_expr: Box<QueryExpr>,
+        /// The else branch if the condition is false
         else_expr: Box<QueryExpr>,
     },
+    /// A logical and expression
     And {
+        /// The left operand of the and
         left: Box<QueryExpr>,
+        /// The right operand of the and
         right: Box<QueryExpr>,
     },
+    /// A logical or expression
     Or {
+        /// The left operand of the or
         left: Box<QueryExpr>,
+        /// The right operand of the or
         right: Box<QueryExpr>,
     },
+    /// A unary application of a unary operator
     UnaryApp {
+        /// The unary operator
         op: UnaryOp,
+        /// The argument to the unary operator
         arg: Box<QueryExpr>,
     },
+    /// A binary application of a binary operator
     BinaryApp {
+        /// The binary operator; note that `in` is not allowed here (it is handled as a special case)
         op: BinaryOp,
+        /// The left operand of the binary operator
         left: Box<QueryExpr>,
+        /// The right operand of the binary operator
         right: Box<QueryExpr>,
-    }, // op should not be `in`
+    },
+    /// An `in` expression where the RHS is an entity.
+    /// This is handled as a special case because we want to keep track of the entity types
+    /// of the left and right operands.
+    /// Note: the semantics of `in` for QueryExpr do not include reflexivity, so `x in x` is not necessarily true.
     InEntity {
+        /// The left operand of the `in` expression
         left: Box<QueryExpr>,
+        /// The right operand of the `in` expression
         right: Box<QueryExpr>,
+        /// The entity type of the left operand
         left_type: EntityTypeName,
+        /// The entity type of the right operand
         right_type: EntityTypeName,
     },
+    /// An `in` expression where the RHS is a set.
+    /// This is handled as a special case because we want to keep track of the entity types
+    /// of the left and right operands.
+    /// Note: the semantics of `in` for QueryExpr do not include reflexivity, so `x inSet [x]` is not necessarily true.
     InSet {
+        /// The left operand of the `in` expression
         left: Box<QueryExpr>,
+        /// The right operand of the `in` expression
         right: Box<QueryExpr>,
+        /// The entity type of the left operand
         left_type: EntityTypeName,
+        /// The entity type of the elements of the right operand
         right_type: EntityTypeName,
     },
+    /// A multiplication by a constant
     MulByConst {
+        /// The argument to the multiplication
         arg: Box<QueryExpr>,
+        /// The constant to multiply by
         constant: i64,
     },
-    // TODO: extension functions
+    /// A get attribute expression on an entity
     GetAttrEntity {
+        /// The entity to get the attribute from
         expr: Box<QueryExpr>,
+        /// The type of the entity
         expr_type: EntityTypeName,
+        /// The attribute to get (could be the id of the entity)
         attr: AttrOrId,
     },
+    /// A get attribute expression on a record
     GetAttrRecord {
+        /// The record to get the attribute from
         expr: Box<QueryExpr>,
+        /// The name of the attribute to get
         attr: SmolStr,
-        result_type: QueryType, // we need to know the result type because sometimes
-                                // the result will be "json" by default and we need to cast it
+        /// The type of the result of the expression. We need to know the result type because
+        /// in implementations, after retrieving a JSON field, the resulting type will be "json"
+        /// by default and we need to cast it explicitly
+        result_type: QueryType,
     },
+    /// A has attribute expression on a record
     HasAttrRecord {
+        /// The record to check for the attribute
         expr: Box<QueryExpr>,
+        /// The name of the attribute to check for
         attr: SmolStr,
     },
-    IsNotNull(Box<QueryExpr>), // we use this instead of `HasAttr` on entities
+    /// The IS NOT NULL operation which returns true if the argument is not null.
+    /// We use this in combination with GetAttrEntity instead of `HasAttr` on entities
+    IsNotNull(Box<QueryExpr>),
+    /// A comparison of an expression against a pattern
     Like {
+        /// The expression to compare against the pattern
         expr: Box<QueryExpr>,
+        /// The pattern to compare against
         pattern: Pattern,
     },
+    /// The array constructor operation (despite being called Set, the QueryExpr IR uses arrays rather than sets)
     Set(Vec<QueryExpr>),
+    /// The record constructor operation.
     Record {
+        /// The attribute/value pairs of the record
+        /// No attribute should be repeated (TODO: check this during conversion)
         pairs: Vec<(SmolStr, QueryExpr)>,
     },
+    /// A raw SQL expression. This is used as an escape hatch and is how the `rawsql` extension
+    /// function is handled.
     RawSQL {
+        /// The SQL query string, which may include placeholders
         sql: SmolStr,
+        /// The arguments to the SQL query string
         args: Vec<QueryExpr>,
     },
 }
@@ -234,14 +389,21 @@ impl Default for QueryExpr {
     }
 }
 
+/// The result of checking whether two types are comparable for the purposes of equality, contains, containsAll, or containsAny
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ComparableResult {
+    /// The types are incomparable (e.g. records containing sets)
     Incomparable,
+    /// The types are comparable by checking if each is a subset of the other
+    /// This is only true for arrays of primitive types which are being compared for equality
     ComparableAsMutualContains,
+    /// The types are comparable by directly checking if they are equal (e.g. primitives, records containing only primitives)
     ComparableAsEq,
 }
 
 impl ComparableResult {
+    /// Convert this ComparableResult to one where ComparableAsMutualContains does not make sense
+    /// by converting it to Incomparable
     pub fn must_be_eq(self) -> Self {
         match self {
             ComparableResult::ComparableAsEq => self,
@@ -251,6 +413,9 @@ impl ComparableResult {
 }
 
 impl QueryExpr {
+    /// Given `left` and `right`, return the translation of `left in right`.
+    /// Since `in` in QueryExpr is not necessarily reflexive, when `left` and `right` are of the same type
+    /// the correct way to translate this is with left == right || left in right
     pub fn eq_or_in_entity(
         left: QueryExpr,
         right: QueryExpr,
@@ -281,6 +446,9 @@ impl QueryExpr {
         }
     }
 
+    /// Given `left` and `right`, return the translation of `left inSet right`.
+    /// Since `inSet` in QueryExpr is not necessarily reflexive, when `left` and `right` are of the same type
+    /// the correct way to translate this is with right.contains(left) || left inSet right
     pub fn contains_or_in_set(
         left: QueryExpr,
         right: QueryExpr,
@@ -334,6 +502,8 @@ impl QueryExpr {
                     // Since the attributes are open, in particular the records may contain sets, so they are incomparable
                     Ok(ComparableResult::Incomparable)
                 } else {
+                    // We check the intersection of the two attributes
+                    // since arrays will still be comparable with (missing)
                     for (k, v) in attrs.iter() {
                         if let Some(v2) = attrs2.get_attr(k) {
                             if QueryExpr::are_comparable(&v.attr_type, &v2.attr_type)?
@@ -349,16 +519,21 @@ impl QueryExpr {
             (Type::Set { element_type: e1 }, Type::Set { element_type: e2 }) => {
                 let e1 = e1.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
                 let e2 = e2.as_deref().ok_or(QueryExprError::TypeAnnotationNone)?;
+                // If the inner elements are comparable as equals, then the sets are comparable as mutual contains
                 if QueryExpr::are_comparable(e1, e2)? == ComparableResult::ComparableAsEq {
                     Ok(ComparableResult::ComparableAsMutualContains)
                 } else {
                     Ok(ComparableResult::Incomparable)
                 }
             }
+            // All primitive types are comparable using ordinary equality
             _ => Ok(ComparableResult::ComparableAsEq),
         }
     }
 
+    /// Returns true if types `t1` and `t2` are comparable using `op`
+    /// Note: if op is not one of eq, contains, containsAll, or containsAny, always just returns
+    /// ComparableAsEq. This allows treating ComparableAsEq as the catch-all for "just do the operation normally"
     fn are_op_comparable(op: BinaryOp, t1: &Type, t2: &Type) -> Result<ComparableResult> {
         match op {
             BinaryOp::Eq => QueryExpr::are_comparable(t1, t2),
@@ -603,18 +778,29 @@ impl TryFrom<&Expr<Option<Type>>> for QueryExpr {
 /// The default unknown type for a query expression.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UnknownType {
+    /// An unknown entity
     EntityType {
+        /// The type of the entity
         ty: EntityTypeName,
+        /// The name of the unknown
         name: SmolStr,
     },
     /// Escape hatch for non-entity variables
+    /// These are not handled in any special way. They are just passed through to the SQL query as variables.
+    /// TODO: perhaps replace this with `rawsql` as the (only) escape hatch?
     NonEntityType {
+        /// This will turn into the table name if it is provided
+        /// TODO: should we allow this to be a sea query TableRef instead?
         pfx: Option<SmolStr>,
+        /// The name of the unknown
         name: SmolStr,
     },
 }
 
 impl UnknownType {
+    /// Create an unknown type from a name and entity type
+    /// If the entity type is provided, this will become a regular UnknownType::EntityType
+    /// Otherwise, it will be one of the "escape hatch" type unknown types.
     pub fn of_name_and_type(name: SmolStr, ty: Option<EntityTypeName>) -> Self {
         match ty {
             Some(ty) => UnknownType::EntityType { ty, name },
@@ -622,6 +808,7 @@ impl UnknownType {
         }
     }
 
+    /// Get the name of this unknown
     pub fn get_name(&self) -> &str {
         match self {
             UnknownType::EntityType { name, .. } => name,
@@ -629,6 +816,7 @@ impl UnknownType {
         }
     }
 
+    /// Get the prefix of this escape-hatch unknown if it exists
     pub fn get_pfx(&self) -> Option<&str> {
         match self {
             UnknownType::NonEntityType { pfx: Some(pfx), .. } => Some(pfx.as_str()),
@@ -664,17 +852,21 @@ impl From<UnknownType> for QueryExpr {
 }
 
 impl QueryExpr {
+    /// Get an iterator of all the subexpressions of this QueryExpr
+    /// Along with each subexpression is the type of the parent node of the subexpression,
+    /// or None if the subexpression was the root node.
     pub fn subexpressions_with_parents(
         &self,
     ) -> impl Iterator<Item = (&QueryExpr, Option<QueryExprParentType>)> {
         QueryExprIterator::new(self)
     }
 
+    /// Get all the subexpressions of this QueryExpr
     pub fn subexpressions(&self) -> impl Iterator<Item = &QueryExpr> {
         self.subexpressions_with_parents().map(|(e, _)| e)
     }
 
-    /// Retrieve all the unknowns as well as their types.
+    /// Retrieve all the unknowns in the QueryExpr
     pub fn get_unknowns(&self) -> impl Iterator<Item = &UnknownType> {
         self.subexpressions().filter_map(|e| match e {
             QueryExpr::Unknown(u) => Some(u),
@@ -683,7 +875,10 @@ impl QueryExpr {
     }
 }
 
+/// The type of a QueryExpr along with the free variables from the original expression
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct QueryExprWithVars {
+    /// The QueryExpr itself
     pub(crate) expr: QueryExpr,
     /// The set of unknowns in the *original* expression
     /// We guarantee that the unknowns in the expression are a subset of this set
@@ -691,6 +886,7 @@ pub struct QueryExprWithVars {
 }
 
 impl QueryExprWithVars {
+    /// Create a QueryExprWithVars from an expression and a set of free variables
     pub fn from_expr(e: &Expr<Option<Type>>, vars: Vec<UnknownType>) -> Result<Self> {
         Ok(QueryExprWithVars {
             expr: QueryExpr::try_from(e)?,
@@ -698,6 +894,7 @@ impl QueryExprWithVars {
         })
     }
 
+    /// Rename all the variables in the given QueryExpr
     pub fn rename(&mut self, map: impl Fn(&mut UnknownType)) {
         self.expr.rename(&map);
         for v in &mut self.vars {
@@ -705,11 +902,14 @@ impl QueryExprWithVars {
         }
     }
 
+    /// Rename all the attributes in the given QueryExpr
     pub fn rename_attrs(&mut self, map: impl Fn(&EntityTypeName, &mut AttrOrId)) {
         self.expr.rename_attrs(map);
     }
 }
 
+/// A BindingValue is the LHS in a "let" expression, containing the unknown name and type
+/// as well as the order that this binding was introduced in the query
 #[derive(Debug, Clone)]
 pub struct BindingValue {
     insertion_order: usize,
@@ -718,6 +918,7 @@ pub struct BindingValue {
 }
 
 impl BindingValue {
+    /// Convert this BindingValue into an UnknownType
     pub fn into_unknown(self) -> UnknownType {
         UnknownType::EntityType {
             ty: self.ty,
@@ -726,32 +927,40 @@ impl BindingValue {
     }
 }
 
-/// Used to construct bindings -- we keep the expressions in a hash map but also remember the insertion order
+/// Used to construct bindings -- we keep the expressions in a
+/// hash map so that duplicate expressions are not introduced to separate bindings
+/// but also remember the insertion order
 #[derive(Debug, Clone, Default)]
 pub struct BindingsBuilder {
     bindings: HashMap<Box<QueryExpr>, BindingValue>,
 }
 
+/// A sequence of let bindings. Each binding consists of a BindingValue, which includes the name
+/// and type of the unknown, and the expression that the unknown is bound to.
 #[derive(Debug, Clone, Default)]
 pub struct Bindings(Vec<(BindingValue, Box<QueryExpr>)>);
 
 impl Bindings {
+    /// Get an iterator through the bindings
     pub fn iter(&self) -> impl Iterator<Item = (&BindingValue, &QueryExpr)> {
         self.0.iter().map(|(bv, qe)| (bv, qe.as_ref()))
     }
 
+    /// Get a mutable iterator through the bindings
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&mut BindingValue, &mut QueryExpr)> {
         self.0.iter_mut().map(|(bv, qe)| (bv, qe.as_mut()))
     }
 }
 
 impl BindingsBuilder {
+    /// Build the bindings
     pub fn build(self) -> Bindings {
         let mut result: Vec<_> = self.bindings.into_iter().map(|(k, v)| (v, k)).collect();
         result.sort_by(|(a, _), (b, _)| a.insertion_order.cmp(&b.insertion_order));
         Bindings(result)
     }
 
+    /// Insert a new binding into the bindings
     pub fn insert(
         &mut self,
         q: Box<QueryExpr>,
@@ -799,14 +1008,19 @@ impl From<QueryExprWithVars> for ExprWithBindings {
     }
 }
 
+/// This is used to generate ids for a query expression, which is in turn
+/// used to name the temporary tables that are created when `GetAttrEntity` are turned into
+/// bindings.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IdGen {
     next_id: usize,
 }
 
+/// The prefix used for temporary table names
 const ID_GEN_PREFIX: &str = "temp__";
 
 impl IdGen {
+    /// Create a new IdGen
     pub fn new() -> Self {
         IdGen { next_id: 0 }
     }
@@ -826,6 +1040,7 @@ impl IdGen {
         self
     }
 
+    /// Generate a new id and increment the internal id counter so that this id is not generated again
     pub fn gen_id(&mut self) -> SmolStr {
         let id = self.next_id;
         self.next_id += 1;
@@ -835,7 +1050,7 @@ impl IdGen {
 
 impl QueryExpr {
     /// An expression is said to be attr-reduced when the only
-    /// expressions that appear on the left argument of a `GetAttrEntity` are of the form `Unknown(EntityDeref(_))`
+    /// expressions that appear on the left argument of a `GetAttrEntity` are of the form `Unknown(EntityType(_))`
     /// This function turns the expression into an attr-reduced form.
     pub fn reduce_attrs(&mut self, id_gen: &mut IdGen) -> Bindings {
         let mut builder = BindingsBuilder::default();
@@ -902,7 +1117,7 @@ impl QueryExpr {
         });
     }
 
-    /// If this expression is of the form `Unknown(EntityDeref(s))`, return `Some(s)`.
+    /// If this expression is of the form `Unknown(EntityType(s))`, return `Some(s)`.
     /// In reduced-attr form, this should succeed on all arguments of GetAttrEntity.
     pub fn get_unknown_entity_deref_name(&self) -> Option<SmolStr> {
         match self {
@@ -911,6 +1126,7 @@ impl QueryExpr {
         }
     }
 
+    /// If this expression is of the form `Unknown(EntityType(s))`, return `Some(s)`.
     pub fn get_unknown_entity_type(&self) -> Option<&EntityTypeName> {
         match self {
             QueryExpr::Unknown(UnknownType::EntityType { ty, .. }) => Some(ty),

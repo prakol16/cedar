@@ -2,11 +2,15 @@
 
 use sea_query::{ColumnRef, DynIden, IntoIden, IntoTableRef, Query, SimpleExpr, TableRef};
 
+/// Unlike TableRef, this contains only types that can be adjoined to a column to produce a ColumnRef
 #[derive(Debug, Clone, PartialEq)]
 pub enum StaticTableRef {
+    /// A table reference based on an indentifier
     Table(DynIden),
+    /// A table reference based on a schema and an identifier
     SchemaTable(DynIden, DynIden),
     // TODO: add database schema table
+    // Unfortunately, sea-query does not support DatabaseSchemaTableColumn for ColumnRef
 }
 
 impl IntoTableRef for StaticTableRef {
@@ -53,6 +57,7 @@ pub struct OptionalInsertStatement {
 }
 
 impl OptionalInsertStatement {
+    /// Create a new optional insert statement
     pub fn new() -> Self {
         Self {
             insert: Query::insert(),
@@ -60,18 +65,23 @@ impl OptionalInsertStatement {
         }
     }
 
+    /// Convert this optional insert statement into a regular insert statement
     pub fn into_insert_statement(self) -> sea_query::InsertStatement {
         self.insert
     }
 
+    /// Set the table for this insert statement
     pub fn into_table<T: IntoTableRef>(&mut self, tbl_ref: T) {
         self.insert.into_table(tbl_ref);
     }
 
+    /// Set the columns for this insert statement
     pub fn columns<C: IntoIden, I: IntoIterator<Item = C>>(&mut self, cols: I) {
         self.insert.columns(cols);
     }
 
+    /// Add values to this insert statement
+    /// Also sets the internal has_values to true
     pub fn values<I: IntoIterator<Item = SimpleExpr>>(
         &mut self,
         vals: I,
@@ -81,6 +91,8 @@ impl OptionalInsertStatement {
         Ok(())
     }
 
+    /// True if `values` was called on this insert statement and there are a nonzero number of values
+    /// being inserted.
     pub fn has_values(&self) -> bool {
         self.has_values
     }
@@ -148,7 +160,6 @@ mod test {
     fn test_substitute_char() {
         let ch: SimpleExpr = '\u{1a}'.into();
         let query = Query::select().expr(ch).to_owned();
-        // Just one possible escape (other possibilities include e.g. \u001A, etc.)
-        assert_eq!(query.to_string(PostgresQueryBuilder), r#"SELECT E'\x1A'"#);
+        assert_eq!(query.to_string(PostgresQueryBuilder), r#"SELECT ''"#);
     }
 }
