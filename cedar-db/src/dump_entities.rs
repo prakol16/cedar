@@ -519,7 +519,7 @@ mod test {
 
     use cedar_policy::{PartialValue, Schema};
     use cedar_policy_core::{ast::Entity, entities::Entities};
-    use sea_query::{PostgresQueryBuilder, Alias};
+    use sea_query::{Alias, PostgresQueryBuilder};
     use serde_json::json;
 
     use crate::{dump_entities::create_tables_postgres, sea_query_extra::OptionalInsertStatement};
@@ -628,7 +628,9 @@ mod test {
         let values: Vec<i64> = Vec::new();
         insert.values([values.into()]).unwrap();
         assert_eq!(
-            insert.into_insert_statement().to_string(PostgresQueryBuilder),
+            insert
+                .into_insert_statement()
+                .to_string(PostgresQueryBuilder),
             r#"INSERT INTO "tbl" ("col") VALUES (ARRAY []::bigint[])"#,
         );
     }
@@ -641,7 +643,9 @@ mod test {
         let values: Vec<serde_json::Value> = vec![json!({})];
         insert.values([values.into()]).unwrap();
         assert_eq!(
-            insert.into_insert_statement().to_string(PostgresQueryBuilder),
+            insert
+                .into_insert_statement()
+                .to_string(PostgresQueryBuilder),
             r#"INSERT INTO "tbl" ("col") VALUES (ARRAY ['{}']::jsonb[])"#,
         );
     }
