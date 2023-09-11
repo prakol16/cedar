@@ -456,7 +456,7 @@ mod test_sqlite {
                     .to_string(SqliteQueryBuilder);
                 assert_eq!(
                     query,
-                    r#"SELECT * FROM "people" WHERE TRUE AND (TRUE AND 20 <= "age" AND "age" <= 30) AND TRUE"#
+                    r#"SELECT * FROM "people" WHERE TRUE AND (TRUE AND 20 <= "age" AND "age" <= 30) AND (NOT FALSE)"#
                 );
             }
         }
