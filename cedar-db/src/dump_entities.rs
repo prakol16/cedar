@@ -91,7 +91,6 @@ impl IntoTableRef for EntityTableIden {
     }
 }
 
-
 /// The name of the ancestry table for two given entity types
 #[derive(Debug, Clone)]
 pub struct EntityAncestryTableIden {

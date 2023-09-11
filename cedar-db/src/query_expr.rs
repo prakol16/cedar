@@ -124,7 +124,7 @@ pub enum QueryExprError {
         /// The action name
         action: Name,
         /// The attribute name that was attempted to be accessed
-        attr: SmolStr
+        attr: SmolStr,
     },
 
     /// This error occurs when an action type appears in the expression
@@ -220,7 +220,7 @@ impl TryFrom<&Type> for QueryType {
 fn entity_lub_to_typename(lub: &EntityLUB) -> Result<&EntityTypeName> {
     lub.get_single_entity()
         .ok_or(QueryExprError::GetAttrLUBNotSingle)
-        .map( EntityTypeName::ref_cast)
+        .map(EntityTypeName::ref_cast)
 }
 
 fn type_to_entity_typename(tp: Option<&Type>) -> Result<&EntityTypeName> {

@@ -47,7 +47,6 @@ pub trait InConfig {
         e2: SimpleExpr,
     ) -> Result<SimpleExpr>;
 
-
     /// `ein_set` determines how to translate the Cedar `in` statement when the right hand side is a set.
     /// It works the same way as `ein`, except the expression `e2` will evaluate to a postgres array.
     fn ein_set(
