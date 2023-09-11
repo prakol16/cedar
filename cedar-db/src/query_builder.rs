@@ -209,6 +209,8 @@ pub fn translate_expr_with_renames<T: IntoTableRef>(
     unknown_map: &HashMap<UnknownType, UnknownType>,
 ) -> Result<QueryBuilder> {
     // Get the free variables in the original expression
+    // TODO: this is broken with RAWSQL because there may be unknowns in the rawsql expression
+    // which should not be counted as free variables
     let vars = expr
         .subexpressions()
         .filter_map(UnknownType::from_expr)
