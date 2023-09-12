@@ -209,8 +209,6 @@ pub fn translate_expr_with_renames<T: IntoTableRef>(
     unknown_map: &HashMap<UnknownType, UnknownType>,
 ) -> Result<QueryBuilder> {
     // Get the free variables in the original expression
-    // TODO: this is broken with RAWSQL because there may be unknowns in the rawsql expression
-    // which should not be counted as free variables
     let vars = expr
         .subexpressions()
         .filter_map(UnknownType::from_expr)
@@ -288,13 +286,13 @@ pub fn translate_response<T: IntoTableRef>(
     Ok(query)
 }
 
-/// Same as translate_response but uses a response from core
+/// Same as translate_response but uses the core type response
+/// TODO: remove (we only use this currently in DRT)
 pub fn translate_response_core<T: IntoTableRef>(
     resp: &PartialResponse,
     schema: &Schema,
     ein: impl InConfig,
     table_names: impl Fn(&EntityTypeName) -> (T, SmolStr),
-    ensure_unknown: Option<(&str, &EntityTypeName)>,
 ) -> Result<QueryBuilder> {
     let (permits, forbids): (Vec<_>, Vec<_>) = resp
         .residuals
@@ -315,13 +313,7 @@ pub fn translate_response_core<T: IntoTableRef>(
             ),
         ),
     );
-    let mut query = translate_expr(&expr, schema, ein, &table_names)?;
-    if let Some((unk, ty)) = ensure_unknown {
-        let (tbl, id) = table_names(ty);
-        query
-            .table_names
-            .insert(unk.into(), (false, tbl.into_table_ref(), id));
-    }
+    let query = translate_expr(&expr, schema, ein, &table_names)?;
     Ok(query)
 }
 
