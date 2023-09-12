@@ -200,14 +200,14 @@ impl ExprWithBindings {
     }
 }
 
-/// Does the translation from Cedar to SQL
-pub fn translate_expr_with_renames<T: IntoTableRef>(
+/// Does translation from Cedar to ExprWithBindings, which
+/// the user can then do further transformations on
+pub fn translate_expr_to_expr_with_bindings<T: IntoTableRef>(
     expr: &Expr,
     schema: &Schema,
-    ein: impl InConfig,
     table_names: impl Fn(&EntityTypeName) -> (T, SmolStr),
     unknown_map: &HashMap<UnknownType, UnknownType>,
-) -> Result<QueryBuilder> {
+) -> Result<ExprWithBindings> {
     // Get the free variables in the original expression
     let vars = expr
         .subexpressions()
@@ -239,8 +239,19 @@ pub fn translate_expr_with_renames<T: IntoTableRef>(
 
     let mut query_with_bindings: ExprWithBindings = query_expr.into();
     query_with_bindings.reduce_attrs();
+    Ok(query_with_bindings)
+}
 
-    query_with_bindings.to_sql_query(ein, table_names)
+/// Does the translation from Cedar to SQL
+pub fn translate_expr_with_renames<T: IntoTableRef>(
+    expr: &Expr,
+    schema: &Schema,
+    ein: impl InConfig,
+    table_names: impl Fn(&EntityTypeName) -> (T, SmolStr),
+    unknown_map: &HashMap<UnknownType, UnknownType>,
+) -> Result<QueryBuilder> {
+    translate_expr_to_expr_with_bindings(expr, schema, &table_names, unknown_map)?
+        .to_sql_query(ein, table_names)
 }
 
 /// Does the translation from Cedar to SQL

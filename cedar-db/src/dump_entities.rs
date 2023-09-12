@@ -17,8 +17,9 @@ use cedar_policy_validator::{
 };
 use ref_cast::RefCast;
 use sea_query::{
-    Alias, ColumnDef, ColumnType, ForeignKey, ForeignKeyCreateStatement, Iden, IntoIden,
-    IntoTableRef, PostgresQueryBuilder, Table, TableCreateStatement, TableRef, InsertStatement, DynIden,
+    Alias, ColumnDef, ColumnType, DynIden, ForeignKey, ForeignKeyCreateStatement, Iden,
+    InsertStatement, IntoIden, IntoTableRef, PostgresQueryBuilder, Table, TableCreateStatement,
+    TableRef,
 };
 use smol_str::SmolStr;
 use thiserror::Error;
@@ -161,7 +162,7 @@ impl From<QueryType> for ColumnType {
 
 /// Create a map from entity type to the name of the column containing the id
 pub fn create_id_map(schema: &Schema) -> HashMap<EntityTypeName, SmolStr> {
-    const ESCAPE_CHAR: char = '!';  // used to avoid collisions in case "uid" is already the name of some attribute
+    const ESCAPE_CHAR: char = '!'; // used to avoid collisions in case "uid" is already the name of some attribute
     let uid_smolstr = SmolStr::from("uid");
     schema
         .0
@@ -184,15 +185,15 @@ pub fn create_id_map(schema: &Schema) -> HashMap<EntityTypeName, SmolStr> {
 
 /// Creates a table of values with the given columns and Cedar values
 /// We do not currently create any foreign key constraints for this table
-pub fn create_table_of_values(table_name: impl IntoTableRef, values: Vec<(DynIden, cedar_policy::Value, QueryType)>) -> Result<(TableCreateStatement, InsertStatement)> {
+pub fn create_table_of_values(
+    table_name: impl IntoTableRef,
+    values: Vec<(DynIden, cedar_policy::Value, QueryType)>,
+) -> Result<(TableCreateStatement, InsertStatement)> {
     let table_name = table_name.into_table_ref();
     let mut create = Table::create();
     create.table(table_name.clone());
     for (col, _, ty) in values.iter() {
-        let mut new_col = ColumnDef::new_with_type(
-            col.clone(),
-            (*ty).into(),
-        );
+        let mut new_col = ColumnDef::new_with_type(col.clone(), (*ty).into());
         create.col(&mut new_col);
     }
 
@@ -200,7 +201,11 @@ pub fn create_table_of_values(table_name: impl IntoTableRef, values: Vec<(DynIde
     let mut insert = InsertStatement::new();
     insert.into_table(table_name);
     insert.columns(cols);
-    insert.values(values.into_iter().map(|(v, ty)| value_to_sea_query_value(&v, ty).into()))?;
+    insert.values(
+        values
+            .into_iter()
+            .map(|(v, ty)| value_to_sea_query_value(&v, ty).into()),
+    )?;
     Ok((create, insert))
 }
 
@@ -513,27 +518,29 @@ fn constrain_lens(schema: &Schema) -> Result<()> {
 /// Create a table of values with the given columns and Cedar values
 /// We do not currently create any foreign key constraints for this table
 /// We also check the identifier length constraints
-pub fn create_table_of_values_postgres(table_name: &str, values: impl Iterator<Item = (SmolStr, cedar_policy::Value, QueryType)>) -> Result<[String; 2]> {
+pub fn create_table_of_values_postgres(
+    table_name: &str,
+    values: impl Iterator<Item = (SmolStr, cedar_policy::Value, QueryType)>,
+) -> Result<[String; 2]> {
     if table_name.len() > MAX_IDEN_LEN {
         return Err(DumpEntitiesError::IdentifierTooLong(table_name.to_string()));
     }
-    let values = values.map(|(x, y, z)| {
-        if x.as_str().len() > MAX_IDEN_LEN {
-            Err(DumpEntitiesError::IdentifierTooLong(x.to_string()))
-        } else {
-            Ok((Alias::new(x.as_str()).into_iden(), y, z))
-        }
-    }).collect::<Result<Vec<_>>>()?;
-    let (create, insert) = create_table_of_values(
-        (CedarSQLSchemaName, Alias::new(table_name)),
-        values
-    )?;
+    let values = values
+        .map(|(x, y, z)| {
+            if x.as_str().len() > MAX_IDEN_LEN {
+                Err(DumpEntitiesError::IdentifierTooLong(x.to_string()))
+            } else {
+                Ok((Alias::new(x.as_str()).into_iden(), y, z))
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let (create, insert) =
+        create_table_of_values((CedarSQLSchemaName, Alias::new(table_name)), values)?;
     Ok([
         create.to_string(PostgresQueryBuilder),
         insert.to_string(PostgresQueryBuilder),
     ])
 }
-
 
 /// Create all the tables necessary in `schema`, including the foreign key constraints
 /// as postgresql statements; also returns the id map
@@ -571,9 +578,12 @@ mod test {
     use sea_query::{Alias, PostgresQueryBuilder};
     use serde_json::json;
 
-    use crate::{dump_entities::create_tables_postgres, sea_query_extra::OptionalInsertStatement, query_expr::QueryPrimitiveType};
+    use crate::{
+        dump_entities::create_tables_postgres, query_expr::QueryPrimitiveType,
+        sea_query_extra::OptionalInsertStatement,
+    };
 
-    use super::{create_tables, create_table_of_values_postgres};
+    use super::{create_table_of_values_postgres, create_tables};
 
     fn get_schema() -> Schema {
         r#"
@@ -705,11 +715,22 @@ mod test {
             "tbl",
             vec![
                 ("col1".into(), 1.into(), QueryPrimitiveType::Long.into()),
-                ("col2".into(), "hello".into(), QueryPrimitiveType::StringOrEntity.into()),
+                (
+                    "col2".into(),
+                    "hello".into(),
+                    QueryPrimitiveType::StringOrEntity.into(),
+                ),
             ]
             .into_iter(),
-        ).unwrap();
-        assert_eq!(result[0], r#"CREATE TABLE "cedar"."tbl" ( "col1" bigint, "col2" text )"#);
-        assert_eq!(result[1], r#"INSERT INTO "cedar"."tbl" ("col1", "col2") VALUES (1, 'hello')"#);
+        )
+        .unwrap();
+        assert_eq!(
+            result[0],
+            r#"CREATE TABLE "cedar"."tbl" ( "col1" bigint, "col2" text )"#
+        );
+        assert_eq!(
+            result[1],
+            r#"INSERT INTO "cedar"."tbl" ("col1", "col2") VALUES (1, 'hello')"#
+        );
     }
 }

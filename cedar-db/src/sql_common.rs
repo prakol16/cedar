@@ -17,7 +17,7 @@
 //! This module builds queries for Cedar entities using the sea-query crate
 //! It also contains utilities for converting between Cedar data and database data
 use std::{
-    collections::{HashMap, HashSet, BTreeMap},
+    collections::{BTreeMap, HashMap, HashSet},
     marker::PhantomData,
 };
 
@@ -208,15 +208,15 @@ impl SQLValue {
             serde_json::Value::String(s) => s.into(),
             serde_json::Value::Array(v) => SQLValue(
                 v.into_iter()
-                .map(|x| Self::from_json_no_escape(x).0)
-                .collect::<Option<cedar_policy_core::ast::Set>>()
-                .map(Value::Set)
+                    .map(|x| Self::from_json_no_escape(x).0)
+                    .collect::<Option<cedar_policy_core::ast::Set>>()
+                    .map(Value::Set),
             ),
             serde_json::Value::Object(v) => SQLValue(
                 v.into_iter()
-                .map(|(k, v)| Some((k.into(), Self::from_json_no_escape(v).0?)))
-                .collect::<Option<BTreeMap<SmolStr, Value>>>()
-                .map(Value::from)
+                    .map(|(k, v)| Some((k.into(), Self::from_json_no_escape(v).0?)))
+                    .collect::<Option<BTreeMap<SmolStr, Value>>>()
+                    .map(Value::from),
             ),
         }
     }
