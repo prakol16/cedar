@@ -163,15 +163,8 @@ impl QueryBuilder {
 }
 
 impl ExprWithBindings {
-    /// Convert the given expression to a QueryBuilder which has the inner joins filled in
-    /// All that is left to fill is the table name and column names that will be fetched
-    pub fn to_sql_query<T: IntoTableRef>(
-        &self,
-        ein: impl InConfig,
-        table_names: impl Fn(&EntityTypeName) -> (T, SmolStr),
-    ) -> Result<QueryBuilder> {
-        let mut query = Query::select();
-        query.and_where(self.expr.to_sql_query(&ein)?);
+    /// Given a query, add the left joins for the bindings in this ExprWithQuery
+    fn join_bindings<T: IntoTableRef>(&self, query: &mut SelectStatement, ein: impl InConfig, table_names: impl Fn(&EntityTypeName) -> (T, SmolStr)) -> Result<()> {
         for (bv, e) in self.bindings.iter() {
             let (tbl_ref, id_name) = table_names(&bv.ty);
             let id_name = Alias::new(id_name);
@@ -183,7 +176,35 @@ impl ExprWithBindings {
                     .eq((Alias::new(bv.name.as_str()), id_name).into_column_ref()),
             );
         }
+        Ok(())
+    }
 
+    /// Convert the given expression to a select statement with joins that selects the result of the
+    /// expression
+    pub fn to_sql_expr_query<T: IntoTableRef>(
+        &self,
+        ein: impl InConfig,
+        table_names: impl Fn(&EntityTypeName) -> (T, SmolStr),
+    ) -> Result<SelectStatement> {
+        let mut query = Query::select();
+        query.expr(self.expr.to_sql_query(&ein)?);
+        self.join_bindings(&mut query, ein, table_names)?;
+        Ok(query)
+    }
+
+    /// Convert the given expression to a QueryBuilder which has the inner joins filled in
+    /// All that is left to fill is the table name and column names that will be fetched
+    pub fn to_sql_query<T: IntoTableRef>(
+        &self,
+        ein: impl InConfig,
+        table_names: impl Fn(&EntityTypeName) -> (T, SmolStr),
+    ) -> Result<QueryBuilder> {
+        let mut query = Query::select();
+        query.and_where(self.expr.to_sql_query(&ein)?);
+        self.join_bindings(&mut query, ein, &table_names)?;
+
+        // We collect all the free unknowns that have entity type so that the
+        // query builder knows which tables to add when certain variables are requested
         let mut unk_table_names = HashMap::new();
         let unks = self.get_free_vars();
         for unk in unks {
