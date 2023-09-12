@@ -17,7 +17,7 @@
 //! This module builds queries for Cedar entities using the sea-query crate
 //! It also contains utilities for converting between Cedar data and database data
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, BTreeMap},
     marker::PhantomData,
 };
 
@@ -194,6 +194,30 @@ impl SQLValue {
             let reval = RestrictedEvaluator::new(&all_exts);
             let val = reval.partial_interpret(rexpr.as_borrowed())?;
             Ok(SQLValue(Some(val.try_into()?)))
+        }
+    }
+
+    /// Convert JSON into an SQLValue
+    /// This does not parse entity escapes.
+    /// Any intermediate null values cause the entire result to be null
+    pub fn from_json_no_escape(v: serde_json::Value) -> Self {
+        match v {
+            serde_json::Value::Null => SQLValue(None),
+            serde_json::Value::Bool(b) => b.into(),
+            serde_json::Value::Number(i) => SQLValue(i.as_i64().map(Value::from)),
+            serde_json::Value::String(s) => s.into(),
+            serde_json::Value::Array(v) => SQLValue(
+                v.into_iter()
+                .map(|x| Self::from_json_no_escape(x).0)
+                .collect::<Option<cedar_policy_core::ast::Set>>()
+                .map(Value::Set)
+            ),
+            serde_json::Value::Object(v) => SQLValue(
+                v.into_iter()
+                .map(|(k, v)| Some((k.into(), Self::from_json_no_escape(v).0?)))
+                .collect::<Option<BTreeMap<SmolStr, Value>>>()
+                .map(Value::from)
+            ),
         }
     }
 }
