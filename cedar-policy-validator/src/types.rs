@@ -667,11 +667,19 @@ impl From<cedar_policy_core::entities::SchemaType> for Type {
                 },
                 open_attributes: OpenTag::OpenAttributes,
             }),
-            CoreSchemaType::Entity { ty } => match ty {
-                EntityType::Concrete(name) => {
-                    Type::EntityOrRecord(EntityRecordKind::Entity(EntityLUB::single_entity(name)))
+            CoreSchemaType::Entity { ty } => {
+                let is_action = ty.is_action();
+                match ty {
+                    EntityType::Concrete(name) => {
+                        if is_action {
+                            // TODO: we could potentially be more precise here
+                            Type::EntityOrRecord(EntityRecordKind::AnyEntity)
+                        } else {
+                            Type::EntityOrRecord(EntityRecordKind::Entity(EntityLUB::single_entity(name)))
+                        }
+                    }
+                    EntityType::Unspecified => Type::EntityOrRecord(EntityRecordKind::AnyEntity),
                 }
-                EntityType::Unspecified => Type::EntityOrRecord(EntityRecordKind::AnyEntity),
             },
             CoreSchemaType::Extension { name } => Type::ExtensionType { name },
         }
