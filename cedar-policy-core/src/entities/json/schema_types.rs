@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use crate::ast::{EntityType, Name, Type};
+use crate::{ast::{EntityType, Name, Type, Value, Literal}, extensions::Extensions};
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::BTreeMap;
@@ -133,6 +133,55 @@ impl SchemaType {
                 }
                 _ => false,
             }
+        }
+    }
+
+    /// Get the SchemaType of a given Cedar value
+    /// This has a lot of duplicate logic from type_of_rexpr
+    /// Returns none if there is a heterogenous set
+    /// or if there is an extension function that is missing/without a return type
+    pub fn from_value(value: &Value, extensions: &Extensions<'_>) -> Option<Self> {
+        match value {
+            Value::Lit(l) => Some(match l {
+                Literal::Bool(_) => Self::Bool,
+                Literal::Long(_) => Self::Long,
+                Literal::String(_) => Self::String,
+                Literal::EntityUID(u) => Self::Entity {
+                    ty: u.entity_type().clone(),
+                },
+            }),
+            Value::Set(elements) => {
+                let mut element_types = elements.iter().map(|e| Self::from_value(e, extensions));
+                match element_types.next() {
+                    Some(Some(element_ty)) => {
+                        let all_consistent = element_types.all(|ty| {
+                            ty.is_some_and(|ty| element_ty.is_consistent_with(&ty))
+                        });
+                        if all_consistent {
+                            Some(Self::Set {
+                                element_ty: Box::new(element_ty),
+                            })
+                        } else {
+                            None
+                        }
+                    },
+                    Some(None) => None,
+                    None => Some(Self::EmptySet),
+                }
+            },
+            Value::Record(pairs) => {
+                Some(Self::Record {
+                    attrs: pairs.iter().map(|(k, v)| {
+                        let attr_type = Self::from_value(v, extensions)?;
+                        Some((k.clone(), AttributeType::optional(attr_type)))
+                    }).collect::<Option<BTreeMap<_,_>>>()?
+                })
+            },
+            Value::ExtensionValue(ext_fn) => {
+                let efunc = extensions.func(&ext_fn.typename()).ok()?;
+                let return_type = efunc.return_type()?.clone();
+                Some(return_type)
+            },
         }
     }
 }
