@@ -130,6 +130,12 @@ pub enum QueryExprError {
     /// This error occurs when an action type appears in the expression
     #[error("Action hierarchy is not supported for conversion to SQL (on action {0})")]
     ActionTypeAppears(Name),
+
+    /// An entity does not have a particular attribute
+    /// Note: the typechecker does not catch these because they simply evaluate to false
+    /// but this is considered an error during the conversion to SQL
+    #[error("Entity {0} does not have attribute {1}")]
+    HasAttrError(Name, SmolStr),
 }
 
 type Result<T> = std::result::Result<T, QueryExprError>;

@@ -17,10 +17,10 @@
 //! Customizer for queries -- can customize the tables and the columns that are queried
 use cedar_policy::{Effect, EntityTypeName, RandomRequestEnv, ResidualResponse, Schema};
 use cedar_policy_core::{
-    ast::{Expr, ExprBuilder},
+    ast::{Expr, ExprBuilder, ExprKind},
     authorizer::PartialResponse,
 };
-use cedar_policy_validator::{typecheck::Typechecker, ValidationMode};
+use cedar_policy_validator::{typecheck::Typechecker, ValidationMode, types::{Type, EntityRecordKind}};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -221,6 +221,44 @@ impl ExprWithBindings {
     }
 }
 
+fn check_has_attr(e: &Expr<Option<Type>>, schema: &Schema) -> Result<()> {
+    match e.expr_kind() {
+        ExprKind::HasAttr { expr, attr } => {
+            let expr_tp = expr
+                .data()
+                .as_ref()
+                .ok_or(QueryExprError::TypeAnnotationNone)?;
+            match expr_tp {
+                Type::EntityOrRecord(EntityRecordKind::Entity(lub)) => {
+                    let entity_name = lub.get_single_entity()
+                        .ok_or(QueryExprError::GetAttrLUBNotSingle)?;
+                    let entity = schema.0.get_entity_type(entity_name)
+                        .ok_or(QueryExprError::TypecheckError)?;
+                    entity.attr(attr.as_str()).ok_or_else(|| {
+                        QueryExprError::HasAttrError(entity_name.clone(), attr.to_owned())
+                    })?;
+                    Ok(())
+                },
+                _ => Ok(())
+            }
+        },
+        _ => Ok(()),
+    }
+}
+
+/// Does extra typechecking to ensure that the expression can be correctly converted to a query
+/// We do the following extra checks:
+///     - Check that for `a has b`, where `a` is an entity type, `b` is a potential attribute of `a`
+///         (which might be optional)
+/// TODO: should we roll all of the other checks into this function (namely: check that there are
+/// no action attributes/hierarchy calls, no nested sets, no incomparable types)?
+pub fn extra_typechecking(e: &Expr<Option<Type>>, schema: &Schema) -> Result<()> {
+    for subexp in e.subexpressions() {
+        check_has_attr(subexp, schema)?;
+    }
+    Ok(())
+}
+
 /// Does translation from Cedar to ExprWithBindings, which
 /// the user can then do further transformations on
 pub fn translate_expr_to_expr_with_bindings<T: IntoTableRef>(
@@ -243,6 +281,7 @@ pub fn translate_expr_to_expr_with_bindings<T: IntoTableRef>(
     let typed_expr = typechecker
         .typecheck_expr_strict(&(&req_env).into(), expr, &mut errors)
         .ok_or_else(|| QueryExprError::ValidationError(errors))?;
+    extra_typechecking(&typed_expr, schema)?;
     let mut query_expr = QueryExprWithVars::from_expr(&typed_expr, vars)?;
     // Rename any unknowns that appear in the query
     if !unknown_map.is_empty() {

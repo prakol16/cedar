@@ -368,38 +368,31 @@ impl QueryExpr {
     }
 
     /// Semantics:
-    /// Let phi: Value -> SQLValue be a function which interprets Cedar types as SQL types.
-    /// We say (e: Value) corresponds to (e' SQLValue) (i.e. e ~ e') if e = phi(e')
-    /// Note that phi is not injective, since entity types are ignored i.e. phi('Users::"1"' : EntityUID) = phi('Teams::"1"' : EntityUID)
-    /// Note that we assume array and json extensions to SQL, but only for Record and Set types,
-    /// We have: phi(Lit(x: bool | long | string)) = x
-    ///          phi(Lit(x: EntityUID)) = x.eid) (note we *only* take the id, not the type name)
-    ///          phi(Record) = json format of record, with each field value interpreted by phi
-    ///          phi(Set) = array, with each value interpreted by phi
+    /// Let r: Value -> SQLValue -> {0, 1} be a relation  which interprets Cedar values as SQL values.
+    /// We say (e: Value) corresponds to (e' SQLValue) (i.e. e ~ e') if r(e, e').
+    /// Note that multiple different Cedar values can correspond to the same SQL value, since
+    /// entity uids are converted to strings corresponding to their ids.
+    /// Similarly, a single Cedar value can correspond to multiple SQL values, since a Cedar
+    /// set can correspond to a SQL array in any order.
     ///
-    /// Similarly we can translate entity stores S into databases phi(S) as follows:
-    /// each entity gets a table, with each field interpreted by phi.
-    /// We ignore columns with null-values
-    /// so on databases, phi is actually a multi-valued function (we say S ~ S' when the entity store S
-    /// corresponds to the database S').
+    /// Note that we assume array and json extensions to SQL, both of which are present in
+    /// some dialects e.g. PostgresQL, but missing in e.g. SQLite.
+    ///
+    /// Similarly we can associate entity stores S with SQL databases S' (S ~ S') as follows:
+    /// each entity gets a table, with each field interpreted by r. Missing optional attributes
+    /// become nulls.
     ///
     /// Then we want `expr_to_sql_query` to translate an expression e to a query q
-    /// such that for any assignment of unknowns (x_1, x_2, ... x_n : Value) and an entity store S and
-    /// database S' such that S ~ S', we have that phi(eval(e[x_1, x_2, ... x_n], S)) = eval(q[phi(x_1), ... phi(x_n)], S')
-    ///
-    /// There are two kinds of unknowns: true unknowns (regular variables), and "dummy unknowns,"
-    /// where dummy unknowns appear on the left side of a `GetAttr` and have "entity" as their type.
-    /// We can't get the attribute of an unknown entity (since entities are represented by their string/id)
-    /// without some kind of JOIN. These dummy unkowns function as follows: substituting a particular value
-    /// `e` for the dummy unknown `x` should correspond to substituting S[e]'s attributes as
-    /// the SQL values `x`.`attr` for each attribute `attr` of `e`.
+    /// such that for any assignment of unknowns (x_1, x_2, ... x_n : Value) with corresponding sql values
+    /// (x_1' ~ x_1, x_2' ~ x_2, ... x_n' ~ x_n), and any entity store S with database S' such that S ~ S',
+    ///  we have that eval(e[x_1, x_2, ... x_n], S) ~ eval(q[x_1', x_2', ... x_n'], S')
     ///
     /// Note: we assume `e` does not depend on any variable, such as `principal`, `resource`, `context`, etc.
     ///       (if they are meant to be unknowns, they should be replaced by unknowns already)
-    ///       In addition, we assume `e` typechecks
+    ///       In addition, we assume `e` strict typechecks. Finally, we assume `e` is attribute reduced.
     ///
     /// `ein` should take two expressions `a` and `b` which would evaluate to string ids of the entities of the corresponding types,
-    /// and return an expression determining whether `a` is in `b`
+    /// and return an expression determining whether `a` is in `b` satisfying the above spec
     pub fn to_sql_query(&self, ein: &impl InConfig) -> Result<SimpleExpr> {
         match self {
             QueryExpr::Lit(l) => Ok(Self::lit_to_sql(l)),

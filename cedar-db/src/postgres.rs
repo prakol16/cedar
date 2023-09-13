@@ -56,8 +56,8 @@ impl<'a> FromSql<'a> for SQLValue {
                     .collect::<Vec<(String, Value)>>()
                     .into(),
             )
-        } else if let Kind::Array(inner) = ty.kind() {
-            Ok(<Vec<SQLValue> as FromSql>::from_sql(inner, raw)?
+        } else if let Kind::Array(_) = ty.kind() {
+            Ok(<Vec<SQLValue> as FromSql>::from_sql(ty, raw)?
                 .into_iter()
                 .filter_map(|v| v.0)
                 .collect::<Vec<Value>>()
