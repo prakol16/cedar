@@ -2,6 +2,9 @@
 //! of a schema and a database to a SQL database
 //! This is particularly useful for testing or for migrating from
 //! a JSON-based store to a SQL-based store
+//!
+//! TODO: some of this is primarily used in the Cedar DRT and is not useful more generally,
+//! so we should move it there
 
 use std::collections::HashMap;
 
@@ -62,6 +65,12 @@ type Result<T> = std::result::Result<T, DumpEntitiesError>;
 #[derive(Iden, Debug, Clone, Copy)]
 #[iden = "cedar"]
 pub struct CedarSQLSchemaName;
+
+/// In DRT, the table used to maintain miscellaneous unknown information
+/// TODO: Move to cedar-specz
+#[derive(Iden, Debug, Clone, Copy)]
+#[iden = "unknown_pool"]
+pub struct UnknownPool;
 
 /// The name of the table for a given entity type
 /// The name of the table will be "entity_{entity_type}"
