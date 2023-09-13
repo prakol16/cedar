@@ -355,15 +355,28 @@ mod test {
 
     use cedar_policy::Schema;
     use cedar_policy_core::{
-        ast::{self},
+        ast::{self, ExprBuilder},
         evaluator::RestrictedEvaluator,
         extensions::Extensions,
     };
     use sea_query::{Alias, PostgresQueryBuilder};
 
-    use crate::{expr_to_query::InByTable, query_expr::UnknownType};
+    use crate::{expr_to_query::{InByTable, InConfig}, query_expr::UnknownType};
 
     use super::{translate_expr, translate_expr_with_renames};
+
+    pub fn get_inconfig() -> impl InConfig {
+        InByTable(|t1, t2| {
+            let t1_str = t1.to_string();
+            let t2_str = t2.to_string();
+            let in_table = format!("{}_in_{}", t1_str, t2_str);
+            Ok(Some((
+                Alias::new(in_table),
+                Alias::new(t1_str),
+                Alias::new(t2_str),
+            )))
+        })
+    }
 
     /// Translation function for the purposes of testing; fills in lots of boilerplate
     pub fn translate_expr_test(expr: ast::Expr, schema: &Schema) -> String {
@@ -374,16 +387,7 @@ mod test {
         let mut query = translate_expr(
             &expr,
             schema,
-            InByTable(|t1, t2| {
-                let t1_str = t1.to_string();
-                let t2_str = t2.to_string();
-                let in_table = format!("{}_in_{}", t1_str, t2_str);
-                Ok(Some((
-                    Alias::new(in_table),
-                    Alias::new(t1_str),
-                    Alias::new(t2_str),
-                )))
-            }),
+            get_inconfig(),
             |tp| (Alias::new(tp.basename()), "uid".into()),
         )
         .unwrap();
@@ -627,16 +631,7 @@ mod test {
         let mut query = translate_expr_with_renames(
             &expr,
             &get_schema(),
-            InByTable(|t1, t2| {
-                let t1_str = t1.to_string();
-                let t2_str = t2.to_string();
-                let in_table = format!("{}_in_{}", t1_str, t2_str);
-                Ok(Some((
-                    Alias::new(in_table),
-                    Alias::new(t1_str),
-                    Alias::new(t2_str),
-                )))
-            }),
+            get_inconfig(),
             |tp| (Alias::new(tp.basename()), "uid".into()),
             &HashMap::from([(
                 UnknownType::EntityType {
@@ -688,16 +683,7 @@ mod test {
         let mut query = translate_expr(
             &expr,
             schema,
-            InByTable(|t1, t2| {
-                let t1_str = t1.to_string();
-                let t2_str = t2.to_string();
-                let in_table = format!("{}_in_{}", t1_str, t2_str);
-                Ok(Some((
-                    Alias::new(in_table),
-                    Alias::new(t1_str),
-                    Alias::new(t2_str),
-                )))
-            }),
+            get_inconfig(),
             |tp| (Alias::new(tp.basename()), "uid".into()),
         )
         .unwrap();
@@ -792,5 +778,17 @@ mod test {
             result,
             r#"SELECT "user"."uid" FROM "Users" AS "user" WHERE "user"."uid" = '0' AND FALSE"#
         );
+    }
+
+    #[test]
+    fn test_and_false_typeerror() {
+        let result = translate_expr_test(
+            // The RHS of the and does not typecheck so it should be eliminated
+            r#"(unknown::entity("resource", "Photos") == Photos::"0") && (false && ("hello" + 5 == "world"))"#
+                .parse()
+                .unwrap(),
+            &get_schema(),
+        );
+        assert_eq!(result, r#"SELECT "resource"."uid" FROM "Photos" AS "resource" WHERE "resource"."uid" = '0' AND FALSE"#);
     }
 }
