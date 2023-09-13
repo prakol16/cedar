@@ -420,6 +420,27 @@ impl Type {
         )
     }
 
+    /// Returns true if this is a valid strict type
+    pub(crate) fn must_be_strict(self: &Type) -> bool {
+        match self {
+            Type::Never => false,
+            Type::True => true,
+            Type::False => true,
+            Type::Primitive { .. } => true,
+            Type::Set { element_type: Some(element_type) } => element_type.must_be_strict(),
+            Type::Set { element_type: None } => false,
+            Type::EntityOrRecord(lub) => match lub {
+                EntityRecordKind::Record { attrs, ..  } => {
+                    attrs.iter().all(|(_, attr_ty)| attr_ty.attr_type.must_be_strict())
+                },
+                EntityRecordKind::AnyEntity => false,
+                EntityRecordKind::Entity(lub) => lub.get_single_entity().is_some(),
+                EntityRecordKind::ActionEntity { .. } => true,
+            },
+            Type::ExtensionType { .. } => true,
+        }
+    }
+
     fn json_type(type_name: &str) -> serde_json::value::Map<String, serde_json::value::Value> {
         [("type".to_string(), type_name.into())]
             .into_iter()

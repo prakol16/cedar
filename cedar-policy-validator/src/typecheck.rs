@@ -594,11 +594,26 @@ impl<'a> Typechecker<'a> {
                             .unknown(name.clone(), None),
                     )
                 }
-                Some(t) => TypecheckAnswer::success(
-                    ExprBuilder::with_data(Some(t.clone().into()))
-                        .with_same_source_info(e)
-                        .unknown(name.clone(), Some(t.clone())),
-                ),
+                Some(t) => {
+                    let ty = t.clone().into();
+                    if !Type::must_be_strict(&ty) {
+                        type_errors.push(TypeError::unknown_not_type_annotated(
+                            e.clone(),
+                            name.clone(),
+                        ));
+                        TypecheckAnswer::fail(
+                            ExprBuilder::with_data(None)
+                                .with_same_source_info(e)
+                                .unknown(name.clone(), None),
+                        )
+                    } else {
+                        TypecheckAnswer::success(
+                        ExprBuilder::with_data(Some(ty))
+                            .with_same_source_info(e)
+                            .unknown(name.clone(), Some(t.clone())),
+                        )
+                    }
+                }
             },
             // Template Slots, always has to be an entity.
             ExprKind::Slot(slotid) => TypecheckAnswer::success(
