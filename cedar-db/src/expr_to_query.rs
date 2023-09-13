@@ -274,7 +274,7 @@ impl QueryExpr {
 
     fn mk_postgres_record(elems: Vec<(SmolStr, SimpleExpr)>) -> SimpleExpr {
         #[derive(Iden)]
-        #[iden = "json_build_object"]
+        #[iden = "jsonb_build_object"]
         struct BuildObjectFunc;
 
         let mut args: Vec<SimpleExpr> = Vec::with_capacity(elems.len() * 2);
