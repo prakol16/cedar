@@ -355,7 +355,7 @@ mod test {
 
     use cedar_policy::Schema;
     use cedar_policy_core::{
-        ast::{self, ExprBuilder},
+        ast::{self},
         evaluator::RestrictedEvaluator,
         extensions::Extensions,
     };
