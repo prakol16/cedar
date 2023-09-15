@@ -63,7 +63,8 @@ impl<'a> FromSql<'a> for SQLValue {
                 .into())
         } else if <serde_json::Value as FromSql>::accepts(ty) {
             let json = <serde_json::Value as FromSql>::from_sql(ty, raw)?;
-            Ok(SQLValue::from_json(json))
+            // TODO: figure out if we want to support escapes or not
+            Ok(SQLValue::from_json(json)?)
         } else {
             Err(format!("unsupported type: {:?}", ty).into())
         }

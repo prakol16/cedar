@@ -21,7 +21,7 @@ use std::{
     marker::PhantomData,
 };
 
-use cedar_policy::{EntityId, EntityTypeName, EntityUid, Value};
+use cedar_policy::{EntityId, EntityTypeName, EntityUid, Value, RestrictedExpression};
 use cedar_policy_core::{
     ast::NotValue,
     entities::JsonDeserializationError,
@@ -103,10 +103,22 @@ impl<T: Into<Value>> From<T> for SQLValue {
 }
 
 impl SQLValue {
+    /// Attempt to convert JSON into an SQLValue
+    /// Note: This does parses entity escapes and handles them as a special case
+    /// Moreover, it also evaluations extension functions in expression attributes
+    pub fn from_json(v: serde_json::Value) -> Result<Self> {
+        if v.is_null() {
+            Ok(SQLValue(None))
+        } else {
+            let rexpr = RestrictedExpression::from_json(v)?;
+            Ok(SQLValue(Some(rexpr.try_into()?)))
+        }
+    }
+
     /// Convert JSON into an SQLValue
     /// This does not parse entity escapes.
     /// Any intermediate null values cause the entire result to be null
-    pub fn from_json(v: serde_json::Value) -> Self {
+    pub fn from_json_no_escape(v: serde_json::Value) -> Self {
         match v {
             serde_json::Value::Null => SQLValue(None),
             serde_json::Value::Bool(b) => b.into(),
@@ -114,13 +126,13 @@ impl SQLValue {
             serde_json::Value::String(s) => s.into(),
             serde_json::Value::Array(v) => SQLValue(
                 v.into_iter()
-                    .map(|x| Self::from_json(x).0)
+                    .map(|x| Self::from_json_no_escape(x).0)
                     .collect::<Option<Vec<Value>>>()
                     .map(Value::from),
             ),
             serde_json::Value::Object(v) => SQLValue(
                 v.into_iter()
-                    .map(|(k, v)| Some((k, Self::from_json(v).0?)))
+                    .map(|(k, v)| Some((k, Self::from_json_no_escape(v).0?)))
                     .collect::<Option<BTreeMap<String, Value>>>()
                     .map(Value::from),
             ),
