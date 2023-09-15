@@ -17,16 +17,14 @@
 //! This module builds queries for Cedar entities using the sea-query crate
 //! It also contains utilities for converting between Cedar data and database data
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, BTreeMap},
     marker::PhantomData,
 };
 
 use cedar_policy::{EntityId, EntityTypeName, EntityUid, Value};
 use cedar_policy_core::{
     ast::NotValue,
-    entities::{JSONValue, JsonDeserializationError},
-    evaluator::RestrictedEvaluator,
-    extensions::Extensions,
+    entities::JsonDeserializationError,
 };
 use ref_cast::RefCast;
 use sea_query::{
@@ -105,19 +103,27 @@ impl<T: Into<Value>> From<T> for SQLValue {
 }
 
 impl SQLValue {
-    /// Attempt to convert JSON into an SQLValue
-    /// Note: This does parses entity escapes and handles them as a special case
-    /// Moreover, it also evaluations extension functions in expression attributes
-    pub fn from_json(v: serde_json::Value) -> Result<Self> {
-        if v.is_null() {
-            Ok(SQLValue(None))
-        } else {
-            let jvalue: JSONValue = serde_json::from_value(v)?;
-            let rexpr = jvalue.into_expr()?;
-            let all_exts = Extensions::all_available();
-            let reval = RestrictedEvaluator::new(&all_exts);
-            let val = reval.partial_interpret(rexpr.as_borrowed())?;
-            Ok(SQLValue(Some(val.try_into()?)))
+    /// Convert JSON into an SQLValue
+    /// This does not parse entity escapes.
+    /// Any intermediate null values cause the entire result to be null
+    pub fn from_json(v: serde_json::Value) -> Self {
+        match v {
+            serde_json::Value::Null => SQLValue(None),
+            serde_json::Value::Bool(b) => b.into(),
+            serde_json::Value::Number(i) => SQLValue(i.as_i64().map(Value::from)),
+            serde_json::Value::String(s) => s.into(),
+            serde_json::Value::Array(v) => SQLValue(
+                v.into_iter()
+                    .map(|x| Self::from_json(x).0)
+                    .collect::<Option<Vec<Value>>>()
+                    .map(Value::from),
+            ),
+            serde_json::Value::Object(v) => SQLValue(
+                v.into_iter()
+                    .map(|(k, v)| Some((k, Self::from_json(v).0?)))
+                    .collect::<Option<BTreeMap<String, Value>>>()
+                    .map(Value::from),
+            ),
         }
     }
 }

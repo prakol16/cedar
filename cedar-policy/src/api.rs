@@ -23,6 +23,7 @@
 pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
+pub use cedar_policy_core::ast::NotValue;
 use cedar_policy_core::ast::PartialValue as CorePartialValue;
 use cedar_policy_core::ast::RestrictedExprError;
 use cedar_policy_core::ast::Value as CoreValue;
@@ -31,6 +32,7 @@ pub use cedar_policy_core::authorizer::AuthorizationError;
 use cedar_policy_core::entities;
 pub use cedar_policy_core::entities::EntityAccessError;
 pub use cedar_policy_core::entities::EntityAttrAccessError;
+use cedar_policy_core::entities::JSONValue;
 use cedar_policy_core::entities::JsonDeserializationErrorContext;
 pub use cedar_policy_core::entities::Mode;
 use cedar_policy_core::entities::{ContextSchema, Dereference, JsonDeserializationError};
@@ -170,6 +172,14 @@ impl<T: Into<Value>> From<HashMap<String, T>> for Value {
 impl<T: Into<Value>> From<T> for PartialValue {
     fn from(value: T) -> Self {
         PartialValue(CorePartialValue::Value(value.into().0))
+    }
+}
+
+impl TryFrom<PartialValue> for Value {
+    type Error = NotValue;
+
+    fn try_from(value: PartialValue) -> Result<Self, Self::Error> {
+        value.0.try_into().map(Value)
     }
 }
 
@@ -3017,6 +3027,12 @@ impl RestrictedExpression {
     /// Create an expression representing a Set.
     pub fn new_set(values: impl IntoIterator<Item = Self>) -> Self {
         Self(ast::RestrictedExpr::set(values.into_iter().map(|v| v.0)))
+    }
+
+    /// Create a restricted expression from JSON data
+    pub fn from_json(json: serde_json::Value) -> Result<Self, entities::JsonDeserializationError> {
+        let jvalue: JSONValue = serde_json::from_value(json)?;
+        Ok(Self(jvalue.into_expr()?))
     }
 }
 
