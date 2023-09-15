@@ -369,14 +369,10 @@ impl<T: Into<Value>> From<Vec<T>> for Value {
 }
 
 /// Create a `Value::Record` from a map of `String` to `Value`
-impl<S> From<BTreeMap<S, Value>> for Value
-where
-    S: Into<SmolStr>,
+impl From<BTreeMap<SmolStr, Value>> for Value
 {
-    fn from(map: BTreeMap<S, Value>) -> Self {
-        Self::Record(Arc::new(
-            map.into_iter().map(|(k, v)| (k.into(), v)).collect(),
-        ))
+    fn from(map: BTreeMap<SmolStr, Value>) -> Self {
+        Self::Record(Arc::new(map))
     }
 }
 

@@ -23,9 +23,9 @@
 pub use ast::Effect;
 pub use authorizer::Decision;
 use cedar_policy_core::ast;
-pub use cedar_policy_core::ast::PartialValue; // TODO: add small API for PartialValue
+use cedar_policy_core::ast::PartialValue as CorePartialValue;
 use cedar_policy_core::ast::RestrictedExprError;
-pub use cedar_policy_core::ast::Value; // TODO: add API for Value
+use cedar_policy_core::ast::Value as CoreValue;
 use cedar_policy_core::authorizer;
 pub use cedar_policy_core::authorizer::AuthorizationError;
 use cedar_policy_core::entities;
@@ -53,6 +53,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::Infallible;
 use std::str::FromStr;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Identifier for a Template slot
@@ -90,6 +91,94 @@ impl From<SlotId> for ast::SlotId {
     }
 }
 
+/// A Cedar value type
+/// Represents a boolean, integer, string, entity uid, set of values, record, or extension function
+/// Supports O(1) cloning
+///
+/// To match on this or examine the value contained, use the `ValueKind::from` method
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, RefCast)]
+#[repr(transparent)]
+pub struct Value(pub(crate) CoreValue);
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A Cedar partial value
+/// This is the result of partial evaluation of an expression
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
+pub struct PartialValue(pub(crate) CorePartialValue);
+
+impl Value {
+    /// Create a set of values from an iterator of values
+    pub fn set(vals: impl IntoIterator<Item = Value>) -> Self {
+        Self(CoreValue::Set(vals.into_iter().map(|v| v.0).collect()))
+    }
+
+    /// Create a record from an iterator of key-value pairs
+    pub fn record(vals: impl IntoIterator<Item = (String, Value)>) -> Self {
+        Self(CoreValue::Record(Arc::new(
+            vals.into_iter()
+                .map(|(k, v)| (SmolStr::from(k), v.0))
+                .collect(),
+        )))
+    }
+}
+
+macro_rules! into_value {
+    ($t:ty) => {
+        impl From<$t> for Value {
+            fn from(value: $t) -> Self {
+                Self(CoreValue::Lit(value.into()))
+            }
+        }
+    };
+}
+
+into_value!(bool);
+into_value!(i64);
+into_value!(String);
+into_value!(&str);
+
+impl From<EntityUid> for Value {
+    fn from(value: EntityUid) -> Self {
+        Self(CoreValue::Lit(value.0.into()))
+    }
+}
+
+impl<T: Into<Value>> From<Vec<T>> for Value {
+    fn from(value: Vec<T>) -> Self {
+        Self::set(value.into_iter().map(Into::into))
+    }
+}
+
+impl<T: Into<Value>> From<BTreeMap<String, T>> for Value {
+    fn from(value: BTreeMap<String, T>) -> Self {
+        Self::record(value.into_iter().map(|(k, v)| (k, v.into())))
+    }
+}
+
+impl<T: Into<Value>> From<HashMap<String, T>> for Value {
+    fn from(value: HashMap<String, T>) -> Self {
+        Self::record(value.into_iter().map(|(k, v)| (k, v.into())))
+    }
+}
+
+impl<T: Into<Value>> From<T> for PartialValue {
+    fn from(value: T) -> Self {
+        PartialValue(CorePartialValue::Value(value.into().0))
+    }
+}
+
+impl std::fmt::Display for PartialValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Entity datatype
 /// TODO: rename to `UnevaluatedEntity`
 #[repr(transparent)]
@@ -100,7 +189,7 @@ pub struct Entity(ast::Entity);
 /// TODO: rename to `Entity`
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq, RefCast)]
-pub struct EvaledEntity(ast::Entity<PartialValue>);
+pub struct EvaledEntity(ast::Entity<CorePartialValue>);
 
 impl Entity {
     /// Create a new `Entity` with this Uid, attributes, and parents.
@@ -188,15 +277,20 @@ impl Entity {
     /// assert_eq!(entity.attr("age").unwrap(), Ok(EvalResult::Long(21)));
     /// assert_eq!(entity.attr("department").unwrap(), Ok(EvalResult::String("CS".to_string())));
     ///```
-    pub fn attr(&self, attr: &str) -> Option<Result<EvalResult, EvaluationError>> {
+    pub fn attr(&self, attr: &str) -> Option<Result<Value, EvaluationError>> {
         let expr = self.0.get(attr)?;
         let all_ext = Extensions::all_available();
         let evaluator = RestrictedEvaluator::new(&all_ext);
         Some(
             evaluator
                 .interpret(expr.as_borrowed())
-                .map(EvalResult::from),
+                .map(Value),
         )
+    }
+
+    /// Get the ValueKind of `attr`
+    pub fn attr_kind(&self, attr: &str) -> Option<Result<ValueKind, EvaluationError>> {
+        self.attr(attr).map(|v| v.map(ValueKind::from))
     }
 
     /// Convert the entity into a `EvaledEntity` by evaluating the attributes and caching the results
@@ -223,7 +317,7 @@ impl EvaledEntity {
             uid.0,
             attrs
                 .into_iter()
-                .map(|(k, v)| (SmolStr::from(k), v))
+                .map(|(k, v)| (SmolStr::from(k), v.0))
                 .collect(),
             parents.into_iter().map(|uid| uid.0).collect(),
         ))
@@ -241,7 +335,7 @@ impl EvaledEntity {
 
     /// Get the value for the given attribute, or `None` if not present.
     pub fn attr(&self, attr: &str) -> Option<&PartialValue> {
-        self.0.get(attr)
+        self.0.get(attr).map(PartialValue::ref_cast)
     }
 
     fn is_descendant_of(&self, u2: &EntityUid) -> bool {
@@ -265,7 +359,7 @@ pub struct Entities(pub(crate) entities::Entities);
 /// Uid.
 #[repr(transparent)]
 #[derive(Debug, Clone, Default, RefCast)]
-pub struct EvaledEntities(pub(crate) entities::Entities<PartialValue>);
+pub struct EvaledEntities(pub(crate) entities::Entities<CorePartialValue>);
 
 pub use entities::EntitiesError;
 
@@ -728,8 +822,8 @@ impl<T: EntityDataSource> entities::EntityDataSource for EntityDataSourceWrapper
         &self,
         uid: &ast::EntityUID,
         attr: &str,
-    ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>> {
-        self.0.entity_attr(EntityUid::ref_cast(uid), attr)
+    ) -> Result<CorePartialValue, EntityAttrAccessError<Self::Error>> {
+        self.0.entity_attr(EntityUid::ref_cast(uid), attr).map(|x| x.0)
     }
 
     fn entity_in(
@@ -1920,12 +2014,6 @@ impl FromStr for EntityUid {
 impl std::fmt::Display for EntityUid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
-    }
-}
-
-impl From<EntityUid> for Value {
-    fn from(value: EntityUid) -> Self {
-        Self::Lit(value.0.into())
     }
 }
 
@@ -3337,9 +3425,11 @@ impl std::fmt::Display for Request {
     }
 }
 
-/// Result of Evaluation
+/// A value that can be matched on and inspected
+/// Use ValueKind::from(value) to convert a Cedar value
+/// to a ValueKind
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum EvalResult {
+pub enum ValueKind {
     /// Boolean value
     Bool(bool),
     /// Signed integer value
@@ -3359,16 +3449,16 @@ pub enum EvalResult {
 
 /// Sets of Cedar values
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub struct Set(BTreeSet<EvalResult>);
+pub struct Set(BTreeSet<Value>);
 
 impl Set {
     /// Iterate over the members of the set
-    pub fn iter(&self) -> impl Iterator<Item = &EvalResult> {
+    pub fn iter(&self) -> impl Iterator<Item = &Value> {
         self.0.iter()
     }
 
     /// Is a given element in the set
-    pub fn contains(&self, elem: &EvalResult) -> bool {
+    pub fn contains(&self, elem: &Value) -> bool {
         self.0.contains(elem)
     }
 
@@ -3385,11 +3475,11 @@ impl Set {
 
 /// A record of Cedar values
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub struct Record(BTreeMap<String, EvalResult>);
+pub struct Record(BTreeMap<String, Value>);
 
 impl Record {
     /// Iterate over the attribute/value pairs in the record
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &EvalResult)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
         self.0.iter()
     }
 
@@ -3399,7 +3489,7 @@ impl Record {
     }
 
     /// Get a given attribute from the record
-    pub fn get(&self, key: impl AsRef<str>) -> Option<&EvalResult> {
+    pub fn get(&self, key: impl AsRef<str>) -> Option<&Value> {
         self.0.get(key.as_ref())
     }
 
@@ -3414,10 +3504,9 @@ impl Record {
     }
 }
 
-#[doc(hidden)]
-impl From<ast::Value> for EvalResult {
-    fn from(v: ast::Value) -> Self {
-        match v {
+impl From<Value> for ValueKind {
+    fn from(v: Value) -> Self {
+        match v.0 {
             ast::Value::Lit(ast::Literal::Bool(b)) => Self::Bool(b),
             ast::Value::Lit(ast::Literal::Long(i)) => Self::Long(i),
             ast::Value::Lit(ast::Literal::String(s)) => Self::String(s.to_string()),
@@ -3427,18 +3516,19 @@ impl From<ast::Value> for EvalResult {
             ast::Value::Set(s) => Self::Set(Set(s
                 .authoritative
                 .iter()
-                .map(|v| v.clone().into())
+                .map(|v| Value(v.clone()))
                 .collect())),
             ast::Value::Record(r) => Self::Record(Record(
                 r.iter()
-                    .map(|(k, v)| (k.to_string(), v.clone().into()))
+                    .map(|(k, v)| (k.to_string(), Value(v.clone())))
                     .collect(),
             )),
             ast::Value::ExtensionValue(v) => Self::ExtensionValue(v.to_string()),
         }
     }
 }
-impl std::fmt::Display for EvalResult {
+
+impl std::fmt::Display for ValueKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Bool(b) => write!(f, "{b}"),
@@ -3479,14 +3569,12 @@ pub fn eval_expression(
     request: &Request,
     entities: &Entities,
     expr: &Expression,
-) -> Result<EvalResult, EvaluationError> {
+) -> Result<Value, EvaluationError> {
     let all_ext = Extensions::all_available();
-    let entities: entities::Entities<PartialValue> = entities.0.clone().eval_attrs(&all_ext)?;
+    let entities: entities::Entities<CorePartialValue> = entities.0.clone().eval_attrs(&all_ext)?;
     let eval = Evaluator::new(&request.0, &entities, &all_ext)?;
-    Ok(EvalResult::from(
-        // Evaluate under the empty slot map, as an expression should not have slots
-        eval.interpret(&expr.0, &ast::SlotEnv::new())?,
-    ))
+    // Evaluate under the empty slot map, as an expression should not have slots
+    eval.interpret(&expr.0, &ast::SlotEnv::new()).map(Value)
 }
 
 #[cfg(test)]
@@ -4335,39 +4423,39 @@ mod schema_based_parsing_tests {
             .expect("that should be the employee id");
         assert_eq!(
             parsed.attr("home_ip"),
-            Some(Ok(EvalResult::String("222.222.222.101".into())))
+            Some(Ok("222.222.222.101".into()))
         );
         assert_eq!(
             parsed.attr("trust_score"),
-            Some(Ok(EvalResult::String("5.7".into())))
+            Some(Ok("5.7".into()))
         );
         assert!(matches!(
-            parsed.attr("manager"),
-            Some(Ok(EvalResult::Record(_)))
+            parsed.attr_kind("manager"),
+            Some(Ok(ValueKind::Record(_)))
         ));
         assert!(matches!(
-            parsed.attr("work_ip"),
-            Some(Ok(EvalResult::Record(_)))
+            parsed.attr_kind("work_ip"),
+            Some(Ok(ValueKind::Record(_)))
         ));
         {
-            let Some(Ok(EvalResult::Set(set))) = parsed.attr("hr_contacts") else {
+            let Some(Ok(ValueKind::Set(set))) = parsed.attr_kind("hr_contacts") else {
                 panic!("expected hr_contacts attr to exist and be a Set")
             };
             let contact = set.iter().next().expect("should be at least one contact");
-            assert!(matches!(contact, EvalResult::Record(_)));
+            assert!(matches!(ValueKind::from(contact.clone()), ValueKind::Record(_)));
         };
         {
-            let Some(Ok(EvalResult::Record(rec))) = parsed.attr("json_blob") else {
+            let Some(Ok(ValueKind::Record(rec))) = parsed.attr_kind("json_blob") else {
                 panic!("expected json_blob attr to exist and be a Record")
             };
             let inner3 = rec.get("inner3").expect("expected inner3 attr to exist");
-            let EvalResult::Record(rec) = inner3 else {
+            let ValueKind::Record(rec) = inner3.clone().into() else {
                 panic!("expected inner3 to be a Record")
             };
             let innerinner = rec
                 .get("innerinner")
                 .expect("expected innerinner attr to exist");
-            assert!(matches!(innerinner, EvalResult::Record(_)));
+            assert!(matches!(ValueKind::from(innerinner.clone()), ValueKind::Record(_)));
         };
         // but with schema-based parsing, we get these other types
         let parsed = Entities::from_json_value(entitiesjson, Some(&schema))
@@ -4376,52 +4464,53 @@ mod schema_based_parsing_tests {
         let parsed = parsed
             .get(&EntityUid::from_strs("Employee", "12UA45"))
             .expect("that should be the employee id");
-        assert_eq!(parsed.attr("isFullTime"), Some(Ok(EvalResult::Bool(true))));
+        assert_eq!(parsed.attr("isFullTime"), Some(Ok(true.into())));
         assert_eq!(
             parsed.attr("numDirectReports"),
-            Some(Ok(EvalResult::Long(3)))
+            Some(Ok(3.into()))
         );
         assert_eq!(
             parsed.attr("department"),
-            Some(Ok(EvalResult::String("Sales".into())))
+            Some(Ok("Sales".into()))
         );
         assert_eq!(
             parsed.attr("manager"),
-            Some(Ok(EvalResult::EntityUid(EntityUid::from_strs(
+            Some(Ok(EntityUid::from_strs(
                 "Employee", "34FB87"
-            ))))
+            ).into()))
         );
         {
-            let Some(Ok(EvalResult::Set(set))) = parsed.attr("hr_contacts") else {
+            let Some(Ok(ValueKind::Set(set))) = parsed.attr_kind("hr_contacts") else {
                 panic!("expected hr_contacts attr to exist and be a Set")
             };
             let contact = set.iter().next().expect("should be at least one contact");
-            assert!(matches!(contact, EvalResult::EntityUid(_)));
+            assert!(matches!(ValueKind::from(contact.clone()), ValueKind::EntityUid(_)));
         };
         {
-            let Some(Ok(EvalResult::Record(rec))) = parsed.attr("json_blob") else {
+            let Some(Ok(ValueKind::Record(rec))) = parsed.attr_kind("json_blob") else {
                 panic!("expected json_blob attr to exist and be a Record")
             };
             let inner3 = rec.get("inner3").expect("expected inner3 attr to exist");
-            let EvalResult::Record(rec) = inner3 else {
+            let ValueKind::Record(rec) = inner3.clone().into() else {
                 panic!("expected inner3 to be a Record")
             };
             let innerinner = rec
                 .get("innerinner")
-                .expect("expected innerinner attr to exist");
-            assert!(matches!(innerinner, EvalResult::EntityUid(_)));
+                .expect("expected innerinner attr to exist")
+                .clone();
+            assert!(matches!(innerinner.into(), ValueKind::EntityUid(_)));
         };
         assert_eq!(
-            parsed.attr("home_ip"),
-            Some(Ok(EvalResult::ExtensionValue("222.222.222.101/32".into())))
+            parsed.attr_kind("home_ip"),
+            Some(Ok(ValueKind::ExtensionValue("222.222.222.101/32".into())))
         );
         assert_eq!(
-            parsed.attr("work_ip"),
-            Some(Ok(EvalResult::ExtensionValue("2.2.2.0/24".into())))
+            parsed.attr_kind("work_ip"),
+            Some(Ok(ValueKind::ExtensionValue("2.2.2.0/24".into())))
         );
         assert_eq!(
-            parsed.attr("trust_score"),
-            Some(Ok(EvalResult::ExtensionValue("5.7000".into())))
+            parsed.attr_kind("trust_score"),
+            Some(Ok(ValueKind::ExtensionValue("5.7000".into())))
         );
 
         // simple type mismatch with expected type
@@ -4748,17 +4837,17 @@ mod schema_based_parsing_tests {
         let parsed = parsed
             .get(&EntityUid::from_strs("XYZCorp::Employee", "12UA45"))
             .expect("that should be the employee type and id");
-        assert_eq!(parsed.attr("isFullTime"), Some(Ok(EvalResult::Bool(true))));
+        assert_eq!(parsed.attr("isFullTime"), Some(Ok(true.into())));
         assert_eq!(
             parsed.attr("department"),
-            Some(Ok(EvalResult::String("Sales".into())))
+            Some(Ok("Sales".into()))
         );
         assert_eq!(
             parsed.attr("manager"),
-            Some(Ok(EvalResult::EntityUid(EntityUid::from_strs(
+            Some(Ok(EntityUid::from_strs(
                 "XYZCorp::Employee",
                 "34FB87"
-            ))))
+            ).into()))
         );
 
         let entitiesjson = json!(

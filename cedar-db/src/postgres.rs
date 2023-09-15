@@ -49,13 +49,12 @@ impl<'a> FromSql<'a> for SQLValue {
         } else if String::accepts(ty) {
             Ok(String::from_sql(ty, raw)?.into())
         } else if <HashMap<String, Option<String>> as FromSql>::accepts(ty) {
-            Ok(
+            Ok(Value::record(
                 <HashMap<String, Option<String>> as FromSql>::from_sql(ty, raw)?
                     .into_iter()
+                    // any null valued keys are simply dropped
                     .filter_map(|(k, v)| Some((k, v?.into())))
-                    .collect::<Vec<(String, Value)>>()
-                    .into(),
-            )
+            ).into())
         } else if let Kind::Array(inner) = ty.kind() {
             Ok(<Vec<SQLValue> as FromSql>::from_sql(inner, raw)?
                 .into_iter()
