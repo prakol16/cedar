@@ -17,7 +17,7 @@
 //! This module contains the Cedar evaluator.
 
 use crate::ast::*;
-use crate::entities::{Dereference, Entities, EntityAttrDatabase};
+use crate::entities::{Dereference, Entities, EntityDataSource};
 use crate::extensions::Extensions;
 use std::sync::Arc;
 
@@ -43,7 +43,7 @@ mod names {
 /// Conceptually keeps the evaluation environment as part of its internal state,
 /// because we will be repeatedly invoking the evaluator on every policy in a
 /// Slice.
-pub struct Evaluator<'e, T: EntityAttrDatabase> {
+pub struct Evaluator<'e, T: EntityDataSource> {
     /// `Principal` for the current request
     principal: EntityUIDEntry,
     /// `Action` for the current request
@@ -152,7 +152,7 @@ impl Entities {
     }
 }
 
-impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
+impl<'q, 'e, T: EntityDataSource> Evaluator<'e, T> {
     /// Create a fresh `Evaluator` for the given `request`, which uses the given
     /// `Entities` to resolve entity references. Use the given `Extension`s when
     /// evaluating the request.
@@ -758,7 +758,7 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
     // GRCOV_BEGIN_COVERAGE
 }
 
-impl<'e, T: EntityAttrDatabase> std::fmt::Debug for Evaluator<'e, T> {
+impl<'e, T: EntityDataSource> std::fmt::Debug for Evaluator<'e, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

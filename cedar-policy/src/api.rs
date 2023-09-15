@@ -635,7 +635,7 @@ impl EntityDatabase for ParsedEntities {
     }
 
     fn partial_mode(&self) -> Mode {
-        entities::EntityAttrDatabase::partial_mode(&self.0)
+        entities::EntityDataSource::partial_mode(&self.0)
     }
 }
 
@@ -707,7 +707,7 @@ impl ParsedEntities {
 #[derive(RefCast)]
 struct EntityDatabaseWrapper<T: EntityAttrDatabase>(T);
 
-impl<T: EntityAttrDatabase> entities::EntityAttrDatabase for EntityDatabaseWrapper<T> {
+impl<T: EntityAttrDatabase> entities::EntityDataSource for EntityDatabaseWrapper<T> {
     type Error = T::Error;
 
     fn partial_mode(&self) -> Mode {

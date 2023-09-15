@@ -279,9 +279,9 @@ impl<T> IntoIterator for Entities<T> {
     }
 }
 
-/// Something that implements an `EntityAttrDatabase` is something that can act in place of `ParsedEntities`
+/// Something that implements an `EntityDataSource` is something that can act in place of `ParsedEntities`
 /// It allows users to fetch attributes of entities without having to load the entire `ParsedEntity` object
-pub trait EntityAttrDatabase {
+pub trait EntityDataSource {
     /// The type of error that can occur when accessing entities
     type Error: std::error::Error;
 
@@ -349,9 +349,9 @@ pub trait EntityAttrDatabase {
     }
 }
 
-/// Something that implements an `EntityDatabase` is something that can act in place of `Entities`
-/// It fetches whole entities given a `uid`
-trait EntityDatabase {
+/// A `WholeEntityDataSource` is like an `EntityDataSource` but returns whole entities
+/// given an id rather than returning attributes and deciding ancestry data individually
+trait WholeEntityDataSource {
     /// Get entity by UID, returns None if no such entity exists.
     fn get<'e>(&'e self, uid: &EntityUID) -> Option<Cow<'e, Entity<PartialValue>>>;
 
@@ -359,10 +359,10 @@ trait EntityDatabase {
     fn partial_mode(&self) -> Mode;
 }
 
-/// Any `EntityDatabase` is an `EntityAttrDatabase` in the obvious way
+/// Any `WholeEntityDataSource` is an `EntityDataSource` in the obvious way
 /// Note: this implementation is rather inefficient if the underlying store is
 /// creating objects (i.e. Cow::Owned) on each invocation of `get`.
-impl<T: EntityDatabase> EntityAttrDatabase for T {
+impl<T: WholeEntityDataSource> EntityDataSource for T {
     type Error = Infallible;
 
     fn exists_entity(&self, uid: &EntityUID) -> std::result::Result<bool, Self::Error> {
@@ -385,6 +385,9 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
         }
     }
 
+    // TODO: implement entity_has_attr manually for slightly more efficient implementation
+    // (avoids O(1) clone of partial value)
+
     fn entity_in(&self, u1: &EntityUID, u2: &EntityUID) -> std::result::Result<bool, Self::Error> {
         match self.get(u1) {
             Some(e) => Ok(e.as_ref().is_descendant_of(u2)),
@@ -393,11 +396,11 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
     }
 
     fn partial_mode(&self) -> Mode {
-        EntityDatabase::partial_mode(self)
+        WholeEntityDataSource::partial_mode(self)
     }
 }
 
-impl EntityDatabase for Entities<PartialValue> {
+impl WholeEntityDataSource for Entities<PartialValue> {
     fn get<'e>(&'e self, uid: &EntityUID) -> Option<Cow<'e, Entity<PartialValue>>> {
         self.entities.get(uid).map(Cow::Borrowed)
     }
