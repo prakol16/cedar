@@ -268,7 +268,7 @@ pub struct ParsedEntities(pub(crate) entities::Entities<PartialValue>);
 pub use entities::EntitiesError;
 
 /// Something that can return entities
-pub trait EntityDatabase {
+pub trait WholeEntityDataSource {
     /// The type of error that can occur when accessing entities
     type Error: std::error::Error;
 
@@ -280,7 +280,7 @@ pub trait EntityDatabase {
 }
 
 /// Something that can return entity attributes and determine entity ancestry
-pub trait EntityAttrDatabase {
+pub trait EntityDataSource {
     /// The type of error that can occur when accessing entities
     type Error: std::error::Error;
 
@@ -316,7 +316,7 @@ pub trait EntityAttrDatabase {
     fn partial_mode(&self) -> Mode;
 }
 
-impl<T: EntityDatabase> EntityAttrDatabase for T {
+impl<T: WholeEntityDataSource> EntityDataSource for T {
     type Error = T::Error;
 
     fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error> {
@@ -345,7 +345,7 @@ impl<T: EntityDatabase> EntityAttrDatabase for T {
     }
 
     fn partial_mode(&self) -> Mode {
-        EntityDatabase::partial_mode(self)
+        WholeEntityDataSource::partial_mode(self)
     }
 }
 
@@ -625,7 +625,7 @@ impl Entities {
     }
 }
 
-impl EntityDatabase for ParsedEntities {
+impl WholeEntityDataSource for ParsedEntities {
     type Error = Infallible;
 
     fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, Infallible> {
@@ -702,12 +702,12 @@ impl ParsedEntities {
     }
 }
 
-/// Wrapper for entity database object (needed to implement foreign trait)
+/// Wrapper for entity data source objects (needed to implement foreign trait)
 #[repr(transparent)]
 #[derive(RefCast)]
-struct EntityDatabaseWrapper<T: EntityAttrDatabase>(T);
+struct EntityDataSourceWrapper<T: EntityDataSource>(T);
 
-impl<T: EntityAttrDatabase> entities::EntityDataSource for EntityDatabaseWrapper<T> {
+impl<T: EntityDataSource> entities::EntityDataSource for EntityDataSourceWrapper<T> {
     type Error = T::Error;
 
     fn partial_mode(&self) -> Mode {
@@ -739,13 +739,13 @@ impl<T: EntityAttrDatabase> entities::EntityDataSource for EntityDatabaseWrapper
 /// Wrapper for entity database object which can additionally cache some entities
 /// Invariant: `CachedEntities(db).get(uid) == db.get(uid)`
 #[derive(Debug)]
-pub struct CachedEntities<'e, T: EntityDatabase> {
+pub struct CachedEntities<'e, T: WholeEntityDataSource> {
     db: &'e T,
     cache: HashMap<EntityUid, ParsedEntity>,
 }
 
 // TODO: generalize using the schema to `EntityAttrDatabase` instead of just `EntityDatabase`
-impl<'e, T: EntityDatabase> CachedEntities<'e, T> {
+impl<'e, T: WholeEntityDataSource> CachedEntities<'e, T> {
     /// Create a new cached entities object, initialized with no cached entities
     pub fn empty(db: &'e T) -> Self {
         Self {
@@ -782,7 +782,7 @@ impl<'e, T: EntityDatabase> CachedEntities<'e, T> {
     }
 }
 
-impl<'a, T: EntityDatabase> EntityDatabase for CachedEntities<'a, T> {
+impl<'a, T: WholeEntityDataSource> WholeEntityDataSource for CachedEntities<'a, T> {
     type Error = T::Error;
 
     fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, Self::Error> {
@@ -916,7 +916,7 @@ impl Authorizer {
     /// println!("{:?}", r);
     /// ```
     pub fn is_authorized(&self, r: &Request, p: &PolicySet, e: &Entities) -> Response {
-        self.0.is_authorized(&r.0, &p.ast, &e.0).into()
+        self.0.is_authorized_old(&r.0, &p.ast, &e.0).into()
     }
 
     #[cfg(feature = "partial-eval")]
@@ -930,29 +930,29 @@ impl Authorizer {
     /// Returns an authorization response for `q` with respect to the given `Slice`.
     /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
     #[cfg(feature = "partial-eval")]
-    pub fn is_authorized_parsed<T: EntityAttrDatabase>(
+    pub fn is_authorized_parsed<T: EntityDataSource>(
         &self,
         r: &Request,
         p: &PolicySet,
         e: &T,
     ) -> PartialResponse {
-        Self::handle_partial_response(self.0.is_authorized_core_parsed(
+        Self::handle_partial_response(self.0.is_authorized_core(
             &r.0,
             &p.ast,
-            EntityDatabaseWrapper::ref_cast(e),
+            EntityDataSourceWrapper::ref_cast(e),
         ))
     }
 
     /// Return an authorization response for `q` with respect to the given `Slice`.
     /// Differs from `is_authorized` in that it takes entities whose attributes have already been evaluated
-    pub fn is_authorized_full_parsed<T: EntityAttrDatabase>(
+    pub fn is_authorized_full_parsed<T: EntityDataSource>(
         &self,
         r: &Request,
         p: &PolicySet,
         e: &T,
     ) -> Response {
         self.0
-            .is_authorized_parsed(&r.0, &p.ast, EntityDatabaseWrapper::ref_cast(e))
+            .is_authorized(&r.0, &p.ast, EntityDataSourceWrapper::ref_cast(e))
             .into()
     }
 
@@ -969,7 +969,7 @@ impl Authorizer {
     ) -> PartialResponse {
         let response = self
             .0
-            .is_authorized_core(&query.0, &policy_set.ast, &entities.0);
+            .is_authorized_core_old(&query.0, &policy_set.ast, &entities.0);
         Self::handle_partial_response(response)
     }
 

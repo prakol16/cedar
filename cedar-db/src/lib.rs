@@ -49,8 +49,8 @@ mod test_postgres {
     use std::borrow::Cow;
 
     use cedar_policy::{
-        Authorizer, CachedEntities, Context, Decision, EntityAttrAccessError, EntityAttrDatabase,
-        EntityDatabase, EntityTypeName, EntityUid, PartialValue, Request,
+        Authorizer, CachedEntities, Context, Decision, EntityAttrAccessError, EntityDataSource,
+        WholeEntityDataSource, EntityTypeName, EntityUid, PartialValue, Request,
     };
     use postgres::{Client, NoTls};
 
@@ -87,10 +87,10 @@ mod test_postgres {
         println!("Result: {:?}", entity); // should be Users::"0" named "Alice" with parent Users::"1"
     }
 
-    fn make_entity_attr_database() -> impl EntityAttrDatabase {
+    fn make_entity_attr_database() -> impl EntityDataSource {
         struct Table;
 
-        impl EntityAttrDatabase for Table {
+        impl EntityDataSource for Table {
             type Error = DatabaseToCedarError;
 
             fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error> {
@@ -183,7 +183,7 @@ mod test_postgres {
     fn test_auth() {
         struct Table;
 
-        impl EntityDatabase for Table {
+        impl WholeEntityDataSource for Table {
             type Error = DatabaseToCedarError;
 
             fn get<'e>(
@@ -260,7 +260,7 @@ mod test_sqlite {
     use std::borrow::Cow;
 
     use cedar_policy::{
-        Authorizer, Context, Decision, EntityDatabase, EntityTypeName, EntityUid, Request,
+        Authorizer, Context, Decision, WholeEntityDataSource, EntityTypeName, EntityUid, Request,
     };
 
     use rusqlite::Connection;
@@ -291,13 +291,13 @@ mod test_sqlite {
         conn
     }
 
-    fn get_sqlite_table() -> impl EntityDatabase {
+    fn get_sqlite_table() -> impl WholeEntityDataSource {
         let conn = get_conn();
         struct Table {
             conn: Connection,
         }
 
-        impl EntityDatabase for Table {
+        impl WholeEntityDataSource for Table {
             type Error = DatabaseToCedarError;
 
             fn get<'e>(
