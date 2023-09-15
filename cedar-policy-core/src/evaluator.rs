@@ -159,8 +159,6 @@ impl<'q, 'e, T: EntityAttrDatabase> Evaluator<'e, T> {
     ///
     /// (An `Entities` is the entity-hierarchy portion of a `Slice`, without the
     /// policies.)
-    ///
-    /// Does not throw errors (TODO: make this return `Self` instead of `Result<Self>`)
     pub fn new(q: &'q Request, entities: &'e T, extensions: &'e Extensions<'e>) -> Result<Self> {
         Ok(Self {
             principal: q.principal().clone(),
@@ -3674,7 +3672,7 @@ pub mod test {
             .eval_attrs(&Extensions::none())
             .expect("empty slice");
         let exts = Extensions::none();
-        let eval = Evaluator::new(&q, &entities, &exts).unwrap();
+        let eval = Evaluator::new(&q, &entities, &exts).expect("Failed to start evaluator");
 
         let ir = pset.policies().next().expect("No linked policies");
         assert!(
