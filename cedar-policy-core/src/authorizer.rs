@@ -354,6 +354,8 @@ impl Authorizer {
                     )),
                 },
                 Err(e) => {
+                    // A global deny error is an external error that Cedar should not handle
+                    // Instead, we defer to the users by returning `Deny` so that the users can handle it themselves
                     let error_handling = if e.is_global_deny_error() {
                         ErrorHandling::Deny
                     } else {
