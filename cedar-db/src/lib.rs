@@ -170,7 +170,7 @@ mod test_postgres {
         let table = make_entity_attr_database();
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"1\"".parse().unwrap();
-        let result = auth.is_authorized_full_parsed(
+        let result = auth.is_authorized_partial_generic(
             &Request::new(Some(euid.clone()),
                 Some("Actions::\"view\"".parse().unwrap()),
                 Some("Photos::\"2\"".parse().unwrap()), Context::empty())
@@ -217,7 +217,7 @@ mod test_postgres {
             Context::empty(),
         );
 
-        let result = auth.is_authorized_full_parsed(
+        let result = auth.is_authorized_partial_generic(
             &request,
               &"permit(principal, action, resource) when { principal.name == \"Alice\" && resource.title == \"Beach photo\" };".parse().unwrap(),
             &CachedEntities::cache_request(&Table, &request));
@@ -230,7 +230,7 @@ mod test_postgres {
         let table = make_entity_attr_database();
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"1\"".parse().unwrap();
-        let result1 = auth.is_authorized_full_parsed(
+        let result1 = auth.is_authorized_partial_generic(
             &Request::new(
                 Some(euid.clone()),
                 Some("Actions::\"view\"".parse().unwrap()),
@@ -244,7 +244,7 @@ mod test_postgres {
         );
         assert!(result1.decision() == Decision::Deny);
 
-        let result2 = auth.is_authorized_full_parsed(
+        let result2 = auth.is_authorized_partial_generic(
             &Request::new(Some(euid.clone()),
                 Some("Actions::\"view\"".parse().unwrap()),
                 Some("Assignments::\"0\"".parse().unwrap()), Context::empty())
@@ -346,7 +346,7 @@ mod test_sqlite {
     fn test_basic() {
         let auth = Authorizer::new();
         let euid: EntityUid = "Users::\"0\"".parse().unwrap();
-        let result = auth.is_authorized_full_parsed(
+        let result = auth.is_authorized_partial_generic(
             &Request::new(Some(euid.clone()),
                 Some("Actions::\"view\"".parse().unwrap()),
                 Some("Photos::\"2\"".parse().unwrap()), Context::empty())
