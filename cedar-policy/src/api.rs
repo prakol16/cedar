@@ -91,11 +91,13 @@ impl From<SlotId> for ast::SlotId {
 }
 
 /// Entity datatype
+/// TODO: rename to `UnevaluatedEntity`
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq, RefCast)]
 pub struct Entity(ast::Entity);
 
 /// Entity datatype with attributes evaluated
+/// TODO: rename to `Entity`
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq, RefCast)]
 pub struct EvaledEntity(ast::Entity<PartialValue>);
@@ -197,7 +199,7 @@ impl Entity {
         )
     }
 
-    /// Convert the entity into a `ParsedEntity` by evaluating the attributes and caching the results
+    /// Convert the entity into a `EvaledEntity` by evaluating the attributes and caching the results
     pub fn eval_attr(self) -> Result<EvaledEntity, EvaluationError> {
         let all_ext = Extensions::all_available();
         let evaluator = RestrictedEvaluator::new(&all_ext);
@@ -288,7 +290,8 @@ pub trait EntityDataSource {
     fn exists_entity(&self, uid: &EntityUid) -> Result<bool, Self::Error>;
 
     /// Get the attribute of an entity given the attribute string
-    /// Should return None if the attr is not present on the entity; the entity is guaranteed to exist
+    /// Should return EntityAttrAccessError::UnknownEntity if the entity is missing
+    /// Should return EntityAttrAccessError::UnknownAttr if the entity exists but the attribute is missing
     fn entity_attr(
         &self,
         uid: &EntityUid,
@@ -296,7 +299,10 @@ pub trait EntityDataSource {
     ) -> Result<PartialValue, EntityAttrAccessError<Self::Error>>;
 
     /// Decide if an entity exists and has a given attribute.
-    /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
+    /// Should return EntityAccessError::UnknownEntity if the entity is missing.
+    /// Should return `false` if the entity exists but the attribute is missing,
+    /// and true if the attribute is present.
+    ///
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
     fn entity_has_attr(
@@ -309,7 +315,7 @@ pub trait EntityDataSource {
     }
 
     /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
-    /// Should return false if `u2` does not exist; `u1` is guaranteed to exist
+    /// Should return false if either `u1` or `u2` do not exist. Neither is guaranteed to exist.
     fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> Result<bool, Self::Error>;
 
     /// Determine if this is a partial store
@@ -328,8 +334,8 @@ impl<T: WholeEntityDataSource> EntityDataSource for T {
         uid: &EntityUid,
         attr: &str,
     ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>> {
-        self.get(uid)?.map_or_else(
-            || Err(EntityAttrAccessError::UnknownEntity),
+        self.get(uid)?.map_or(
+            Err(EntityAttrAccessError::UnknownEntity),
             |e| {
                 e.as_ref()
                     .attr(attr)
@@ -341,7 +347,7 @@ impl<T: WholeEntityDataSource> EntityDataSource for T {
 
     fn entity_in(&self, u1: &EntityUid, u2: &EntityUid) -> std::result::Result<bool, Self::Error> {
         self.get(u1)?
-            .map_or_else(|| Ok(false), |e| Ok(e.as_ref().is_descendant_of(u2)))
+            .map_or(Ok(false), |e| Ok(e.as_ref().is_descendant_of(u2)))
     }
 
     fn partial_mode(&self) -> Mode {
@@ -640,7 +646,7 @@ impl WholeEntityDataSource for EvaledEntities {
 }
 
 impl EvaledEntities {
-    /// Create a fresh `ParsedEntities` with no entities
+    /// Create a fresh `EvaledEntities` with no entities
     pub fn empty() -> Self {
         Self(entities::Entities::new())
     }

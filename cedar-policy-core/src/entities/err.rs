@@ -57,7 +57,8 @@ pub enum EntityAccessError<T: std::error::Error> {
 }
 
 impl<T: std::error::Error> EntityAttrAccessError<T> {
-    /// Handle the missing attribute situation
+    /// Handle the missing attribute situation by returning Ok(u) if the attribute is missing
+    /// and keeping the error otherwise
     pub fn handle_attr<U>(self, u: U) -> std::result::Result<U, EntityAccessError<T>> {
         match self {
             EntityAttrAccessError::UnknownAttr => Ok(u),
