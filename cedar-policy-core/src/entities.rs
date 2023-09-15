@@ -288,8 +288,18 @@ pub trait EntityDataSource {
     /// Decide if an entity exists or not
     fn exists_entity(&self, uid: &EntityUID) -> std::result::Result<bool, Self::Error>;
 
-    /// Get the attribute of an entity given the attribute string, if both the entity and attr exist
-    /// Should return None if the entity does not exist or attr is not present on the entity
+    /// Return the data of `exists_entity` as a Result<()> instead of a bool
+    fn try_fetch_entity(&self, uid: &EntityUID) -> std::result::Result<(), EntityAccessError<Self::Error>> {
+        if self.exists_entity(uid)? {
+            Ok(())
+        } else {
+            Err(EntityAccessError::UnknownEntity)
+        }
+    }
+
+    /// Get the attribute of an entity given the attribute string
+    /// Should return EntityAttrAccessError::UnknownEntity if the entity is missing
+    /// Should return EntityAttrAccessError::UnknownAttr if the entity exists but the attribute is missing
     fn entity_attr(
         &self,
         uid: &EntityUID,
@@ -297,7 +307,10 @@ pub trait EntityDataSource {
     ) -> std::result::Result<PartialValue, EntityAttrAccessError<Self::Error>>;
 
     /// Decide if an entity exists and has a given attribute.
-    /// Returns None if the attribute doesn't exist; the entity is guaranteed to exist
+    /// Should return EntityAccessError::UnknownEntity if the entity is missing.
+    /// Should return `false` if the entity exists but the attribute is missing,
+    /// and true if the attribute is present.
+    ///
     /// A default implementation is given based on `entity_attr`, but there may be faster implementations
     /// for some stores.
     fn entity_has_attr(
@@ -310,7 +323,8 @@ pub trait EntityDataSource {
     }
 
     /// Decide if `u1` is in `u2` i.e. if `u2` is an ancestor of `u1`
-    /// Should return false if `u2` does not exist; `u1` is guaranteed to exist
+    /// Should return false if `u2` does not exist; `u1` is guaranteed to exist in
+    /// the current implementation, but this may change in the future
     fn entity_in(&self, u1: &EntityUID, u2: &EntityUID) -> std::result::Result<bool, Self::Error>;
 
     /// Determine if this is a partial store
@@ -321,14 +335,7 @@ pub trait EntityDataSource {
         &self,
         uid: &EntityUID,
     ) -> std::result::Result<Dereference<()>, Self::Error> {
-        match self.exists_entity(uid)? {
-            true => Ok(Dereference::Data(())),
-            false => match self.partial_mode() {
-                Mode::Concrete => Ok(Dereference::NoSuchEntity),
-                #[cfg(feature = "partial-eval")]
-                Mode::Partial => Ok(Dereference::Residual(Expr::unknown(format!("{uid}")))),
-            },
-        }
+        self.handle_access_error(uid, self.try_fetch_entity(uid))
     }
 
     /// Internal function to handle an access error given the `uid` based on the `partial_mode()`
