@@ -98,7 +98,7 @@ pub struct Entity(ast::Entity);
 /// Entity datatype with attributes evaluated
 #[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq, RefCast)]
-pub struct ParsedEntity(ast::Entity<PartialValue>);
+pub struct EvaledEntity(ast::Entity<PartialValue>);
 
 impl Entity {
     /// Create a new `Entity` with this Uid, attributes, and parents.
@@ -198,15 +198,15 @@ impl Entity {
     }
 
     /// Convert the entity into a `ParsedEntity` by evaluating the attributes and caching the results
-    pub fn eval_attr(self) -> Result<ParsedEntity, EvaluationError> {
+    pub fn eval_attr(self) -> Result<EvaledEntity, EvaluationError> {
         let all_ext = Extensions::all_available();
         let evaluator = RestrictedEvaluator::new(&all_ext);
         let parsed = self.0.eval_attrs(&evaluator)?;
-        Ok(ParsedEntity(parsed))
+        Ok(EvaledEntity(parsed))
     }
 }
 
-impl ParsedEntity {
+impl EvaledEntity {
     /// Create a new `Entity` with this Uid, attributes, and parents.
     ///
     /// Attribute values are specified here as partial values
@@ -263,7 +263,7 @@ pub struct Entities(pub(crate) entities::Entities);
 /// Uid.
 #[repr(transparent)]
 #[derive(Debug, Clone, Default, RefCast)]
-pub struct ParsedEntities(pub(crate) entities::Entities<PartialValue>);
+pub struct EvaledEntities(pub(crate) entities::Entities<PartialValue>);
 
 pub use entities::EntitiesError;
 
@@ -273,7 +273,7 @@ pub trait WholeEntityDataSource {
     type Error: std::error::Error;
 
     /// Get the `Entity` with the given Uid, if any
-    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, Self::Error>;
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, EvaledEntity>>, Self::Error>;
 
     /// Whether the database is partial
     fn partial_mode(&self) -> Mode;
@@ -625,10 +625,10 @@ impl Entities {
     }
 }
 
-impl WholeEntityDataSource for ParsedEntities {
+impl WholeEntityDataSource for EvaledEntities {
     type Error = Infallible;
 
-    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, Infallible> {
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, EvaledEntity>>, Infallible> {
         // TODO: this will create (and immediately destroy)
         // an unused residual expression in partial mode; rework to avoid this
         Ok(self.get(uid).map(Cow::Borrowed))
@@ -639,17 +639,17 @@ impl WholeEntityDataSource for ParsedEntities {
     }
 }
 
-impl ParsedEntities {
+impl EvaledEntities {
     /// Create a fresh `ParsedEntities` with no entities
     pub fn empty() -> Self {
         Self(entities::Entities::new())
     }
 
     /// Get the `Entity` with the given Uid, if any
-    pub fn get(&self, uid: &EntityUid) -> Option<&ParsedEntity> {
+    pub fn get(&self, uid: &EntityUid) -> Option<&EvaledEntity> {
         match self.0.entity(&uid.0) {
             Dereference::Residual(_) | Dereference::NoSuchEntity => None,
-            Dereference::Data(e) => Some(ParsedEntity::ref_cast(e)),
+            Dereference::Data(e) => Some(EvaledEntity::ref_cast(e)),
         }
     }
 
@@ -663,20 +663,20 @@ impl ParsedEntities {
     }
 
     /// Iterate over the `Entity`'s in the `Entities`
-    pub fn iter(&self) -> impl Iterator<Item = &ParsedEntity> {
-        self.0.iter().map(ParsedEntity::ref_cast)
+    pub fn iter(&self) -> impl Iterator<Item = &EvaledEntity> {
+        self.0.iter().map(EvaledEntity::ref_cast)
     }
 
     /// Create an `Entities` object with the given entities
     /// It will error if the entities cannot be read or if the entities hierarchy is cyclic
     pub fn from_entities(
-        entities: impl IntoIterator<Item = ParsedEntity>,
+        entities: impl IntoIterator<Item = EvaledEntity>,
     ) -> Result<Self, entities::EntitiesError> {
         entities::Entities::from_entities(
             entities.into_iter().map(|e| e.0),
             entities::TCComputation::ComputeNow,
         )
-        .map(ParsedEntities)
+        .map(EvaledEntities)
     }
 
     /// Is entity `a` an ancestor of entity `b`?
@@ -741,7 +741,7 @@ impl<T: EntityDataSource> entities::EntityDataSource for EntityDataSourceWrapper
 #[derive(Debug)]
 pub struct CachedEntities<'e, T: WholeEntityDataSource> {
     db: &'e T,
-    cache: HashMap<EntityUid, ParsedEntity>,
+    cache: HashMap<EntityUid, EvaledEntity>,
 }
 
 // TODO: generalize using the schema to `EntityAttrDatabase` instead of just `EntityDatabase`
@@ -785,7 +785,7 @@ impl<'e, T: WholeEntityDataSource> CachedEntities<'e, T> {
 impl<'a, T: WholeEntityDataSource> WholeEntityDataSource for CachedEntities<'a, T> {
     type Error = T::Error;
 
-    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, ParsedEntity>>, Self::Error> {
+    fn get<'e>(&'e self, uid: &EntityUid) -> Result<Option<Cow<'e, EvaledEntity>>, Self::Error> {
         self.cache.get(uid).map_or_else(
             || self.db.get(uid),
             |entity| Ok(Some(Cow::Borrowed(entity))),

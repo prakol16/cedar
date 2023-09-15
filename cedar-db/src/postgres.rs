@@ -19,7 +19,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cedar_policy::{
-    EntityAttrAccessError, EntityId, EntityTypeName, EntityUid, ParsedEntity, PartialValue, Value,
+    EntityAttrAccessError, EntityId, EntityTypeName, EntityUid, EvaledEntity, PartialValue, Value,
 };
 use postgres::{
     types::{FromSql, FromSqlOwned, Kind, Type},
@@ -118,7 +118,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         &self,
         conn: &mut Client,
         uid: &EntityUid,
-    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+    ) -> Result<Option<EvaledEntity>, DatabaseToCedarError> {
         self.make_entity(conn, uid, |row| match self.ancestor_attr_ind {
             Some(ancestors_attr_ind) => make_ancestors(row.get(ancestors_attr_ind)),
             None => panic!(
@@ -133,7 +133,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         conn: &mut Client,
         uid: &EntityUid,
         ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
-    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+    ) -> Result<Option<EvaledEntity>, DatabaseToCedarError> {
         Self::make_entity_from_table(
             conn,
             uid,
@@ -151,7 +151,7 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         uid: &EntityUid,
         ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
         extra_attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
-    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+    ) -> Result<Option<EvaledEntity>, DatabaseToCedarError> {
         Self::make_entity_from_table(
             conn,
             uid,
@@ -244,12 +244,12 @@ impl EntitySQLInfo<PostgresSQLInfo> {
         query: &SelectStatement,
         attrs: impl FnOnce(&Row) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
         ancestors: impl FnOnce(&Row) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
-    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+    ) -> Result<Option<EvaledEntity>, DatabaseToCedarError> {
         // TODO: use `build` instead of `to_string`
         let query_string = query.to_string(PostgresQueryBuilder);
         conn.query_opt(&query_string, &[])?
             .map(|row| {
-                Ok(ParsedEntity::new(
+                Ok(EvaledEntity::new(
                     uid.clone(),
                     attrs(&row)?,
                     ancestors(&row)?,

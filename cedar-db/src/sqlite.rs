@@ -19,7 +19,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cedar_policy::{
-    EntityAttrAccessError, EntityId, EntityTypeName, EntityUid, ParsedEntity, PartialValue, Value,
+    EntityAttrAccessError, EntityId, EntityTypeName, EntityUid, EvaledEntity, PartialValue, Value,
 };
 use rusqlite::{
     types::{FromSql, ValueRef},
@@ -72,7 +72,7 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         &self,
         conn: &Connection,
         uid: &EntityUid,
-    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+    ) -> Result<Option<EvaledEntity>, DatabaseToCedarError> {
         self.make_entity(conn, uid, |row| match self.ancestor_attr_ind {
             Some(ancestors_attr_ind) => make_ancestors(serde_json::from_str(
                 &row.get::<_, String>(ancestors_attr_ind)?,
@@ -89,7 +89,7 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         conn: &Connection,
         uid: &EntityUid,
         ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
-    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+    ) -> Result<Option<EvaledEntity>, DatabaseToCedarError> {
         Self::make_entity_from_table(
             conn,
             uid,
@@ -109,7 +109,7 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         extra_attrs: impl FnOnce(
             &Row<'_>,
         ) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
-    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+    ) -> Result<Option<EvaledEntity>, DatabaseToCedarError> {
         Self::make_entity_from_table(
             conn,
             uid,
@@ -204,12 +204,12 @@ impl EntitySQLInfo<SQLiteSQLInfo> {
         query: &SelectStatement,
         attrs: impl FnOnce(&Row<'_>) -> Result<HashMap<String, PartialValue>, DatabaseToCedarError>,
         ancestors: impl FnOnce(&Row<'_>) -> Result<HashSet<EntityUid>, DatabaseToCedarError>,
-    ) -> Result<Option<ParsedEntity>, DatabaseToCedarError> {
+    ) -> Result<Option<EvaledEntity>, DatabaseToCedarError> {
         // TODO: use `build` instead of `to_string`
         let query_string = query.to_string(SqliteQueryBuilder);
         Ok(conn
             .query_row(&query_string, [], |row| {
-                Ok(ParsedEntity::new(
+                Ok(EvaledEntity::new(
                     uid.clone(),
                     attrs(&row)
                         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,

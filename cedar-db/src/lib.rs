@@ -189,7 +189,7 @@ mod test_postgres {
             fn get<'e>(
                 &'e self,
                 uid: &EntityUid,
-            ) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error>
+            ) -> Result<Option<std::borrow::Cow<'e, cedar_policy::EvaledEntity>>, Self::Error>
             {
                 let mut conn = Client::connect(&*DB_PATH, NoTls).expect("Connection failed");
                 match uid.type_name() {
@@ -303,7 +303,7 @@ mod test_sqlite {
             fn get<'e>(
                 &'e self,
                 uid: &EntityUid,
-            ) -> Result<Option<std::borrow::Cow<'e, cedar_policy::ParsedEntity>>, Self::Error>
+            ) -> Result<Option<std::borrow::Cow<'e, cedar_policy::EvaledEntity>>, Self::Error>
             {
                 match uid.type_name() {
                     t if *t == *USERS_TYPE => Ok(USERS_TABLE_INFO
