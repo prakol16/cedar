@@ -272,7 +272,7 @@ impl Entity {
     ///
     /// This can also return Some(Err) if the attribute had an illegal value.
     /// ```
-    /// use cedar_policy::{Entity, EntityId, EntityTypeName, EntityUid, EvalResult,
+    /// use cedar_policy::{Entity, EntityId, EntityTypeName, EntityUid,
     ///     RestrictedExpression};
     /// use std::collections::{HashMap, HashSet};
     /// use std::str::FromStr;
@@ -284,8 +284,8 @@ impl Entity {
     ///     ("department".to_string(), RestrictedExpression::from_str("\"CS\"").unwrap()),
     /// ]);
     /// let entity = Entity::new(euid, attrs, HashSet::new());
-    /// assert_eq!(entity.attr("age").unwrap(), Ok(EvalResult::Long(21)));
-    /// assert_eq!(entity.attr("department").unwrap(), Ok(EvalResult::String("CS".to_string())));
+    /// assert_eq!(entity.attr("age").unwrap(), Ok(21.into()));
+    /// assert_eq!(entity.attr("department").unwrap(), Ok("CS".into()));
     ///```
     pub fn attr(&self, attr: &str) -> Option<Result<Value, EvaluationError>> {
         let expr = self.0.get(attr)?;
@@ -600,7 +600,7 @@ impl Entities {
     /// ```
     /// use std::collections::HashMap;
     /// use std::str::FromStr;
-    /// # use cedar_policy::{Entities, EntityId, EntityTypeName, EntityUid, EvalResult, Request,PolicySet};
+    /// # use cedar_policy::{Entities, EntityId, EntityTypeName, EntityUid, Request, PolicySet, ValueKind};
     /// let data =r#"
     /// [
     /// {
@@ -623,9 +623,9 @@ impl Entities {
     /// let type_name: EntityTypeName = EntityTypeName::from_str("User").unwrap();
     /// let euid = EntityUid::from_type_name_and_id(type_name, eid);
     /// let entity = entities.get(&euid).unwrap();
-    /// assert_eq!(entity.attr("age").unwrap(), Ok(EvalResult::Long(19)));
-    /// let ip = entity.attr("ip_addr").unwrap().unwrap();
-    /// assert_eq!(ip, EvalResult::ExtensionValue("10.0.1.101/32".to_string()));
+    /// assert_eq!(entity.attr("age").unwrap(), Ok(19.into()));
+    /// let ip = entity.attr_kind("ip_addr").unwrap().unwrap();
+    /// assert_eq!(ip, ValueKind::ExtensionValue("10.0.1.101/32".to_string()));
     /// ```
     pub fn from_json_str(
         json: &str,
@@ -648,7 +648,7 @@ impl Entities {
     /// ```
     /// use std::collections::HashMap;
     /// use std::str::FromStr;
-    /// # use cedar_policy::{Entities, EntityId, EntityTypeName, EntityUid, EvalResult, Request,PolicySet};
+    /// # use cedar_policy::{Entities, EntityId, EntityTypeName, EntityUid, Request, PolicySet};
     /// let data =serde_json::json!(
     /// [
     /// {
