@@ -611,12 +611,6 @@ impl EntityUidJSON {
         })
     }
 
-    /// Convert an `EntityUID` into an `EntityUidJSON`, using the implicit escape option
-    /// For explicit escape, use the usual `from`/`into`
-    pub fn from_euid_implicit_escape(euid: &EntityUID) -> Self {
-        Self::ImplicitEntityEscape(euid.into())
-    }
-
     /// Convert this `EntityUidJSON` into an `EntityUID`
     pub fn into_euid(
         self,
