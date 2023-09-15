@@ -3045,6 +3045,32 @@ impl FromStr for RestrictedExpression {
     }
 }
 
+impl TryFrom<RestrictedExpression> for PartialValue {
+    type Error = EvaluationError;
+
+    /// Evaluates a restricted expression
+    /// If evaluation results in an error (e.g., an extension function throws an error)
+    /// then that error is returned
+    fn try_from(value: RestrictedExpression) -> Result<Self, Self::Error> {
+        let extns = Extensions::all_available();
+        let eval = RestrictedEvaluator::new(&extns);
+        eval.partial_interpret(value.0.as_borrowed()).map(Self)
+    }
+}
+
+impl TryFrom<RestrictedExpression> for Value {
+    type Error = EvaluationError;
+
+    /// Evaluates a restricted expression
+    /// If evaluation results in an error (e.g., an extension function throws an error)
+    /// then that error is returned
+    fn try_from(value: RestrictedExpression) -> Result<Self, Self::Error> {
+        let extns = Extensions::all_available();
+        let eval = RestrictedEvaluator::new(&extns);
+        eval.interpret(value.0.as_borrowed()).map(Self)
+    }
+}
+
 /// Builder for a [`Request`]
 ///
 /// Note that you can create the `EntityUid`s using `.parse()` on any
@@ -3580,7 +3606,7 @@ impl std::fmt::Display for ValueKind {
 
 /// Evaluates an expression.
 /// If evaluation results in an error (e.g., attempting to access a non-existent Entity or Record,
-/// passing the wrong number of arguments to a function etc.), that error is returned as a String
+/// passing the wrong number of arguments to a function etc.), that error is returned
 pub fn eval_expression(
     request: &Request,
     entities: &Entities,
