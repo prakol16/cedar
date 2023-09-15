@@ -304,7 +304,7 @@ impl Entity {
     }
 
     /// Convert the entity into a `EvaledEntity` by evaluating the attributes and caching the results
-    pub fn eval_attr(self) -> Result<EvaledEntity, EvaluationError> {
+    pub fn eval_attrs(self) -> Result<EvaledEntity, EvaluationError> {
         let all_ext = Extensions::all_available();
         let evaluator = RestrictedEvaluator::new(&all_ext);
         let parsed = self.0.eval_attrs(&evaluator)?;
@@ -564,6 +564,14 @@ impl Entities {
             new_entities,
             entities::TCComputation::ComputeNow,
         )?))
+    }
+
+    /// Convert this into an EvaledEntities by evaluating all the attributes
+    /// of all the entities in this object
+    pub fn eval_attrs(self) -> Result<EvaledEntities, EvaluationError> {
+        let all_ext = Extensions::all_available();
+        let parsed = self.0.eval_attrs(&all_ext)?;
+        Ok(EvaledEntities(parsed))
     }
 
     /// Parse an entities JSON file (in [`std::io::Read`] form) and add them into this [`Entities`] structure, re-computing the transitive closure
