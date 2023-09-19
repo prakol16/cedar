@@ -230,7 +230,7 @@ impl IntoIden for QueryPrimitiveType {
     fn into_iden(self) -> sea_query::DynIden {
         match self {
             QueryPrimitiveType::Bool => Alias::new("boolean").into_iden(),
-            QueryPrimitiveType::Long => Alias::new("integer").into_iden(), // todo: use bigint?
+            QueryPrimitiveType::Long => Alias::new("bigint").into_iden(),
             QueryPrimitiveType::StringOrEntity => Alias::new("text").into_iden(),
             QueryPrimitiveType::Record => Alias::new("jsonb").into_iden(),
         }
