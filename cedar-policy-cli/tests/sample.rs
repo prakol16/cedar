@@ -16,9 +16,8 @@
 
 use std::collections::HashMap;
 
-use cedar_policy::EntityUid;
+use cedar_policy::EvalResult;
 use cedar_policy::SlotId;
-use cedar_policy::Value;
 use cedar_policy_cli::check_parse;
 use cedar_policy_cli::{
     authorize, evaluate, link, validate, Arguments, AuthorizeArgs, CedarExitCode, CheckParseArgs,
@@ -523,7 +522,7 @@ fn run_evaluate_test(
     entities_file: &str,
     expression: &str,
     exit_code: CedarExitCode,
-    expected: Value,
+    expected: EvalResult,
 ) {
     let cmd = EvaluateArgs {
         schema_file: None,
@@ -549,7 +548,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample1/entity.json",
         "principal in UserGroup::\"jane_friends\"",
         CedarExitCode::Failure,
-        false.into(),
+        EvalResult::Bool(false),
     );
 
     run_evaluate_test(
@@ -557,7 +556,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample1/doesnotexist.json",
         "principal in UserGroup::\"jane_friends\"",
         CedarExitCode::Failure,
-        false.into(),
+        EvalResult::Bool(false),
     );
 
     run_evaluate_test(
@@ -565,7 +564,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample1/entity.json",
         "parse error",
         CedarExitCode::Failure,
-        false.into(),
+        EvalResult::Bool(false),
     );
 
     run_evaluate_test(
@@ -573,7 +572,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample1/entity.json",
         "1 + \"type error\"",
         CedarExitCode::Failure,
-        false.into(),
+        EvalResult::Bool(false),
     );
 
     run_evaluate_test(
@@ -581,7 +580,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample1/entity.json",
         "principal in UserGroup::\"jane_friends\"",
         CedarExitCode::Success,
-        true.into(),
+        EvalResult::Bool(true),
     );
 
     run_evaluate_test(
@@ -589,7 +588,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample1/entity.json",
         "[\"a\",true,10].contains(10)",
         CedarExitCode::Success,
-        true.into(),
+        EvalResult::Bool(true),
     );
 
     run_evaluate_test(
@@ -597,17 +596,17 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample1/entity.json",
         "principal.age >= 17",
         CedarExitCode::Success,
-        true.into(),
+        EvalResult::Bool(true),
     );
 
-    let v: EntityUid = "User::\"bob\"".parse().unwrap();
+    let v = "User::\"bob\"".parse();
 
     run_evaluate_test(
         "sample-data/tiny_sandboxes/sample2/request.json",
         "sample-data/tiny_sandboxes/sample2/entity.json",
         "resource.owner",
         CedarExitCode::Success,
-        v.into(),
+        EvalResult::EntityUid(v.unwrap()),
     );
 
     run_evaluate_test(
@@ -615,7 +614,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample3/entity.json",
         "if 10 > 5 then \"good\" else \"bad\"",
         CedarExitCode::Success,
-        "good".into(),
+        EvalResult::String("good".to_owned()),
     );
 
     run_evaluate_test(
@@ -623,7 +622,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample4/entity.json",
         "resource.owner == User::\"bob\"",
         CedarExitCode::Success,
-        true.into(),
+        EvalResult::Bool(true),
     );
 
     run_evaluate_test(
@@ -631,7 +630,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample5/entity.json",
         "principal.addr.isLoopback()",
         CedarExitCode::Success,
-        true.into(),
+        EvalResult::Bool(true),
     );
 
     run_evaluate_test(
@@ -639,7 +638,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample6/entity.json",
         "principal.account.age >= 17",
         CedarExitCode::Success,
-        true.into(),
+        EvalResult::Bool(true),
     );
 
     run_evaluate_test(
@@ -647,7 +646,7 @@ fn test_evaluate_samples() {
         "sample-data/tiny_sandboxes/sample7/entity.json",
         "context.role.contains(\"admin\")",
         CedarExitCode::Success,
-        true.into(),
+        EvalResult::Bool(true),
     );
 }
 
