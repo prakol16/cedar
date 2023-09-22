@@ -985,12 +985,12 @@ impl Authorizer {
     /// The language spec and Dafny model give a precise definition of how this
     /// is computed.
     ///
-    /// This differs from `is_authorized` in that it takes a generic entity data source
+    /// This differs from `is_authorized_partial` in that it takes a generic entity data source
     /// rather than an `Entities` object
     ///
     /// TODO: Add doctest
     #[cfg(feature = "partial-eval")]
-    pub fn is_authorized_generic<T: EntityDataSource>(
+    pub fn is_authorized_partial_generic<T: EntityDataSource>(
         &self,
         r: &Request,
         p: &PolicySet,
@@ -1008,12 +1008,11 @@ impl Authorizer {
     /// If the Authorizer can reach a response, it will return that response.
     /// Otherwise, it will return a list of residual policies that still need to be evaluated.
     ///
-    /// This differs from `is_authorized_partial` in that it takes a generic entity data source
+    /// This differs from `is_authorized` in that it takes a generic entity data source
     /// rather than an `Entities` object
     ///
     /// TODO: Add doctest
-    #[cfg(feature = "partial-eval")]
-    pub fn is_authorized_partial_generic<T: EntityDataSource>(
+    pub fn is_authorized_generic<T: EntityDataSource>(
         &self,
         r: &Request,
         p: &PolicySet,
