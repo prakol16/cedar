@@ -3424,9 +3424,9 @@ pub enum ValueKind {
     /// Entity Uid
     EntityUid(EntityUid),
     /// A first-class set
-    Set(Set),
+    Set(ValueKindSet),
     /// A first-class anonymous record
-    Record(Record),
+    Record(ValueKindRecord),
     /// An extension value, currently limited to String results
     ExtensionValue(String),
     // ExtensionValue(std::sync::Arc<dyn InternalExtensionValue>),
@@ -3434,9 +3434,9 @@ pub enum ValueKind {
 
 /// Sets of Cedar values
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub struct Set(BTreeSet<Value>);
+pub struct ValueKindSet(BTreeSet<Value>);
 
-impl Set {
+impl ValueKindSet {
     /// Iterate over the members of the set
     pub fn iter(&self) -> impl Iterator<Item = &Value> {
         self.0.iter()
@@ -3460,9 +3460,9 @@ impl Set {
 
 /// A record of Cedar values
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub struct Record(BTreeMap<String, Value>);
+pub struct ValueKindRecord(BTreeMap<String, Value>);
 
-impl Record {
+impl ValueKindRecord {
     /// Iterate over the attribute/value pairs in the record
     pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
         self.0.iter()
@@ -3500,12 +3500,12 @@ impl Value {
             ast::Value::Lit(ast::Literal::EntityUID(e)) => {
                 ValueKind::EntityUid(EntityUid(ast::EntityUID::clone(e.as_ref())))
             }
-            ast::Value::Set(s) => ValueKind::Set(Set(s
+            ast::Value::Set(s) => ValueKind::Set(ValueKindSet(s
                 .authoritative
                 .iter()
                 .map(|v| Value(v.clone()))
                 .collect())),
-            ast::Value::Record(r) => ValueKind::Record(Record(
+            ast::Value::Record(r) => ValueKind::Record(ValueKindRecord(
                 r.iter()
                     .map(|(k, v)| (k.to_string(), Value(v.clone())))
                     .collect(),
@@ -3550,10 +3550,11 @@ impl std::fmt::Display for ValueKind {
     }
 }
 
+
 /// Evaluates an expression.
 /// If evaluation results in an error (e.g., attempting to access a non-existent Entity or Record,
 /// passing the wrong number of arguments to a function etc.), that error is returned
-pub fn eval_expression(
+pub fn eval_expression_as_value(
     request: &Request,
     entities: &Entities,
     expr: &Expression,
@@ -3563,6 +3564,152 @@ pub fn eval_expression(
     let eval = Evaluator::new(&request.0, &entities, &all_ext)?;
     // Evaluate under the empty slot map, as an expression should not have slots
     eval.interpret(&expr.0, &ast::SlotEnv::new()).map(Value)
+}
+
+/// Evaluates an expression.
+/// If evaluation results in an error (e.g., attempting to access a non-existent Entity or Record,
+/// passing the wrong number of arguments to a function etc.), that error is returned
+pub fn eval_expression(
+    request: &Request,
+    entities: &Entities,
+    expr: &Expression,
+) -> Result<EvalResult, EvaluationError> {
+    eval_expression_as_value(request, entities, expr).map(|v| v.into())
+}
+
+/// Result of Evaluation
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EvalResult {
+    /// Boolean value
+    Bool(bool),
+    /// Signed integer value
+    Long(i64),
+    /// String value
+    String(String),
+    /// Entity Uid
+    EntityUid(EntityUid),
+    /// A first-class set
+    Set(Set),
+    /// A first-class anonymous record
+    Record(Record),
+    /// An extension value, currently limited to String results
+    ExtensionValue(String),
+    // ExtensionValue(std::sync::Arc<dyn InternalExtensionValue>),
+}
+
+/// Sets of Cedar values
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct Set(BTreeSet<EvalResult>);
+
+impl Set {
+    /// Iterate over the members of the set
+    pub fn iter(&self) -> impl Iterator<Item = &EvalResult> {
+        self.0.iter()
+    }
+
+    /// Is a given element in the set
+    pub fn contains(&self, elem: &EvalResult) -> bool {
+        self.0.contains(elem)
+    }
+
+    /// Get the number of members of the set
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Test if the set is empty
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// A record of Cedar values
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct Record(BTreeMap<String, EvalResult>);
+
+impl Record {
+    /// Iterate over the attribute/value pairs in the record
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &EvalResult)> {
+        self.0.iter()
+    }
+
+    /// Check if a given attribute is in the record
+    pub fn contains_attribute(&self, key: impl AsRef<str>) -> bool {
+        self.0.contains_key(key.as_ref())
+    }
+
+    /// Get a given attribute from the record
+    pub fn get(&self, key: impl AsRef<str>) -> Option<&EvalResult> {
+        self.0.get(key.as_ref())
+    }
+
+    /// Get the number of attributes in the record
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Test if the record is empty
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<Value> for EvalResult {
+    fn from(v: Value) -> Self {
+        match v.0 {
+            ast::Value::Lit(ast::Literal::Bool(b)) => Self::Bool(b),
+            ast::Value::Lit(ast::Literal::Long(i)) => Self::Long(i),
+            ast::Value::Lit(ast::Literal::String(s)) => Self::String(s.to_string()),
+            ast::Value::Lit(ast::Literal::EntityUID(e)) => {
+                Self::EntityUid(EntityUid(ast::EntityUID::clone(&e)))
+            }
+            ast::Value::Set(s) => Self::Set(Set(s
+                .authoritative
+                .iter()
+                .map(|v| Value(v.clone()).into())
+                .collect())),
+            ast::Value::Record(r) => Self::Record(Record(
+                r.iter()
+                    .map(|(k, v)| (k.to_string(), Value(v.clone()).into()))
+                    .collect(),
+            )),
+            ast::Value::ExtensionValue(v) => Self::ExtensionValue(v.to_string()),
+        }
+    }
+}
+
+impl std::fmt::Display for EvalResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bool(b) => write!(f, "{b}"),
+            Self::Long(l) => write!(f, "{l}"),
+            Self::String(s) => write!(f, "\"{}\"", s.escape_debug()),
+            Self::EntityUid(uid) => write!(f, "{uid}"),
+            Self::Set(s) => {
+                write!(f, "[")?;
+                for (i, ev) in s.iter().enumerate() {
+                    write!(f, "{ev}")?;
+                    if (i + 1) < s.len() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "]")?;
+                Ok(())
+            }
+            Self::Record(r) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in r.iter().enumerate() {
+                    write!(f, "\"{}\": {v}", k.escape_debug())?;
+                    if (i + 1) < r.len() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "}}")?;
+                Ok(())
+            }
+            Self::ExtensionValue(s) => write!(f, "{s}"),
+        }
+    }
 }
 
 #[cfg(test)]
