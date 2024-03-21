@@ -573,8 +573,11 @@ pub fn create_tables_postgres(
 mod test {
     use std::collections::{HashMap, HashSet};
 
-    use cedar_policy::{PartialValue, Schema};
-    use cedar_policy_core::{ast::Entity, entities::Entities};
+    use cedar_policy::{extensions::Extensions, PartialValue, Schema};
+    use cedar_policy_core::{
+        ast::Entity,
+        entities::{Entities, EntityJsonParser, TCComputation},
+    };
     use sea_query::{Alias, PostgresQueryBuilder};
     use serde_json::json;
 
@@ -584,7 +587,83 @@ mod test {
     };
 
     use super::{create_table_of_values_postgres, create_tables};
-
+    fn get_common_fate_schema() -> Schema {
+        r#"
+        {
+            "CF": {
+              "actions": {},
+              "entityTypes": {
+                "User": {
+                  "shape": {
+                    "type": "Record",
+                    "attributes": {
+                      "name": {
+                        "type": "String",
+                        "required": true
+                      },
+                      "email": {
+                        "type": "String",
+                        "required": true
+                      }
+                    }
+                  },
+                  "memberOfTypes": ["OpsGenie::User"]
+                }
+              }
+            },
+            "OpsGenie": {
+              "actions": {},
+              "entityTypes": {
+                "OnCall": {
+                  "shape": {
+                    "type": "Record",
+                    "attributes": {
+                      "name": {
+                        "type": "String",
+                        "required": true
+                      }
+                    }
+                  }
+                },
+                "User": {
+                  "shape": {
+                    "type": "Record",
+                    "attributes": {
+                      "name": {
+                        "type": "String",
+                        "required": true
+                      },
+                      "role": {
+                        "type": "String",
+                        "required": true
+                      }
+                    }
+                  },
+                  "memberOfTypes": ["OpsGenie::OnCall"]
+                }
+              }
+            },
+            "TestVault": {
+              "actions": {},
+              "entityTypes": {
+                "Vault": {
+                  "shape": {
+                    "type": "Record",
+                    "attributes": {
+                      "name": {
+                        "type": "String",
+                        "required": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }          
+        "#
+        .parse()
+        .expect("Schema should not fail to parse")
+    }
     fn get_schema() -> Schema {
         r#"
         {
@@ -636,6 +715,100 @@ mod test {
         "#
         .parse()
         .expect("Schema should not fail to parse")
+    }
+    fn get_common_fate_entities() -> Entities<PartialValue> {
+        let all_ext = Extensions::all_available();
+        let parser: EntityJsonParser<'_> =
+            EntityJsonParser::new(None, Extensions::all_available(), TCComputation::ComputeNow);
+        parser
+            .from_json_str(
+                r#"
+            [
+      {
+        "uid": {
+          "type": "CF::User",
+          "id": "josh"
+        },
+        "attrs": {
+          "name": "Josh Wilkes",
+          "email": "josh@commonfate.io"
+        },
+        "parents": [
+          {
+            "type": "OpsGenie::User",
+            "id": "de6afaa2-22d7-4e5f-96e2-21354d575965"
+          }
+        ]
+      },
+      {
+        "uid": {
+          "type": "OpsGenie::OnCall",
+          "id": "2c766655-5584-4280-a47b-0ea568c030a9"
+        },
+        "attrs": {
+          "name": "Fixers"
+        },
+        "parents": []
+      },
+      {
+        "uid": {
+          "type": "OpsGenie::User",
+          "id": "de6afaa2-22d7-4e5f-96e2-21354d575965"
+        },
+        "attrs": {
+          "role": "owner",
+          "name": "josh"
+        },
+        "parents": [
+          {
+            "type": "OpsGenie::OnCall",
+            "id": "2c766655-5584-4280-a47b-0ea568c030a9"
+          }
+        ]
+      },
+      {
+        "uid": {
+          "type": "TestVault::Vault",
+          "id": "example"
+        },
+        "attrs": {
+          "name": "example vault2",
+          "approved": true
+        },
+        "parents": []
+      }
+    ]"#,
+            )
+            .expect("Schema should not fail to parse")
+            .clone()
+            .eval_attrs(&all_ext)
+            .expect("Schema should not fail to parse")
+    }
+
+    #[test]
+    fn test_create_from_schema_common_fate() {
+        let entities = get_common_fate_entities();
+        println!("{:?}", entities);
+
+        let schema = get_common_fate_schema();
+        let (tables, fks, _, _) =
+            create_tables(&entities, &schema).expect("Should not fail to create tables");
+        let result = tables
+            .into_iter()
+            .map(|t| t.to_string(PostgresQueryBuilder))
+            .chain(fks.into_iter().map(|fk| fk.to_string(PostgresQueryBuilder)))
+            .collect::<HashSet<_>>();
+        println!("{:?}", result);
+
+        assert!(result == HashSet::from([
+            r#"CREATE TABLE "cedar"."ancestry_OpsGenie::User_,_OpsGenie::OnCall" ( "child_uid" text NOT NULL, "parent_uid" text NOT NULL, FOREIGN KEY ("child_uid") REFERENCES "cedar"."entity_OpsGenie::User" ("uid"), FOREIGN KEY ("parent_uid") REFERENCES "cedar"."entity_OpsGenie::OnCall" ("uid") )"#.into(),
+            r#"CREATE TABLE "cedar"."ancestry_CF::User_,_OpsGenie::User" ( "child_uid" text NOT NULL, "parent_uid" text NOT NULL, FOREIGN KEY ("child_uid") REFERENCES "cedar"."entity_CF::User" ("uid"), FOREIGN KEY ("parent_uid") REFERENCES "cedar"."entity_OpsGenie::User" ("uid") )"#.into(),
+            r#"CREATE TABLE "cedar"."entity_OpsGenie::OnCall" ( "uid" text PRIMARY KEY, "name" text NOT NULL )"#.into(),
+            r#"CREATE TABLE "cedar"."entity_CF::User" ( "uid" text PRIMARY KEY, "email" text NOT NULL, "name" text NOT NULL )"#.into(),
+            r#"CREATE TABLE "cedar"."entity_OpsGenie::User" ( "uid" text PRIMARY KEY, "name" text NOT NULL, "role" text NOT NULL )"#.into(),
+            r#"CREATE TABLE "cedar"."ancestry_CF::User_,_OpsGenie::OnCall" ( "child_uid" text NOT NULL, "parent_uid" text NOT NULL, FOREIGN KEY ("child_uid") REFERENCES "cedar"."entity_CF::User" ("uid"), FOREIGN KEY ("parent_uid") REFERENCES "cedar"."entity_OpsGenie::OnCall" ("uid") )"#.into(),
+            r#"CREATE TABLE "cedar"."entity_TestVault::Vault" ( "uid" text PRIMARY KEY, "name" text NOT NULL )"#.into(),
+           ]));
     }
 
     #[test]
